@@ -1,0 +1,80 @@
+/* ==========================================================================
+   SAT-UNICESMAG - Enterprise Design System Variables
+   Inspirado en sistemas de diseño modernos (shadcn/ui, Tailwind, Inter)
+   ========================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap');
+
+:root {
+  /* Paleta Corporativa Institucional Sobria & Elegante */
+  --brand-primary: #002855;        /* Azul Institucional UNICESMAG */
+  --brand-primary-hover: #001e40;
+  --brand-primary-light: #0A3D78;
+  --brand-primary-50: #F0F6FC;
+  --brand-primary-100: #E0ECF8;
+
+  --brand-accent: #9E1B32;         /* Rojo Rubí / Franciscano */
+  --brand-accent-hover: #7E1528;
+  --brand-accent-50: #FFF1F2;
+
+  --brand-gold: #B48C36;           /* Dorado Mate Sofisticado */
+  --brand-gold-50: #FDFBF4;
+
+  /* Semaforización y Estados Limpios */
+  --risk-low: #059669;
+  --risk-low-bg: #ECFDF5;
+  --risk-low-border: #A7F3D0;
+  --risk-low-text: #065F46;
+
+  --risk-medium: #D97706;
+  --risk-medium-bg: #FFFBEB;
+  --risk-medium-border: #FDE68A;
+  --risk-medium-text: #92400E;
+
+  --risk-high: #DC2626;
+  --risk-high-bg: #FEF2F2;
+  --risk-high-border: #FECACA;
+  --risk-high-text: #991B1B;
+
+  /* Escala de Neutros y Superficies Slate */
+  --surface-bg: #F8FAFC;           /* Fondo General de Aplicación */
+  --surface-card: #FFFFFF;         /* Fondo de Tarjetas y Modales */
+  --surface-subtle: #F1F5F9;       /* Fondos Secundarios */
+  --surface-hover: #F8FAFC;
+
+  --sidebar-bg: #0B1528;           /* Azul Noche Profundo / Minimalista */
+  --sidebar-border: #1E293B;
+  --sidebar-text: #94A3B8;
+  --sidebar-text-active: #FFFFFF;
+
+  --border-light: #E2E8F0;
+  --border-focus: #002855;
+
+  --text-main: #0F172A;            /* Texto Principal de Alta Legibilidad */
+  --text-muted: #64748B;           /* Texto Secundario */
+  --text-subtle: #94A3B8;          /* Texto Deshabilitado */
+  --text-inverse: #FFFFFF;
+
+  /* Tipografía */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Plus Jakarta Sans', var(--font-sans);
+
+  /* Layout y Dimensiones */
+  --sidebar-w: 260px;
+  --header-h: 68px;
+  
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 9999px;
+
+  /* Sombras Sutiles de Alta Gama */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.03);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.06), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.07), 0 4px 6px -4px rgba(0, 0, 0, 0.03);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.03);
+
+  --transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
