@@ -238,9 +238,15 @@ router.put("/umbrales-riesgo", async (req, res, next) => {
 // Espeja simularSincronizacionAcademica() - sigue siendo una simulación
 // (no hay un sistema académico real que consultar todavía), pero ahora
 // corre en el servidor en vez de ser un setTimeout puramente decorativo
-// en el navegador.
+// en el navegador. `estudiantesSincronizados` es un número simulado hasta
+// que exista la integración real con el sistema académico (RQF08).
 router.post("/sincronizar", (req, res) => {
-  res.json({ ok: true, mensaje: "Sincronización de matrículas, inasistencias y calificaciones completada (RQF08)." });
+  const estudiantesSincronizados = 4800 + Math.floor(Math.random() * 120);
+  res.json({
+    ok: true,
+    estudiantesSincronizados,
+    mensaje: `Se sincronizaron ${estudiantesSincronizados} estudiantes correctamente.`
+  });
 });
 
 router.get("/matriz-permisos", async (req, res, next) => {

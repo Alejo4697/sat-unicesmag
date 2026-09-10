@@ -69,7 +69,7 @@ export default function AdministracionPage() {
     avisar("Conectando a base de datos institucional UNICESMAG...");
     try {
       const res = await sincronizarAcademico();
-      avisar(res.mensaje);
+      avisar(`Se sincronizaron ${res.estudiantesSincronizados} estudiantes correctamente.`);
     } catch (err) {
       setError(err.message);
     } finally {
