@@ -11,6 +11,11 @@
                                                      (la "matriz de roles y
                                                      permisos" que ya viste como
                                                      mockup, ahora servida real)
+
+   Catálogos administrables (CRUD contra schema `sat`) en catalogos.routes.js:
+     /api/administracion/areas-remision      <-> sat.dependencias
+     /api/administracion/estados-remision    <-> sat.estados_remision
+     /api/administracion/tipos-intervencion  <-> sat.tipos_intervencion
    ==========================================================================
    Esta feature es la ÚNICA migrada a PostgreSQL real (schema `sat`) - ver
    server/src/shared/db/pool.js. El resto de features (alertas, intervenciones,
@@ -36,10 +41,15 @@ import { Router } from "express";
 import { MENU_CONFIG } from "../../shared/data/menuConfig.js";
 import { identifyUser, requireModule } from "../../shared/middleware/requireRole.js";
 import { pool, query } from "../../shared/db/pool.js";
+import catalogosRoutes from "./catalogos.routes.js";
 
 const router = Router();
 
 router.use(identifyUser, requireModule("administracion"));
+
+// Catálogos administrables (áreas de remisión, estados de remisión, tipos de
+// intervención) - CRUD contra el schema `sat`, ver catalogos.routes.js.
+router.use(catalogosRoutes);
 
 // SELECT reutilizable: proyecta una fila de sat.usuarios a la forma JSON
 // { id, nombre, email, rol, cargo, programa } que ya espera el cliente.
