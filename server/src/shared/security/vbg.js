@@ -29,6 +29,9 @@ export function sanitizarIntervencion(intervencion, user) {
   if (!intervencion.esSensibleVBG) return { ...intervencion, detalleVisible: true };
   const detalleVisible = puedeVerDetalleVBG(user.rol, user.cargo);
   if (detalleVisible) return { ...intervencion, detalleVisible: true };
+  // TODO: confirmar con el responsable de la política RNF01 si `tipoIntervencion`
+  // (y `atendidoPor`/`cargoAtendio`) también deberían redactarse en casos VBG;
+  // hoy quedan visibles como categoría/metadato, solo se oculta el detalle.
   return {
     ...intervencion,
     motivo: "Detalle confidencial (VBG) — visible solo para el equipo autorizado.",

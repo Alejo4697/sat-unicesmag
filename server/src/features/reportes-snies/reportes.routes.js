@@ -45,6 +45,9 @@ router.get("/snies", (req, res) => {
 });
 
 router.get("/intervenciones", (req, res) => {
+  // TODO: este CSV no incluye todavía el tipo de intervención
+  // (`i.tipoIntervencion`, catálogo sat.tipos_intervencion). Falta sumar esa
+  // columna acá y evaluar si el consolidado SNIES/MEN también la necesita.
   const filas = MOCK_DATA.intervenciones.map((i) => ({
     idIntervencion: i.id,
     codEstudiante: i.codigoEstudiante,

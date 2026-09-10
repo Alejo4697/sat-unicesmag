@@ -27,9 +27,12 @@ import { apiFetch } from "../api/client.js";
 const listIntervenciones = () => apiFetch("/intervenciones");
 const crearIntervencion = (data) => apiFetch("/intervenciones", { method: "POST", body: data });
 const listEstudiantes = () => apiFetch("/estudiantes");
+// Catálogo administrable (schema `sat`): solo devuelve los tipos activos.
+// Ver server/src/features/administracion/catalogos.routes.js.
+const listTiposIntervencion = () => apiFetch("/intervenciones/tipos");
 
 const DRAFT_KEY = "SAT_UNICESMAG_DRAFT_INTERVENCION";
-const ESTADO_INICIAL = { codigoEstudiante: "", motivo: "", resumenAcuerdo: "", esSensibleVBG: false };
+const ESTADO_INICIAL = { codigoEstudiante: "", tipoIntervencion: "", motivo: "", resumenAcuerdo: "", esSensibleVBG: false };
 
 function leerBorrador() {
   try {
@@ -45,6 +48,7 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
   const [searchParams] = useSearchParams();
   const [intervenciones, setIntervenciones] = useState([]);
   const [estudiantes, setEstudiantes] = useState([]);
+  const [tipos, setTipos] = useState([]);
   const [form, setForm] = useState({
     ...ESTADO_INICIAL,
     codigoEstudiante: codigoEstudiante || searchParams.get("estudiante") || ""
@@ -59,11 +63,14 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
   const debounceRef = useRef(null);
 
   useEffect(() => {
-    // Con estudiante fijo no hace falta la lista completa (no hay selector).
-    const peticiones = fijo ? [listIntervenciones()] : [listIntervenciones(), listEstudiantes()];
+    // Con estudiante fijo no hace falta la lista completa (no hay selector);
+    // el catálogo de tipos sí se necesita siempre (formulario).
+    const base = [listIntervenciones(), listTiposIntervencion()];
+    const peticiones = fijo ? base : [...base, listEstudiantes()];
     Promise.all(peticiones)
-      .then(([i, e]) => {
+      .then(([i, t, e]) => {
         setIntervenciones(i);
+        setTipos(t);
         if (e) setEstudiantes(e);
       })
       .catch((err) => setError(err.message));
@@ -122,8 +129,8 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
   async function handleSubmit(e) {
     e.preventDefault();
     const codigo = codigoEstudiante || form.codigoEstudiante;
-    if (!codigo || !form.motivo || !form.resumenAcuerdo) {
-      setError("Diligencie todos los campos requeridos.");
+    if (!codigo || !form.tipoIntervencion || !form.motivo || !form.resumenAcuerdo) {
+      setError("Diligencie todos los campos requeridos (incluido el tipo de intervención).");
       return;
     }
     setEnviando(true);
@@ -174,7 +181,7 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
       {error && <div className="auth-error">{error}</div>}
 
       <div className="dashboard-grid">
-        <div className="card" style={{ gridColumn: "span 7" }}>
+        <div className="card" style={{ gridColumn: "span 5" }}>
           <div className="card-header">
             <h3 className="card-title">Formulario de Proceso de Escucha</h3>
             <span className="badge badge-status-process">
@@ -209,6 +216,26 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
                 </select>
               </div>
             )}
+
+            <div className="form-group">
+              <label className="form-label" htmlFor="intervencion-tipo">
+                Tipo de Intervención
+              </label>
+              <select
+                id="intervencion-tipo"
+                className="form-select"
+                required
+                value={form.tipoIntervencion || ""}
+                onChange={(e) => setForm({ ...form, tipoIntervencion: e.target.value })}
+              >
+                <option value="">-- Seleccione el tipo --</option>
+                {tipos.map((t) => (
+                  <option key={t.id} value={t.nombre}>
+                    {t.nombre}
+                  </option>
+                ))}
+              </select>
+            </div>
 
             <div className="form-group">
               <label className="form-label" htmlFor="intervencion-motivo">
@@ -320,7 +347,7 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
           </form>
         </div>
 
-        <div className="card" style={{ gridColumn: "span 5" }}>
+        <div className="card" style={{ gridColumn: "span 7" }}>
           <div className="card-header">
             <h3 className="card-title">{fijo ? "Intervenciones del Estudiante" : "Intervenciones Registradas"}</h3>
           </div>
@@ -362,19 +389,25 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
                     </td>
                     <td>{i.fecha}</td>
                     <td>
-                      {i.esSensibleVBG ? (
-                        <span className="badge badge-risk-high">
-                          <i className="fas fa-lock"></i> VBG
-                        </span>
-                      ) : (
-                        <span className="badge badge-risk-low">Ordinaria</span>
+                      {i.tipoIntervencion || <span className="text-muted">—</span>}
+                      {i.esSensibleVBG && (
+                        <div style={{ marginTop: 3 }}>
+                          <span className="badge badge-risk-high">
+                            <i className="fas fa-lock"></i> VBG
+                          </span>
+                        </div>
                       )}
                     </td>
                     {!fijo && (
                       <td>
                         {i.detalleVisible ? (
-                          <Link to={`/ficha-estudiante?codigo=${i.codigoEstudiante}`} className="btn btn-outline btn-sm">
-                            <i className="fas fa-eye"></i> Ver Ficha
+                          <Link
+                            to={`/ficha-estudiante?codigo=${i.codigoEstudiante}`}
+                            className="btn btn-outline btn-sm"
+                            title="Ver Ficha"
+                            aria-label="Ver Ficha"
+                          >
+                            <i className="fas fa-eye"></i>
                           </Link>
                         ) : (
                           <span className="badge badge-risk-high">

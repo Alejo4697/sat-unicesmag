@@ -16,8 +16,24 @@ import {
   getUmbralesRiesgo,
   actualizarUmbralesRiesgo,
   sincronizarAcademico,
-  getMatrizPermisos
+  getMatrizPermisos,
+  areasRemisionApi,
+  estadosRemisionApi,
+  tiposIntervencionApi
 } from "./api.js";
+import CatalogoAdmin from "./CatalogoAdmin.jsx";
+
+// Catálogos administrables (schema `sat`). `campos` describe las columnas
+// extra de cada uno además de "nombre"/"activo":
+//   { key, label, tipo: "text" | "check", enForm?, enTabla?, badgeSi? }
+const CAMPOS_AREA_REMISION = [
+  { key: "esConfidencialidad", label: "Confidencialidad VBG (RNF01)", tipo: "check", badgeSi: "VBG" }
+];
+const CAMPOS_ESTADO_REMISION = [
+  { key: "esFinal", label: "Estado final", tipo: "check", badgeSi: "Final" },
+  { key: "orden", label: "Orden", tipo: "text", enForm: false }
+];
+const CAMPOS_TIPO_INTERVENCION = [{ key: "descripcion", label: "Descripción", tipo: "text" }];
 
 const ROLE_LABELS = {
   admin: "Administrativo",
@@ -324,6 +340,34 @@ export default function AdministracionPage() {
           </div>
         </form>
       </div>
+
+      {/* Catálogos administrables de Remisiones e Intervenciones (schema `sat`).
+          Inhabilitar un ítem lo saca de los formularios de creación, sin afectar
+          los registros históricos que ya lo usaban. */}
+      <CatalogoAdmin
+        titulo="Áreas de Remisión (RQF17)"
+        icono="fa-share-nodes"
+        api={areasRemisionApi}
+        campos={CAMPOS_AREA_REMISION}
+        onAviso={avisar}
+        onError={setError}
+      />
+      <CatalogoAdmin
+        titulo="Estados de Remisión (RQF18)"
+        icono="fa-list-check"
+        api={estadosRemisionApi}
+        campos={CAMPOS_ESTADO_REMISION}
+        onAviso={avisar}
+        onError={setError}
+      />
+      <CatalogoAdmin
+        titulo="Tipos de Intervención (RQF04)"
+        icono="fa-clipboard-check"
+        api={tiposIntervencionApi}
+        campos={CAMPOS_TIPO_INTERVENCION}
+        onAviso={avisar}
+        onError={setError}
+      />
 
       {matriz && (
         <>

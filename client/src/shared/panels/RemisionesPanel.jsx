@@ -25,20 +25,12 @@ const listRemisiones = () => apiFetch("/remisiones");
 const crearRemision = (data) => apiFetch("/remisiones", { method: "POST", body: data });
 const actualizarRemision = (id, data) => apiFetch(`/remisiones/${id}`, { method: "PATCH", body: data });
 const listEstudiantes = () => apiFetch("/estudiantes");
+// Catálogos administrables (schema `sat`): solo devuelven los ítems activos.
+// Ver server/src/features/administracion/catalogos.routes.js.
+const listAreasRemision = () => apiFetch("/remisiones/areas");
+const listEstadosRemision = () => apiFetch("/remisiones/estados");
 
-const AREAS_DESTINO = [
-  "Unidad de Servicios Psicológicos (USP)",
-  "Trabajo Social",
-  "Área de Salud María Goretti / Enfermería",
-  "Consultorios Jurídicos",
-  "Pastoral Universitaria",
-  "Paz y Convivencia",
-  "Tutoría Académica Docente"
-];
-
-const ESTADOS = ["Generada", "Recibida/Asignada", "En Atención", "Atendida", "Devuelta con Recomendaciones"];
-
-const ESTADO_INICIAL_FORM = { codigoEstudiante: "", areaDestino: AREAS_DESTINO[0], nivelRiesgo: "Medio", motivoRemision: "" };
+const ESTADO_INICIAL_FORM = { codigoEstudiante: "", areaDestino: "", nivelRiesgo: "Medio", motivoRemision: "" };
 
 function estadoBadgeClass(estado) {
   if (estado === "En Atención") return "badge-status-process";
@@ -51,6 +43,8 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
   const [searchParams] = useSearchParams();
   const [remisiones, setRemisiones] = useState([]);
   const [estudiantes, setEstudiantes] = useState([]);
+  const [areas, setAreas] = useState([]);
+  const [estados, setEstados] = useState([]);
   const [form, setForm] = useState({
     ...ESTADO_INICIAL_FORM,
     codigoEstudiante: codigoEstudiante || searchParams.get("estudiante") || ""
@@ -62,10 +56,16 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
   const [modalRecomendaciones, setModalRecomendaciones] = useState("");
 
   useEffect(() => {
-    const peticiones = fijo ? [listRemisiones()] : [listRemisiones(), listEstudiantes()];
+    const base = [listRemisiones(), listAreasRemision(), listEstadosRemision()];
+    const peticiones = fijo ? base : [...base, listEstudiantes()];
     Promise.all(peticiones)
-      .then(([r, e]) => {
+      .then(([r, a, es, e]) => {
         setRemisiones(r);
+        setAreas(a);
+        setEstados(es);
+        // Preselecciona la primera área activa (antes se preseleccionaba
+        // AREAS_DESTINO[0], que estaba hardcodeado).
+        setForm((prev) => (prev.areaDestino ? prev : { ...prev, areaDestino: a[0]?.nombre || "" }));
         if (e) setEstudiantes(e);
       })
       .catch((err) => setError(err.message));
@@ -90,7 +90,7 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
     try {
       const nueva = await crearRemision({ ...form, codigoEstudiante: codigo });
       setRemisiones((prev) => [nueva, ...prev]);
-      setForm({ ...ESTADO_INICIAL_FORM, codigoEstudiante: codigoEstudiante || "" });
+      setForm({ ...ESTADO_INICIAL_FORM, areaDestino: areas[0]?.nombre || "", codigoEstudiante: codigoEstudiante || "" });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -117,6 +117,14 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
   const remisionesVisibles = fijo
     ? remisiones.filter((r) => r.codigoEstudiante === codigoEstudiante)
     : remisiones;
+
+  // Opciones del modal "Gestionar Estado": los estados activos del catálogo,
+  // más el estado actual de la remisión si quedó inhabilitado (para no
+  // perderlo ni bloquear el guardado de los demás campos).
+  const opcionesEstado =
+    modalRemision && !estados.some((e) => e.nombre === modalRemision.estado)
+      ? [...estados, { id: "actual", nombre: modalRemision.estado, inhabilitado: true }]
+      : estados;
 
   return (
     <>
@@ -167,9 +175,10 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
                 value={form.areaDestino}
                 onChange={(e) => setForm({ ...form, areaDestino: e.target.value })}
               >
-                {AREAS_DESTINO.map((a) => (
-                  <option key={a} value={a}>
-                    {a}
+                <option value="">-- Seleccionar área --</option>
+                {areas.map((a) => (
+                  <option key={a.id} value={a.nombre}>
+                    {a.nombre}
                   </option>
                 ))}
               </select>
@@ -299,9 +308,10 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
             <div className="form-group">
               <label className="form-label">Estado de la Remisión</label>
               <select className="form-select" value={modalEstado} onChange={(e) => setModalEstado(e.target.value)}>
-                {ESTADOS.map((estado) => (
-                  <option key={estado} value={estado}>
-                    {estado}
+                {opcionesEstado.map((estado) => (
+                  <option key={estado.id} value={estado.nombre}>
+                    {estado.nombre}
+                    {estado.inhabilitado ? " (inhabilitado)" : ""}
                   </option>
                 ))}
               </select>
