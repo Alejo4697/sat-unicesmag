@@ -73,7 +73,7 @@ export default function AlertasPage() {
       )}
 
       <div className="dashboard-grid">
-        <div className="card" style={{ gridColumn: "span 4" }}>
+        <div className="card" style={{ gridColumn: "span 12" }}>
           <div className="card-header">
             <h3 className="card-title">Crear Alerta Manual (RQF15)</h3>
           </div>
@@ -155,7 +155,7 @@ export default function AlertasPage() {
           </form>
         </div>
 
-        <div className="card" style={{ gridColumn: "span 8" }}>
+        <div className="card" style={{ gridColumn: "span 12" }}>
           <div className="card-header">
             <h3 className="card-title">Registro Activo de Alertas</h3>
             <span className="badge badge-risk-high">Periodo 2025 II</span>

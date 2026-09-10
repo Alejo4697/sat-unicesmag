@@ -181,7 +181,7 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
       {error && <div className="auth-error">{error}</div>}
 
       <div className="dashboard-grid">
-        <div className="card" style={{ gridColumn: "span 5" }}>
+        <div className="card" style={{ gridColumn: "span 12" }}>
           <div className="card-header">
             <h3 className="card-title">Formulario de Proceso de Escucha</h3>
             <span className="badge badge-status-process">
@@ -347,7 +347,7 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
           </form>
         </div>
 
-        <div className="card" style={{ gridColumn: "span 7" }}>
+        <div className="card" style={{ gridColumn: "span 12" }}>
           <div className="card-header">
             <h3 className="card-title">{fijo ? "Intervenciones del Estudiante" : "Intervenciones Registradas"}</h3>
           </div>

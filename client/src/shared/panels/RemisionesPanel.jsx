@@ -131,7 +131,7 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
       {error && <div className="auth-error">{error}</div>}
 
       <div className="dashboard-grid">
-        <div className="card" style={{ gridColumn: "span 5" }}>
+        <div className="card" style={{ gridColumn: "span 12" }}>
           <div className="card-header">
             <h3 className="card-title">Generar Remisión</h3>
           </div>
@@ -222,7 +222,7 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
           </form>
         </div>
 
-        <div className="card" style={{ gridColumn: "span 7" }}>
+        <div className="card" style={{ gridColumn: "span 12" }}>
           <div className="card-header">
             <h3 className="card-title">{fijo ? "Remisiones del Estudiante" : "Bandeja de Casos Remitidos"}</h3>
           </div>
