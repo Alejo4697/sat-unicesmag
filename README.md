@@ -42,6 +42,7 @@ sat-unicesmag/
 │       │   ├── routing/        # ProtectedRoute — bloquea una ruta si el rol no tiene acceso
 │       │   ├── api/            # client.js — wrapper fetch con la URL base y el header de sesión
 │       │   ├── config/         # menuConfig.js — qué módulos ve cada rol (RQF03)
+│       │   ├── panels/         # paneles de UI de negocio reutilizados por 2+ features (IntervencionesPanel, RemisionesPanel)
 │       │   └── styles/         # variables.css, main.css, components.css (tal cual tu mockup)
 │       │
 │       └── features/          # un caso de uso del negocio = una carpeta
@@ -82,6 +83,17 @@ al revés, y una feature nunca importa de otra feature. Si dos features
 necesitaran compartir algo, ese algo se sube a `shared/`. Es lo que
 mantiene cada carpeta de `features/` recortable y movible sin arrastrar
 el resto del sistema.
+
+> **Nota sobre `shared/panels/`:** originalmente `shared/` era solo
+> infraestructura transversal (layout, cliente HTTP, guard de rutas, RBAC,
+> datos simulados). Se admite además que `shared/panels/` aloje **UI de
+> negocio reutilizable** — paneles usados por dos o más features (p. ej.
+> `IntervencionesPanel.jsx` y `RemisionesPanel.jsx`, que comparten la Ficha
+> 360° y las páginas standalone de `/intervenciones` y `/remisiones`). Es la
+> aplicación directa de la regla "si dos features comparten algo, sube a
+> `shared/`": el panel vive en `shared/` justamente para que ninguna feature
+> importe de otra. Condición: estos paneles no pueden depender de ninguna
+> feature específica.
 
 ## Qué ya está migrado de verdad
 
