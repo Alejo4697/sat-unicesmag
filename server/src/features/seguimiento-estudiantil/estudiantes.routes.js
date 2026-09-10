@@ -1,8 +1,10 @@
 /* ==========================================================================
    Feature: Seguimiento Estudiantil (Ficha 360° - RQF12)
-   GET /api/estudiantes                   -> lista (búsqueda ?q=)
-   GET /api/estudiantes/:codigo            -> ficha completa de un estudiante
-   GET /api/estudiantes/:codigo/timeline   -> historial de intervenciones del
+   GET /api/estudiantes                   -> lista (búsqueda ?q= por código,
+                                              cédula, nombre o programa)
+   GET /api/estudiantes/:id               -> ficha completa (:id = código
+                                              institucional o cédula)
+   GET /api/estudiantes/:id/timeline      -> historial de intervenciones del
                                                estudiante, con la misma
                                                sanitización RNF01 (VBG) que
                                                usa la feature de intervenciones
@@ -16,6 +18,12 @@ import { sanitizarIntervencion } from "../../shared/security/vbg.js";
 const router = Router();
 
 router.use(identifyUser, requireModule("ficha"));
+
+// Resuelve un estudiante por su código institucional O su cédula (documento):
+// la Ficha 360° (RQF12) permite buscar/abrir por cualquiera de los dos.
+function buscarPorIdentificador(id) {
+  return MOCK_DATA.estudiantes.find((e) => e.codigo === id || e.documento === id);
+}
 
 router.get("/", (req, res) => {
   const q = (req.query.q || "").toLowerCase().trim();
@@ -32,17 +40,19 @@ router.get("/", (req, res) => {
   res.json(estudiantes);
 });
 
-router.get("/:codigo", (req, res) => {
-  const estudiante = MOCK_DATA.estudiantes.find((e) => e.codigo === req.params.codigo);
+router.get("/:id", (req, res) => {
+  const estudiante = buscarPorIdentificador(req.params.id);
   if (!estudiante) {
     return res.status(404).json({ error: "Estudiante no encontrado." });
   }
   res.json(estudiante);
 });
 
-router.get("/:codigo/timeline", (req, res) => {
+router.get("/:id/timeline", (req, res) => {
+  const estudiante = buscarPorIdentificador(req.params.id);
+  const codigo = estudiante ? estudiante.codigo : req.params.id;
   const intervenciones = MOCK_DATA.intervenciones
-    .filter((i) => i.codigoEstudiante === req.params.codigo)
+    .filter((i) => i.codigoEstudiante === codigo)
     .map((i) => sanitizarIntervencion(i, req.user));
   res.json(intervenciones);
 });

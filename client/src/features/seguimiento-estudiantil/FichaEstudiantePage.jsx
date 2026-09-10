@@ -52,13 +52,18 @@ export default function FichaEstudiantePage() {
 
   async function buscar(e) {
     e.preventDefault();
+    const q = termino.trim();
+    if (!q) return;
     try {
-      const resultados = await listEstudiantes(termino);
+      const resultados = await listEstudiantes(q);
       if (resultados.length === 0) {
         setError("No se encontraron estudiantes con ese criterio de búsqueda.");
         return;
       }
-      setSearchParams({ codigo: resultados[0].codigo });
+      // Si el término es exactamente un código institucional o una cédula,
+      // se prioriza esa coincidencia sobre el primer match por subcadena.
+      const exacto = resultados.find((r) => r.codigo === q || r.documento === q);
+      setSearchParams({ codigo: (exacto || resultados[0]).codigo });
     } catch (err) {
       setError(err.message);
     }
@@ -72,7 +77,7 @@ export default function FichaEstudiantePage() {
             <input
               type="text"
               className="form-control"
-              placeholder="Buscar por documento, código institucional o nombre..."
+              placeholder="Buscar por código institucional, cédula o nombre..."
               value={termino}
               onChange={(e) => setTermino(e.target.value)}
             />
@@ -82,8 +87,8 @@ export default function FichaEstudiantePage() {
           </button>
         </form>
         <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 6 }}>
-          Sugerencias de prueba: <code>202510045</code> (Santiago Narváez - Riesgo Alto), <code>202220112</code> (Mateo Solarte -
-          Caso VBG), <code>202410098</code> (Valeria Guerrero)
+          Sugerencias de prueba: <code>202510045</code> o cédula <code>1085324901</code> (Santiago Narváez - Riesgo Alto),{" "}
+          <code>202220112</code> (Mateo Solarte - Caso VBG), <code>202410098</code> (Valeria Guerrero)
         </div>
       </div>
 

@@ -6,6 +6,11 @@
    server/src/middleware/requireRole.js (para proteger cada endpoint) deben
    reflejar exactamente este mismo mapa. Si cambia el acceso de un rol,
    se cambia aquí primero y se replica en el cliente.
+
+   `hidden: true` en un item = el módulo EXISTE y conserva su RBAC (sigue en
+   MODULE_ROLES, requireModule() y ProtectedRoute lo resuelven igual), pero
+   NO se pinta en el sidebar. Se accede a él desde otra pantalla (p. ej.
+   Intervenciones y Remisiones se abren desde la Ficha 360° del estudiante).
    ========================================================================== */
 
 export const MENU_CONFIG = [
@@ -22,8 +27,11 @@ export const MENU_CONFIG = [
     items: [
       { id: "ficha", name: "Ficha 360° Estudiante", icon: "fa-address-card", href: "ficha-estudiante" },
       { id: "alertas", name: "Alertas Tempranas", icon: "fa-bell", href: "alertas" },
-      { id: "intervenciones", name: "Intervenciones", icon: "fa-clipboard-check", href: "intervenciones" },
-      { id: "remisiones", name: "Remisiones", icon: "fa-share-nodes", href: "remisiones" }
+      // Fuera del sidebar (hidden): se accede a estos módulos desde los
+      // botones de la Ficha 360°, ya con el estudiante en contexto. El RBAC
+      // no cambia: siguen en MODULE_ROLES con los roles de esta sección.
+      { id: "intervenciones", name: "Intervenciones", icon: "fa-clipboard-check", href: "intervenciones", hidden: true },
+      { id: "remisiones", name: "Remisiones", icon: "fa-share-nodes", href: "remisiones", hidden: true }
     ]
   },
   {
@@ -54,7 +62,9 @@ export const MENU_CONFIG = [
   }
 ];
 
-// { dashboard: [...roles], ficha: [...roles], ... } - búsqueda O(1) por módulo
+// { dashboard: [...roles], ficha: [...roles], ... } - búsqueda O(1) por módulo.
+// Incluye TODOS los items, también los `hidden`: ocultar un módulo del
+// sidebar no cambia quién puede usarlo (RBAC).
 export const MODULE_ROLES = Object.fromEntries(
   MENU_CONFIG.flatMap((section) => section.items.map((item) => [item.id, section.roles]))
 );

@@ -18,9 +18,9 @@ import { identifyUser } from "../middleware/requireRole.js";
 const router = Router();
 
 router.get("/", identifyUser, (req, res) => {
-  const visible = MENU_CONFIG.filter((section) => section.roles.includes(req.user.rol)).map(
-    ({ title, items }) => ({ title, items })
-  );
+  const visible = MENU_CONFIG.filter((section) => section.roles.includes(req.user.rol))
+    .map(({ title, items }) => ({ title, items: items.filter((item) => !item.hidden) }))
+    .filter((section) => section.items.length > 0);
   res.json(visible);
 });
 
