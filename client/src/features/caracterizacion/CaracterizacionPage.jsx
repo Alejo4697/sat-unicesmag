@@ -19,6 +19,7 @@ import { useAuth } from "../../shared/context/AuthContext.jsx";
 import { riskBoxStyle } from "../../shared/utils/risk.js";
 import {
   getInstrumento,
+  getEstudianteInfo,
   enviarCaracterizacion,
   listEstudiantesParaSelector,
   getEncuestaInfo,
@@ -84,15 +85,20 @@ export default function CaracterizacionPage() {
   const esEstudiante = user?.rol === "estudiante";
 
   // Pestaña activa para el administrador
-  const [tabAdmin, setTabAdmin] = useState("gestion"); // "gestion" | "formulario"
+  const [tabAdmin, setTabAdmin] = useState("formulario"); // Por defecto vista de encuesta
 
   // Estado para el formulario de respuestas
   const [items, setItems] = useState([]);
   const [estudiantes, setEstudiantes] = useState([]);
-  const [codigoEstudiante, setCodigoEstudiante] = useState(esEstudiante ? user.codigoEstudiante || "" : "");
+  const [codigoEstudiante, setCodigoEstudiante] = useState(
+    esEstudiante ? user?.codigoEstudiante || user?.codigo || "202510045" : "202510045"
+  );
+  const [estudiantePerfil, setEstudiantePerfil] = useState(null);
+  const [cargandoEstudiante, setCargandoEstudiante] = useState(false);
   const [respuestas, setRespuestas] = useState({});
   const [resultado, setResultado] = useState(null);
   const [enviando, setEnviando] = useState(false);
+  const [modalPortafolio, setModalPortafolio] = useState(false);
 
   // Estado para administración
   const [encuestaInfo, setEncuestaInfo] = useState(null);
@@ -118,7 +124,24 @@ export default function CaracterizacionPage() {
     setTimeout(() => setNotificacion(null), 4500);
   }
 
-  // Cargar datos
+  // Cargar datos del estudiante seleccionado / activo
+  useEffect(() => {
+    if (!codigoEstudiante) {
+      setEstudiantePerfil(null);
+      return;
+    }
+    setCargandoEstudiante(true);
+    getEstudianteInfo(codigoEstudiante)
+      .then((info) => {
+        setEstudiantePerfil(info);
+      })
+      .catch((err) => {
+        console.warn("No se pudo cargar el perfil detallado del estudiante:", err.message);
+      })
+      .finally(() => setCargandoEstudiante(false));
+  }, [codigoEstudiante]);
+
+  // Cargar datos generales
   const cargarDatos = () => {
     const pedidos = [getInstrumento()];
     if (!esEstudiante) pedidos.push(listEstudiantesParaSelector());
