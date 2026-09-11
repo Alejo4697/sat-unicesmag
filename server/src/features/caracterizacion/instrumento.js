@@ -51,37 +51,132 @@ export const INSTRUMENTO_ITEMS = [
 ];
 
 export const DIMENSIONES = ["IND", "INS", "ACA", "SOC", "GEST_PROG"];
-const CONTEO_POR_DIMENSION = { IND: 8, INS: 7, ACA: 10, SOC: 5, GEST_PROG: 4 };
 
-// Motor de riesgo - portado 1:1 desde evaluarInstrumentoPermanencia() de
-// assets/js/caracterizacion.js. En el mockup corría solo en el navegador y
-// nunca se guardaba; acá corre en el servidor (es la fuente de verdad) y sí
-// se persiste (ver MOCK_DATA.caracterizaciones).
-export function evaluarInstrumento(respuestas) {
-  const puntajes = Object.fromEntries(DIMENSIONES.map((d) => [d, 0]));
+export const DIM_NOMBRES = {
+  IND: "Nivel Individual",
+  INS: "Nivel Institucional",
+  ACA: "Nivel Académico",
+  SOC: "Nivel Socioeconómico",
+  GEST_PROG: "Gestión de Permanencia del Programa",
+  "GEST PROG": "Gestión de Permanencia del Programa"
+};
 
-  INSTRUMENTO_ITEMS.forEach((item) => {
-    let valor = respuestas[`item_${item.id}`] ?? 2;
-    if (item.tipo === "likert_inverso") {
+export const DIM_LABELS_SHORT = {
+  IND: "Individual (IND)",
+  INS: "Institucional (INS)",
+  ACA: "Académico (ACA)",
+  SOC: "Socioeconómico (SOC)",
+  GEST_PROG: "Gestión Programa (GEST PROG)"
+};
+
+// Matriz de conceptos diagnósticos por dimensión y nivel de permanencia
+export const CONCEPTOS_DIAGNOSTICO = {
+  Baja: {
+    IND: "El estudiante presenta dificultades respecto a sus relaciones con otros, identificación de su rol personal en la Universidad y conductas disruptivas dentro de la misma.",
+    INS: "El estudiante no está satisfecho con la infraestructura, normativas, profesores, grado de compromiso, calidad de los programas, ubicación de la sede, administración y apoyo de la universidad.",
+    ACA: "El estudiante no se encuentra satisfecho con el programa, la carrera, la carga académica y su rendimiento académico.",
+    SOC: "El estudiante presenta problemas respecto a los recursos económicos y/o el estrato social de la universidad.",
+    GEST_PROG: "El estudiante percibe escaso acompañamiento o desconoce las estrategias de permanencia de su programa académico."
+  },
+  Media: {
+    IND: "El estudiante manifiesta un nivel de adaptación moderado, con aspectos positivos en sus relaciones interpersonales pero con áreas de mejora en motivación y gestión de su rol universitario.",
+    INS: "El estudiante percibe favorablemente aspectos generales de la institución, aunque sugiere fortalecer canales de comunicación, espacios físicos y programas de bienestar.",
+    ACA: "El estudiante mantiene un desempeño y satisfacción académica aceptables, requiriendo afianzar métodos de estudio y orientación vocacional.",
+    SOC: "El estudiante dispone de recursos básicos para su sostenimiento, aunque experimenta dificultades económicas puntuales que requieren seguimiento.",
+    GEST_PROG: "El estudiante identifica algunas acciones de permanencia en su programa, aunque requiere mayor articulación con las mismas."
+  },
+  Alta: {
+    IND: "El estudiante demuestra una alta motivación, sentido de pertenencia y excelentes habilidades de relacionamiento y adaptación universitaria.",
+    INS: "El estudiante expresa plena satisfacción con la infraestructura, cuerpo docente, normativas y programas de bienestar institucional.",
+    ACA: "El estudiante presenta gran satisfacción con su programa académico, alta eficacia en sus métodos de estudio y óptimo rendimiento.",
+    SOC: "El estudiante cuenta con solvencia y estabilidad socioeconómica que favorecen su continuidad y permanencia sin contratiempos.",
+    GEST_PROG: "El estudiante reconoce y aprovecha activamente las estrategias de permanencia y acompañamiento de su programa académico."
+  }
+};
+
+export const MENSAJES_PERMANENCIA = {
+  Baja: {
+    titulo: "¡INFORMACIÓN IMPORTANTE!",
+    subtitulo: "Tu nivel de permanencia en la universidad es BAJO.",
+    parrafo1: "Identificamos que actualmente enfrentas algunos desafíos que podrían impactar en tu continuidad académica. Sabemos que cada situación es única y que diversos factores pueden influir en tu proceso formativo.",
+    parrafo2: "Queremos acompañarte y ofrecerte estrategias para superar estos retos. Por ello, te invitamos a acercarte a nuestro equipo de acompañamiento, donde encontrarás apoyo personalizado para fortalecer tu permanencia en la universidad. Estamos aquí para escucharte y trabajar juntos en soluciones que favorezcan tu bienestar y desarrollo.",
+    parrafo3: "Si deseas conversar sobre tu resultado o recibir orientación, no dudes en contactarnos. Nuestro compromiso es acompañarte en este camino y asegurarnos de que cuentes con las herramientas necesarias para alcanzar tus metas."
+  },
+  Media: {
+    titulo: "¡INFORMACIÓN IMPORTANTE!",
+    subtitulo: "Tu nivel de permanencia en la universidad es MEDIO.",
+    parrafo1: "Tu proceso universitario avanza con bases sólidas, aunque existen áreas específicas donde un acompañamiento oportuno puede potenciar aún más tu desempeño y bienestar integral.",
+    parrafo2: "Te invitamos a conocer las actividades de tutoría académica, talleres de habilidades de estudio y programas de bienestar que la Universidad CESMAG tiene diseñados para ti.",
+    parrafo3: "Recuerda que nuestro equipo docente y de permanencia está disponible para orientarte ante cualquier inquietud o reto académico y personal."
+  },
+  Alta: {
+    titulo: "¡FELICITACIONES!",
+    subtitulo: "Tu nivel de permanencia en la universidad es ALTO.",
+    parrafo1: "Tus respuestas reflejan una excelente adaptación a la vida universitaria, alto sentido de pertenencia y adecuada articulación con tu proceso formativo.",
+    parrafo2: "Te animamos a continuar con este gran entusiasmo y a participar en las oportunidades de liderazgo, semilleros de investigación y actividades extracurriculares de la institución.",
+    parrafo3: "Continuamos a tu disposición para respaldar tu trayectoria hasta la obtención de tu título profesional."
+  }
+};
+
+// Motor de riesgo dinámico
+export function evaluarInstrumento(respuestas, items = INSTRUMENTO_ITEMS) {
+  const puntajes = {};
+  const conteos = {};
+
+  items.forEach((item) => {
+    const rawDim = item.dim || item.categoria || "IND";
+    const dim = rawDim === "GEST PROG" ? "GEST_PROG" : rawDim;
+    if (!puntajes[dim]) {
+      puntajes[dim] = 0;
+      conteos[dim] = 0;
+    }
+    conteos[dim]++;
+
+    const key = item.dbId ? `item_${item.dbId}` : `item_${item.id}`;
+    let valor = respuestas[key] ?? respuestas[`item_${item.id}`] ?? respuestas[`item_${item.orden}`] ?? 2;
+    if (typeof valor === "string") valor = Number(valor) || 2;
+    
+    if (item.tipo === "likert_inverso" || item.tipo_respuesta === "LIKERT_INVERSO") {
       valor = 5 - valor; // 4->1, 3->2, 2->3, 1->4
     }
-    puntajes[item.dim] += valor;
+    puntajes[dim] += valor;
   });
 
   const evalDim = {};
   let sumaPromedios = 0;
+  const dims = Object.keys(puntajes).length > 0 ? Object.keys(puntajes) : DIMENSIONES;
 
-  DIMENSIONES.forEach((dim) => {
-    const promedio = puntajes[dim] / CONTEO_POR_DIMENSION[dim];
+  dims.forEach((dim) => {
+    const totalEnDim = conteos[dim] || 1;
+    const promedio = puntajes[dim] ? puntajes[dim] / totalEnDim : 3.0;
+    const nivelDim = promedio < 2.3 ? "Baja" : promedio < 3.0 ? "Media" : "Alta";
     evalDim[dim] = {
       promedio: Number(promedio.toFixed(2)),
-      riesgo: promedio < 2.3 ? "Alto" : promedio < 3.0 ? "Medio" : "Bajo"
+      suma: puntajes[dim],
+      totalItems: totalEnDim,
+      riesgo: promedio < 2.3 ? "Alto" : promedio < 3.0 ? "Medio" : "Bajo",
+      nivelPermanencia: nivelDim,
+      conceptoDiagnostico: CONCEPTOS_DIAGNOSTICO[nivelDim]?.[dim] || ""
     };
     sumaPromedios += promedio;
   });
 
-  const promedioGlobal = Number((sumaPromedios / DIMENSIONES.length).toFixed(2));
+  const promedioGlobal = dims.length ? Number((sumaPromedios / dims.length).toFixed(2)) : 3.0;
   const riesgoGlobal = promedioGlobal < 2.3 ? "Alto" : promedioGlobal < 3.0 ? "Medio" : "Bajo";
+  const nivelPermanenciaGlobal = promedioGlobal < 2.3 ? "Baja" : promedioGlobal < 3.0 ? "Media" : "Alta";
 
-  return { porDimension: evalDim, promedioGlobal, riesgoGlobal };
+  return {
+    porDimension: evalDim,
+    promedioGlobal,
+    riesgoGlobal,
+    nivelPermanencia: nivelPermanenciaGlobal,
+    mensajePermanencia: MENSAJES_PERMANENCIA[nivelPermanenciaGlobal] || MENSAJES_PERMANENCIA.Baja,
+    conceptosPorDimension: {
+      IND: evalDim.IND?.conceptoDiagnostico || CONCEPTOS_DIAGNOSTICO[nivelPermanenciaGlobal].IND,
+      INS: evalDim.INS?.conceptoDiagnostico || CONCEPTOS_DIAGNOSTICO[nivelPermanenciaGlobal].INS,
+      ACA: evalDim.ACA?.conceptoDiagnostico || CONCEPTOS_DIAGNOSTICO[nivelPermanenciaGlobal].ACA,
+      SOC: evalDim.SOC?.conceptoDiagnostico || CONCEPTOS_DIAGNOSTICO[nivelPermanenciaGlobal].SOC
+    }
+  };
 }
+

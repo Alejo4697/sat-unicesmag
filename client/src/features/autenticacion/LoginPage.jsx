@@ -1,11 +1,6 @@
 /* ==========================================================================
-   Feature: Autenticación
-   LoginPage - migración real de index.html. El mockup no tenía contraseñas
-   reales (era una simulación por rol); acá se conserva esa misma UX: se
-   elige un rol y el formulario resuelve el primer usuario de ese rol
-   (server/src/shared/data/mockData.js -> usuarios) y hace login con ese id.
-   Cuando exista autenticación real (RQF01), este formulario pasa a mandar
-   email/password de verdad a POST /api/auth/login.
+   Feature: Autenticación - LoginPage
+   Diseño institucional moderno y profesional para SAT-UNICESMAG.
    ========================================================================== */
 
 import { useEffect, useState } from "react";
@@ -13,22 +8,54 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../shared/context/AuthContext.jsx";
 import { login } from "./api.js";
 
-const ROLES = [
-  { value: "admin", label: "1. Rol Administrativo (Coordinación / Vicerrectora)" },
-  { value: "profesional", label: "2. Rol Profesionales (USP, Salud, Jurídicos, Pastoral)" },
-  { value: "directivo", label: "3. Rol Directivos (Directores Programa / Docentes Acompañantes)" },
-  { value: "reporte_actividades", label: "4. Rol Reporte Actividades (Secretarios, Bienestar)" },
-  { value: "estudiante", label: "5. Rol Estudiante (Encuesta Caracterización)" }
+const ROLES_INFO = [
+  {
+    value: "admin",
+    label: "Rol Administrativo",
+    sublabel: "Coordinación de Acompañamiento / Vicerrectoría",
+    icon: "fa-shield-halved",
+    badgeColor: "#002855"
+  },
+  {
+    value: "profesional",
+    label: "Rol Profesional Asistencial",
+    sublabel: "USP, Salud, Consultorios Jurídicos, Trabajo Social",
+    icon: "fa-user-doctor",
+    badgeColor: "#0891b2"
+  },
+  {
+    value: "directivo",
+    label: "Rol Directivo / Docente",
+    sublabel: "Directores de Programa y Docentes Acompañantes",
+    icon: "fa-chalkboard-user",
+    badgeColor: "#2563eb"
+  },
+  {
+    value: "reporte_actividades",
+    label: "Rol Reporte de Actividades",
+    sublabel: "Secretarías, Bienestar, Deporte y Cultura",
+    icon: "fa-clipboard-list",
+    badgeColor: "#d97706"
+  },
+  {
+    value: "estudiante",
+    label: "Rol Estudiante",
+    sublabel: "Diligenciamiento de Encuesta de Caracterización",
+    icon: "fa-graduation-cap",
+    badgeColor: "#059669"
+  }
 ];
 
 export default function LoginPage() {
   const { user, usuariosDisponibles, iniciarSesionComo } = useAuth();
   const navigate = useNavigate();
   const [rol, setRol] = useState("admin");
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [error, setError] = useState("");
   const [enviando, setEnviando] = useState(false);
 
   const usuarioSeleccionado = usuariosDisponibles.find((u) => u.rol === rol);
+  const rolConfig = ROLES_INFO.find((r) => r.value === rol) || ROLES_INFO[0];
 
   useEffect(() => {
     if (user) navigate("/dashboard", { replace: true });
@@ -37,7 +64,7 @@ export default function LoginPage() {
   async function handleSubmit(e) {
     e.preventDefault();
     if (!usuarioSeleccionado) {
-      setError("No hay un usuario de ejemplo configurado para ese rol todavía.");
+      setError("No hay un usuario de ejemplo configurado para ese rol.");
       return;
     }
     setError("");
@@ -54,53 +81,132 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="auth-page">
-      <div className="auth-card">
-        <div className="auth-header">
-          <img src="/img/escudo_unicesmag.png" alt="Escudo Universidad CESMAG" className="escudo-institucional" />
-          <h1 className="auth-title">SAT-UNICESMAG</h1>
-          <p className="auth-sub">Sistema de Alertas Tempranas y Seguimiento a la Permanencia</p>
-        </div>
+    <div className="login-wrapper">
+      {/* Barra superior con colores institucionales */}
+      <div className="login-top-bar"></div>
 
-        <form onSubmit={handleSubmit}>
-          {error && <div className="auth-error">{error}</div>}
-
-          <div className="role-select-card">
-            <label htmlFor="login-role">
-              <i className="fas fa-user-shield"></i> Rol de Acceso (RQF03)
-            </label>
-            <select
-              id="login-role"
-              className="form-select"
-              style={{ background: "#FFFFFF", fontWeight: 600, fontSize: "0.8125rem" }}
-              value={rol}
-              onChange={(e) => setRol(e.target.value)}
-            >
-              {ROLES.map((r) => (
-                <option key={r.value} value={r.value}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
+      <div className="login-container">
+        <div className="login-card">
+          {/* Encabezado con Logo y Branding */}
+          <div className="login-header">
+            <div className="login-logo-container">
+              <img
+                src="/img/escudo_unicesmag.png"
+                alt="Escudo Universidad CESMAG"
+                className="login-escudo"
+              />
+            </div>
+            <div className="login-inst-badge">UNIVERSIDAD CESMAG</div>
+            <h1 className="login-title">SAT-UNICESMAG</h1>
+            <p className="login-subtitle">
+              Sistema de Alertas Tempranas y Seguimiento a la Permanencia Estudiantil
+            </p>
           </div>
 
-          <div className="input-field-group">
-            <label htmlFor="login-email">Correo Institucional</label>
-            <input id="login-email" type="email" value={usuarioSeleccionado?.email || ""} readOnly />
+          {/* Formulario */}
+          <form onSubmit={handleSubmit} className="login-form">
+            {error && (
+              <div className="login-error-alert">
+                <i className="fas fa-circle-exclamation"></i>
+                <span>{error}</span>
+              </div>
+            )}
+
+            {/* Selector de Rol */}
+            <div className="login-form-group">
+              <label htmlFor="login-role" className="login-label">
+                <i className="fas fa-user-shield" style={{ color: "var(--brand-primary)" }}></i>
+                Perfil de Acceso
+              </label>
+              <div className="login-select-wrapper">
+                <select
+                  id="login-role"
+                  className="login-select"
+                  value={rol}
+                  onChange={(e) => setRol(e.target.value)}
+                >
+                  {ROLES_INFO.map((r) => (
+                    <option key={r.value} value={r.value}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+                <i className="fas fa-chevron-down login-select-arrow"></i>
+              </div>
+            </div>
+
+            {/* Campo: Correo Institucional */}
+            <div className="login-form-group">
+              <label htmlFor="login-email" className="login-label">
+                Correo Institucional
+              </label>
+              <div className="login-input-wrapper">
+                <i className="fas fa-envelope login-input-icon"></i>
+                <input
+                  id="login-email"
+                  type="email"
+                  className="login-input"
+                  value={usuarioSeleccionado?.email || ""}
+                  readOnly
+                  placeholder="nombre.apellido@unicesmag.edu.co"
+                />
+              </div>
+            </div>
+
+            {/* Campo: Contraseña */}
+            <div className="login-form-group">
+              <label htmlFor="login-password" className="login-label">
+                Contraseña
+              </label>
+              <div className="login-input-wrapper">
+                <i className="fas fa-lock login-input-icon"></i>
+                <input
+                  id="login-password"
+                  type={passwordVisible ? "text" : "password"}
+                  className="login-input"
+                  value="cesmag2026*"
+                  readOnly
+                />
+                <button
+                  type="button"
+                  className="login-password-toggle"
+                  onClick={() => setPasswordVisible(!passwordVisible)}
+                  title={passwordVisible ? "Ocultar contraseña" : "Ver contraseña"}
+                >
+                  <i className={`fas ${passwordVisible ? "fa-eye-slash" : "fa-eye"}`}></i>
+                </button>
+              </div>
+            </div>
+
+            {/* Botón de Ingreso */}
+            <button type="submit" className="login-btn-submit" disabled={enviando}>
+              {enviando ? (
+                <>
+                  <i className="fas fa-spinner fa-spin"></i>
+                  <span>Autenticando...</span>
+                </>
+              ) : (
+                <>
+                  <span>Ingresar al Sistema</span>
+                  <i className="fas fa-arrow-right-to-bracket"></i>
+                </>
+              )}
+            </button>
+          </form>
+
+          {/* Micro-información de seguridad */}
+          <div className="login-security-notice">
+            <i className="fas fa-lock-keyhole"></i>
+            <span>Acceso seguro con control de confidencialidad y secreto profesional (RNF01)</span>
           </div>
 
-          <div className="input-field-group">
-            <label htmlFor="login-password">Contraseña</label>
-            <input id="login-password" type="password" defaultValue="••••••••••••" readOnly />
+          {/* Footer institucional */}
+          <div className="login-footer">
+            <span>Universidad CESMAG • San Juan de Pasto, Nariño</span>
+            <span style={{ display: "block", marginTop: "0.2rem", fontSize: "0.725rem", color: "var(--text-subtle)" }}>
+              Vicerrectoría de Evangelización de las Culturas • Acompañamiento Integral
+            </span>
           </div>
-
-          <button type="submit" className="btn-submit" disabled={enviando}>
-            {enviando ? "Ingresando..." : "Ingresar al Sistema"}
-          </button>
-        </form>
-
-        <div className="auth-footer">
-          <span>Universidad CESMAG | Pasto, Nariño</span>
         </div>
       </div>
     </div>
