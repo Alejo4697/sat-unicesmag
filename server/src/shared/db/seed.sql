@@ -84,15 +84,15 @@ ON CONFLICT (nombre) DO NOTHING;
 --  sat.estados_remision  (flujo de la bandeja de remisiones - RQF18)
 --  Portado de ESTADOS en RemisionesPanel.jsx, en el mismo orden.
 --  es_final = true en los estados que cierran el flujo: 'Atendida' y
---  'Devuelta con Recomendaciones'.
+--  'Devuelta con Observaciones'.
 --  nombre es UNIQUE -> ON CONFLICT DO NOTHING.
 -- --------------------------------------------------------------------------
 INSERT INTO sat.estados_remision (nombre, orden, es_final, activo) VALUES
-  ('Generada',                     1, false, true),
-  ('Recibida/Asignada',            2, false, true),
-  ('En Atención',                  3, false, true),
-  ('Atendida',                     4, true,  true),
-  ('Devuelta con Recomendaciones', 5, true,  true)
+  ('Generada',                    1, false, true),
+  ('Recibida/Asignada',           2, false, true),
+  ('En Atención',                 3, false, true),
+  ('Atendida',                    4, true,  true),
+  ('Devuelta con Observaciones',  5, true,  true)
 ON CONFLICT (nombre) DO NOTHING;
 
 -- --------------------------------------------------------------------------
