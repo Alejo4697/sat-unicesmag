@@ -23,6 +23,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import { apiFetch } from "../api/client.js";
+import { formatDateTime, formatTime } from "../utils/formatDateTime.js";
 
 const listIntervenciones = () => apiFetch("/intervenciones");
 const crearIntervencion = (data) => apiFetch("/intervenciones", { method: "POST", body: data });
@@ -157,7 +158,7 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
       {borrador?.data && (
         <div className="autosave-banner">
           <span>
-            <i className="fas fa-history"></i> Se encontró un borrador pausado del {new Date(borrador.timestamp).toLocaleString()}
+            <i className="fas fa-history"></i> Se encontró un borrador pausado del {formatDateTime(borrador.timestamp)}
           </span>
           <div>
             <button onClick={restaurarBorrador} className="btn btn-sm btn-gold">
@@ -174,7 +175,7 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
           <span>
             <i className="fas fa-save"></i> Borrador auto-guardado en este dispositivo (RQF04 / RNF04)
           </span>
-          <small>{autoguardadoEn.toLocaleTimeString()}</small>
+          <small>{formatTime(autoguardadoEn)}</small>
         </div>
       )}
 
