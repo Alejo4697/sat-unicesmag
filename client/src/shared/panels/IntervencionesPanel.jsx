@@ -183,7 +183,7 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
       <div className="dashboard-grid">
         <div className="card" style={{ gridColumn: "span 12" }}>
           <div className="card-header">
-            <h3 className="card-title">Formulario de Proceso de Escucha</h3>
+            <h3 className="card-title">Proceso de Escucha</h3>
             <span className="badge badge-status-process">
               <i className="fas fa-cloud-arrow-up"></i> Auto-guardado Activo
             </span>

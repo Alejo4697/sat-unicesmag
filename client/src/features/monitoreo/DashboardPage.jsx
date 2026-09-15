@@ -244,7 +244,7 @@ export default function DashboardPage() {
 
           <div className="kpi-card">
             <div className="kpi-body">
-              <span className="kpi-label">Alertas Abiertas</span>
+              <span className="kpi-label">Alertas</span>
               <span className="kpi-value">{stats.kpis.alertasAbiertasPrograma.toLocaleString("es-CO")}</span>
             </div>
             <div className="kpi-icon icon-orange">
