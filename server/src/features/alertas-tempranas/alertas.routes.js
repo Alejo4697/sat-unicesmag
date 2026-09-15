@@ -39,7 +39,7 @@ router.post("/", (req, res) => {
     categoria: "Manual",
     nivelRiesgo,
     descripcion,
-    fechaCreacion: new Date().toISOString().replace("T", " ").substring(0, 16),
+    fechaCreacion: new Date().toISOString(),
     creador: `${req.user.nombre} (${req.user.cargo})`,
     estado: "Abierta",
     esVBG: tipo.includes("VBG") || tipo.includes("Género")

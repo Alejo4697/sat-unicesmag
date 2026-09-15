@@ -22,6 +22,7 @@ import { Link } from "react-router-dom";
 import AppLayout from "../../shared/layout/AppLayout.jsx";
 import ChartCanvas from "../../shared/charts/ChartCanvas.jsx";
 import { getDashboardStats, getRiesgoPorDimensiones } from "./api.js";
+import { formatDateTime } from "../../shared/utils/formatDateTime.js";
 
 const DIM_LABELS = {
   IND: "Individual (IND)",
@@ -371,7 +372,7 @@ export default function DashboardPage() {
                       <td>
                         <strong>{r.id}</strong>
                       </td>
-                      <td>{r.fechaRemision}</td>
+                      <td>{formatDateTime(r.fechaRemision)}</td>
                       <td>{r.codigoEstudiante}</td>
                       <td>{r.areaDestino}</td>
                       <td>{r.nivelRiesgo}</td>

@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import AppLayout from "../../shared/layout/AppLayout.jsx";
 import { riskBadgeClass } from "../../shared/utils/risk.js";
+import { formatDateTime } from "../../shared/utils/formatDateTime.js";
 import { listAlertas, crearAlerta, listEstudiantesParaSelector } from "./api.js";
 
 const TIPOS = [
@@ -199,7 +200,7 @@ export default function AlertasPage() {
                       <span className={`badge ${riskBadgeClass(a.nivelRiesgo)}`}>{a.nivelRiesgo}</span>
                     </td>
                     <td>
-                      {a.fechaCreacion}
+                      {formatDateTime(a.fechaCreacion)}
                       <br />
                       <small className="text-muted">{a.creador}</small>
                     </td>

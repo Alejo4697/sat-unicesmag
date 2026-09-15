@@ -78,7 +78,7 @@ router.post("/", (req, res) => {
     profesionalAsignado: "Bandeja General / Por Asignar",
     nivelRiesgo: nivelRiesgo || "Medio",
     motivoRemision,
-    fechaRemision: new Date().toISOString().replace("T", " ").substring(0, 16),
+    fechaRemision: new Date().toISOString(),
     estado: "Generada",
     escalado48h: nivelRiesgo === "Alto" || nivelRiesgo === "Muy Alto",
     recomendacionesAula: ""

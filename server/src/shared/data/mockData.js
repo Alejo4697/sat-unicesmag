@@ -93,9 +93,9 @@ export const MOCK_DATA = {
   ],
 
   alertas: [
-    { id: "ALT-2025-001", codigoEstudiante: "202510045", nombreEstudiante: "Santiago Narváez Jojoa", programa: "Ingeniería de Sistemas", tipo: "Académica / Asistencia", categoria: "Automática", nivelRiesgo: "Alto", descripcion: "Acumulación de 14 inasistencias en Algoritmos I y nota parcial de 2.1.", fechaCreacion: "2025-08-20 09:30", creador: "Sistema Académico (Sincronización)", estado: "Abierta" },
-    { id: "ALT-2025-002", codigoEstudiante: "202220112", nombreEstudiante: "Mateo Fernando Solarte Cabrera", programa: "Derecho", tipo: "Violencia Basada en Género (VBG)", categoria: "Manual", nivelRiesgo: "Alto", descripcion: "Solicitud de orientación confidencial por presunto acoso de pareja exterior.", fechaCreacion: "2025-08-22 14:15", creador: "Dra. María Elena Villota (Consultorios Jurídicos)", estado: "En Atención", esVBG: true },
-    { id: "ALT-2025-003", codigoEstudiante: "202510201", nombreEstudiante: "Camila Andrea Muñoz Portilla", programa: "Arquitectura", tipo: "Socioeconómica", categoria: "Manual", nivelRiesgo: "Medio", descripcion: "Dificultad de movilidad y transporte desde municipio foráneo.", fechaCreacion: "2025-08-25 11:00", creador: "Ing. Carlos Alberto Rosero", estado: "Cerrada" }
+    { id: "ALT-2025-001", codigoEstudiante: "202510045", nombreEstudiante: "Santiago Narváez Jojoa", programa: "Ingeniería de Sistemas", tipo: "Académica / Asistencia", categoria: "Automática", nivelRiesgo: "Alto", descripcion: "Acumulación de 14 inasistencias en Algoritmos I y nota parcial de 2.1.", fechaCreacion: "2025-08-20T09:30:00", creador: "Sistema Académico (Sincronización)", estado: "Abierta" },
+    { id: "ALT-2025-002", codigoEstudiante: "202220112", nombreEstudiante: "Mateo Fernando Solarte Cabrera", programa: "Derecho", tipo: "Violencia Basada en Género (VBG)", categoria: "Manual", nivelRiesgo: "Alto", descripcion: "Solicitud de orientación confidencial por presunto acoso de pareja exterior.", fechaCreacion: "2025-08-22T14:15:00", creador: "Dra. María Elena Villota (Consultorios Jurídicos)", estado: "En Atención", esVBG: true },
+    { id: "ALT-2025-003", codigoEstudiante: "202510201", nombreEstudiante: "Camila Andrea Muñoz Portilla", programa: "Arquitectura", tipo: "Socioeconómica", categoria: "Manual", nivelRiesgo: "Medio", descripcion: "Dificultad de movilidad y transporte desde municipio foráneo.", fechaCreacion: "2025-08-25T11:00:00", creador: "Ing. Carlos Alberto Rosero", estado: "Cerrada" }
   ],
 
   intervenciones: [
@@ -123,14 +123,14 @@ export const MOCK_DATA = {
       id: "REM-2025-034", codigoEstudiante: "202510045", remitidoPor: "Ing. Carlos Alberto Rosero (Director)",
       areaDestino: "Unidad de Servicios Psicológicos (USP)", profesionalAsignado: "Dr. Juan Manuel Botina", nivelRiesgo: "Alto",
       motivoRemision: "Riesgo de deserción por acumulación de inasistencias y problemas de adaptación.",
-      fechaRemision: "2025-08-21 08:00", estado: "En Atención", escalado48h: false,
+      fechaRemision: "2025-08-21T08:00:00", estado: "En Atención", escalado48h: false,
       recomendacionesAula: "Se sugiere flexibilizar entregas mientras completa proceso de orientación psicosocial."
     },
     {
       id: "REM-2025-039", codigoEstudiante: "202220112", remitidoPor: "Dra. Carolina Martínez",
       areaDestino: "Consultorios Jurídicos", profesionalAsignado: "Dra. María Elena Villota", nivelRiesgo: "Muy Alto",
       motivoRemision: "Atención prioritaria caso VBG y apoyo en medidas cautelares.",
-      fechaRemision: "2025-08-22 10:00", estado: "Atendida", escalado48h: true,
+      fechaRemision: "2025-08-22T10:00:00", estado: "Atendida", escalado48h: true,
       recomendacionesAula: "Mantener reserva absoluta del caso."
     }
   ],
