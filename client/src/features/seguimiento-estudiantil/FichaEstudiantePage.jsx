@@ -15,6 +15,7 @@ import { moduleRoles } from "../../shared/config/menuConfig.js";
 import IntervencionesPanel from "../../shared/panels/IntervencionesPanel.jsx";
 import RemisionesPanel from "../../shared/panels/RemisionesPanel.jsx";
 import { riskBadgeClass, riskBoxStyle } from "../../shared/utils/risk.js";
+import { formatDateTime } from "../../shared/utils/formatDateTime.js";
 import { listEstudiantes, getEstudiante, getTimeline } from "./api.js";
 
 const DIMENSION_LABELS = {
@@ -288,7 +289,7 @@ export default function FichaEstudiantePage() {
                             {item.atendidoPor} ({item.cargoAtendio})
                           </span>
                           <span className="timeline-time">
-                            <i className="far fa-clock"></i> {item.fecha}
+                            <i className="far fa-clock"></i> {formatDateTime(item.fecha)}
                           </span>
                         </div>
 

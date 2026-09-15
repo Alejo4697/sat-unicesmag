@@ -101,16 +101,16 @@ export const MOCK_DATA = {
   intervenciones: [
     {
       id: "INT-2025-089", codigoEstudiante: "202510045", atendidoPor: "Dr. Juan Manuel Botina", cargoAtendio: "Psicólogo de Área - USP",
-      fecha: "2025-08-24 10:30", tipoIntervencion: "Orientación psicológica individual",
+      fecha: "2025-08-24T10:30:00", tipoIntervencion: "Orientación psicológica individual",
       motivo: "Seguimiento por bajo rendimiento y ansiedad ante exámenes.",
       resumenAcuerdo: "Se acuerda compromiso de tutoría académica y técnica de regulación emocional.",
       adjuntos: [{ nombre: "Acta_Compromiso_Firmada.pdf", tamano: "1.4 MB", url: "#" }],
       esSensibleVBG: false, cerrado: true,
-      notasAclaratorias: [{ fecha: "2025-08-26 08:15", autor: "Dr. Juan Manuel Botina", nota: "El estudiante asistió a la primera tutoría de matemáticas avanzadas." }]
+      notasAclaratorias: [{ fecha: "2025-08-26T08:15:00", autor: "Dr. Juan Manuel Botina", nota: "El estudiante asistió a la primera tutoría de matemáticas avanzadas." }]
     },
     {
       id: "INT-2025-092", codigoEstudiante: "202220112", atendidoPor: "Dra. María Elena Villota", cargoAtendio: "Consultorios Jurídicos",
-      fecha: "2025-08-23 15:45", tipoIntervencion: "Asesoría jurídica",
+      fecha: "2025-08-23T15:45:00", tipoIntervencion: "Asesoría jurídica",
       motivo: "Asesoría confidencial VBG y medidas de protección psicosocial.",
       resumenAcuerdo: "Canalización prioritaria a USP y registro de bitácora de protección.",
       adjuntos: [{ nombre: "Acta_Consultorio_Juridico_VBG.pdf", tamano: "2.1 MB", url: "#" }],
