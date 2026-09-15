@@ -73,11 +73,15 @@ WHERE NOT EXISTS (
 INSERT INTO sat.dependencias (nombre, tipo, es_confidencialidad_especial, activo) VALUES
   ('Unidad de Servicios Psicológicos (USP)',    'AREA_ATENCION', true,  true),
   ('Trabajo Social',                            'AREA_ATENCION', false, true),
-  ('Área de Salud María Goretti / Enfermería',  'AREA_ATENCION', false, true),
+  ('Área de Salud María Goretti',               'AREA_ATENCION', false, true),
   ('Consultorios Jurídicos',                    'AREA_ATENCION', true,  true),
   ('Pastoral Universitaria',                    'AREA_ATENCION', false, true),
   ('Paz y Convivencia',                         'AREA_ATENCION', false, true),
-  ('Tutoría Académica Docente',                 'AREA_ATENCION', false, true)
+  ('Tutoría Académica Docente',                 'AREA_ATENCION', false, true),
+  ('Enfermería San Damián',                     'AREA_ATENCION', false, true),
+  ('Acompañamiento',                            'AREA_ATENCION', false, true),
+  ('Inclusión',                                 'AREA_ATENCION', false, true),
+  ('Diversidad',                                'AREA_ATENCION', false, true)
 ON CONFLICT (nombre) DO NOTHING;
 
 -- --------------------------------------------------------------------------
