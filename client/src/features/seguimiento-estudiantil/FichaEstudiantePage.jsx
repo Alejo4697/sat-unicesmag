@@ -78,6 +78,7 @@ export default function FichaEstudiantePage() {
       const resultados = await listEstudiantes(q);
       if (resultados.length === 0) {
         setError("No se encontraron estudiantes con ese criterio de búsqueda.");
+        setEstudiante(null);
         return;
       }
       // Si el término es exactamente un código institucional o una cédula,

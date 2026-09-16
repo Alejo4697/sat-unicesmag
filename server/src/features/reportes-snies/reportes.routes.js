@@ -15,6 +15,7 @@
 import { Router } from "express";
 import { MOCK_DATA } from "../../shared/data/mockData.js";
 import { identifyUser, requireModule } from "../../shared/middleware/requireRole.js";
+import { directivoPuedeVerEstudiante } from "../../shared/security/alcanceDirectivo.js";
 
 const router = Router();
 
@@ -30,7 +31,11 @@ router.get("/", (req, res) => {
 });
 
 router.get("/snies", (req, res) => {
-  const filas = MOCK_DATA.estudiantes.map((e) => ({
+  const estudiantesVisibles =
+    req.user.rol === "directivo"
+      ? MOCK_DATA.estudiantes.filter((e) => directivoPuedeVerEstudiante(req.user, e))
+      : MOCK_DATA.estudiantes;
+  const filas = estudiantesVisibles.map((e) => ({
     codigoIES: 1728,
     periodo: "2025-2",
     codEstudiante: e.codigo,

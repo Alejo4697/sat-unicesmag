@@ -14,6 +14,7 @@ import { Router } from "express";
 import { MOCK_DATA } from "../../shared/data/mockData.js";
 import { identifyUser, requireModule } from "../../shared/middleware/requireRole.js";
 import { sanitizarIntervencion } from "../../shared/security/vbg.js";
+import { directivoPuedeVerEstudiante } from "../../shared/security/alcanceDirectivo.js";
 
 const router = Router();
 
@@ -26,10 +27,17 @@ function buscarPorIdentificador(id) {
 }
 
 router.get("/", (req, res) => {
+  // Director: solo estudiantes de su propio programa Y en riesgo, antes de
+  // aplicar el filtro de texto de la búsqueda.
+  const base =
+    req.user.rol === "directivo"
+      ? MOCK_DATA.estudiantes.filter((e) => directivoPuedeVerEstudiante(req.user, e))
+      : MOCK_DATA.estudiantes;
+
   const q = (req.query.q || "").toLowerCase().trim();
   const estudiantes = !q
-    ? MOCK_DATA.estudiantes
-    : MOCK_DATA.estudiantes.filter(
+    ? base
+    : base.filter(
         (e) =>
           e.codigo.toLowerCase().includes(q) ||
           e.documento.toLowerCase().includes(q) ||
@@ -45,11 +53,17 @@ router.get("/:id", (req, res) => {
   if (!estudiante) {
     return res.status(404).json({ error: "Estudiante no encontrado." });
   }
+  if (!directivoPuedeVerEstudiante(req.user, estudiante)) {
+    return res.status(403).json({ error: "No tiene acceso a la información de este estudiante." });
+  }
   res.json(estudiante);
 });
 
 router.get("/:id/timeline", (req, res) => {
   const estudiante = buscarPorIdentificador(req.params.id);
+  if (req.user.rol === "directivo" && (!estudiante || !directivoPuedeVerEstudiante(req.user, estudiante))) {
+    return res.status(403).json({ error: "No tiene acceso a la información de este estudiante." });
+  }
   const codigo = estudiante ? estudiante.codigo : req.params.id;
   const intervenciones = MOCK_DATA.intervenciones
     .filter((i) => i.codigoEstudiante === codigo)

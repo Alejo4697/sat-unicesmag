@@ -89,6 +89,20 @@ export const MOCK_DATA = {
       puntajesCampo: { individual: "Bajo", asistencial: "Bajo", academico: "Medio", socioeconomico: "Bajo" },
       encuestaRespondida: false,
       acudiente: { nombre: "Jorge Muñoz", telefono: "3167778899", parentesco: "Padre" }
+    },
+    {
+      // Mismo programa que Santiago Narváez (Ingeniería de Sistemas), pero
+      // riesgoGlobal "Bajo" - para probar que directivoPuedeVerEstudiante
+      // (ver shared/security/alcanceDirectivo.js) lo excluye aunque sea del
+      // programa del Director: "propio programa" solo no basta, también
+      // debe estar en riesgo.
+      codigo: "202510330", documento: "1085556622", nombres: "Juan Sebastián", apellidos: "Erazo Bravo",
+      programa: "Ingeniería de Sistemas", semestre: 3, periodo: "2025 II",
+      email: "juan.erazo@est.unicesmag.edu.co", telefono: "3145556622",
+      promedioAcademico: 4.1, inasistenciasAcumuladas: 1, riesgoGlobal: "Bajo", puntajeRiesgo: 1.8,
+      puntajesCampo: { individual: "Bajo", asistencial: "Bajo", academico: "Bajo", socioeconomico: "Bajo" },
+      encuestaRespondida: true,
+      acudiente: { nombre: "Marina Bravo", telefono: "3178889911", parentesco: "Madre" }
     }
   ],
 

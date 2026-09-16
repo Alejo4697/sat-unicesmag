@@ -72,7 +72,6 @@ JOIN (VALUES
 
   ('acceso:caracterizacion', 'admin'),
   ('acceso:caracterizacion', 'profesional'),
-  ('acceso:caracterizacion', 'directivo'),
   ('acceso:caracterizacion', 'estudiante'),
 
   ('acceso:reportes',        'admin'),
