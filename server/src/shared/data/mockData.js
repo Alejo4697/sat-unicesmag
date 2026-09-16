@@ -58,7 +58,7 @@ export const MOCK_DATA = {
       codigo: "202510045", documento: "1085324901", nombres: "Santiago Narváez", apellidos: "Jojoa Bastidas",
       programa: "Ingeniería de Sistemas", semestre: 1, periodo: "2025 II",
       email: "santiago.narvaez@est.unicesmag.edu.co", telefono: "3165432109",
-      promedioAcademico: 3.2, inasistenciasAcumuladas: 14, riesgoGlobal: "Alto",
+      promedioAcademico: 3.2, inasistenciasAcumuladas: 14, riesgoGlobal: "Alto", puntajeRiesgo: 12.4,
       puntajesCampo: { individual: "Alto", asistencial: "Medio", academico: "Alto", socioeconomico: "Alto" },
       encuestaRespondida: true,
       acudiente: { nombre: "Carmen Bastidas", telefono: "3187654321", parentesco: "Madre" }
@@ -67,7 +67,7 @@ export const MOCK_DATA = {
       codigo: "202410098", documento: "1085443211", nombres: "Valeria Alejandra", apellidos: "Guerrero España",
       programa: "Psicología", semestre: 4, periodo: "2025 II",
       email: "valeria.guerrero@est.unicesmag.edu.co", telefono: "3209876543",
-      promedioAcademico: 4.3, inasistenciasAcumuladas: 2, riesgoGlobal: "Bajo",
+      promedioAcademico: 4.3, inasistenciasAcumuladas: 2, riesgoGlobal: "Bajo", puntajeRiesgo: 3.1,
       puntajesCampo: { individual: "Bajo", asistencial: "Bajo", academico: "Bajo", socioeconomico: "Bajo" },
       encuestaRespondida: true,
       acudiente: { nombre: "Roberto Guerrero", telefono: "3154321098", parentesco: "Padre" }
@@ -76,7 +76,7 @@ export const MOCK_DATA = {
       codigo: "202220112", documento: "1085223344", nombres: "Mateo Fernando", apellidos: "Solarte Cabrera",
       programa: "Derecho", semestre: 7, periodo: "2025 II",
       email: "mateo.solarte@est.unicesmag.edu.co", telefono: "3123456789",
-      promedioAcademico: 3.6, inasistenciasAcumuladas: 8, riesgoGlobal: "Medio",
+      promedioAcademico: 3.6, inasistenciasAcumuladas: 8, riesgoGlobal: "Medio", puntajeRiesgo: 7.8,
       puntajesCampo: { individual: "Alto", asistencial: "Medio", academico: "Bajo", socioeconomico: "Medio" },
       encuestaRespondida: true,
       acudiente: { nombre: "Elena Cabrera", telefono: "3119876543", parentesco: "Madre" }
@@ -85,7 +85,7 @@ export const MOCK_DATA = {
       codigo: "202510201", documento: "1085998877", nombres: "Camila Andrea", apellidos: "Muñoz Portilla",
       programa: "Arquitectura", semestre: 1, periodo: "2025 II",
       email: "camila.munoz@est.unicesmag.edu.co", telefono: "3178889900",
-      promedioAcademico: 3.9, inasistenciasAcumuladas: 5, riesgoGlobal: "Bajo",
+      promedioAcademico: 3.9, inasistenciasAcumuladas: 5, riesgoGlobal: "Bajo", puntajeRiesgo: 2.5,
       puntajesCampo: { individual: "Bajo", asistencial: "Bajo", academico: "Medio", socioeconomico: "Bajo" },
       encuestaRespondida: false,
       acudiente: { nombre: "Jorge Muñoz", telefono: "3167778899", parentesco: "Padre" }

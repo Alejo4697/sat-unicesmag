@@ -147,7 +147,8 @@ export default function FichaEstudiantePage() {
                 </div>
                 <div>
                   <span className={`badge ${riskBadgeClass(estudiante.riesgoGlobal)}`}>
-                    <i className="fas fa-circle-exclamation"></i> Riesgo Global {estudiante.riesgoGlobal}
+                    <i className="fas fa-circle-exclamation"></i> Riesgo Global: {estudiante.riesgoGlobal}{" "}
+                    <small style={{ opacity: 0.85, fontWeight: 500 }}>({estudiante.puntajeRiesgo}/15)</small>
                   </span>
                 </div>
               </div>
