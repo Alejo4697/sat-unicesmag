@@ -65,7 +65,13 @@ router.get("/remisiones", (req, res) => {
     idRemision: r.id,
     codEstudiante: r.codigoEstudiante,
     remitidoPor: r.remitidoPor,
+    tipoApoyo: r.tipoApoyo || "",
+    lineaAccion: r.lineaAccion || "",
+    componente: r.componente || "",
+    programa: r.programa || "",
+    proyecto: r.proyecto || "",
     areaDestino: r.areaDestino,
+    profesionalAsignado: r.profesionalAsignado,
     nivelRiesgo: r.nivelRiesgo,
     estado: r.estado,
     fecha: r.fechaRemision

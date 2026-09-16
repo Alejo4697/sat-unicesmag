@@ -1,8 +1,13 @@
 /* ==========================================================================
    SAT-UNICESMAG - Menú Dinámico por Rol (RQF03) - espejo del cliente
-   Debe reflejar EXACTAMENTE server/src/data/menuConfig.js (mismos ids,
-   roles, orden y flags `hidden`). Se usa para pintar el sidebar sin esperar
-   la respuesta de /api/menu; el backend igual vuelve a validar cada request.
+   Debe reflejar server/src/shared/data/menuConfig.js (mismos ids, orden y
+   flags `hidden`).
+
+   Los `roles` de aquí son solo el RESPALDO por defecto: el acceso real lo
+   trae AuthContext desde GET /api/menu/permisos (matriz editable en
+   Administración) y se pasa como `mapa` a las funciones de abajo. Si el
+   mapa aún no llegó o falló, se usan estos roles. El backend igual vuelve
+   a validar cada request.
 
    `hidden: true` = el módulo conserva su RBAC (moduleRoles() y por tanto
    ProtectedRoute lo siguen resolviendo) pero no se pinta en el sidebar.
@@ -44,17 +49,23 @@ export const MENU_CONFIG = [
   }
 ];
 
-// Para pintar el sidebar: secciones del rol, sin los items `hidden` y sin
-// secciones que queden vacías.
-export function menuForRole(rol) {
-  return MENU_CONFIG.filter((section) => section.roles.includes(rol))
-    .map((section) => ({ ...section, items: section.items.filter((item) => !item.hidden) }))
-    .filter((section) => section.items.length > 0);
-}
+// { idModulo: [roles] } por defecto (mismo formato que /api/menu/permisos).
+export const DEFAULT_MODULE_ROLES = Object.fromEntries(
+  MENU_CONFIG.flatMap((section) => section.items.map((item) => [item.id, section.roles]))
+);
 
 // Para el RBAC de rutas (ProtectedRoute): mira TODOS los items, también los
 // `hidden` - ocultar un módulo del sidebar no cambia quién puede usarlo.
-export function moduleRoles(moduleId) {
-  const section = MENU_CONFIG.find((s) => s.items.some((i) => i.id === moduleId));
-  return section ? section.roles : [];
+export function moduleRoles(moduleId, mapa = null) {
+  const fuente = mapa || DEFAULT_MODULE_ROLES;
+  return fuente[moduleId] || [];
+}
+
+// Para pintar el sidebar: por cada sección, los items (no `hidden`) a los
+// que el rol tiene acceso; se omiten las secciones que queden vacías.
+export function menuForRole(rol, mapa = null) {
+  return MENU_CONFIG.map((section) => ({
+    ...section,
+    items: section.items.filter((item) => !item.hidden && moduleRoles(item.id, mapa).includes(rol))
+  })).filter((section) => section.items.length > 0);
 }

@@ -36,7 +36,13 @@ const COLUMNAS_REMISIONES = [
   { key: "idRemision", header: "ID_REMISION" },
   { key: "codEstudiante", header: "COD_ESTUDIANTE" },
   { key: "remitidoPor", header: "REMITIDO_POR" },
+  { key: "tipoApoyo", header: "TIPO_APOYO" },
+  { key: "lineaAccion", header: "LINEA_ACCION" },
+  { key: "componente", header: "COMPONENTE" },
+  { key: "programa", header: "PROGRAMA" },
+  { key: "proyecto", header: "PROYECTO" },
   { key: "areaDestino", header: "AREA_DESTINO" },
+  { key: "profesionalAsignado", header: "PROFESIONAL_ASIGNADO" },
   { key: "nivelRiesgo", header: "NIVEL_RIESGO" },
   { key: "estado", header: "ESTADO" },
   { key: "fecha", header: "FECHA" }

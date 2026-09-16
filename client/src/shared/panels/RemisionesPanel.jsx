@@ -14,9 +14,16 @@
      - codigoEstudiante  -> si viene, el panel queda fijado a ese estudiante
                             (oculta el selector, filtra la bandeja).
      - nombreEstudiante  -> nombre a mostrar cuando está fijado.
+
+   Destino de la remisión (Matriz de Bienestar, GET /remisiones/rutas):
+     1) Tipo de apoyo (Apoyo 1..5)
+     2) Servicio / proyecto, agrupado por programa
+     -> la oficina y el profesional responsable los deduce el servidor.
+   La opción "Otra área (remisión directa)" solo lista las áreas activas que
+   no tienen rutas en la matriz (p. ej. Consultorios Jurídicos).
    ========================================================================== */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { apiFetch } from "../api/client.js";
 import { riskBadgeClass } from "../utils/risk.js";
@@ -29,8 +36,18 @@ const listEstudiantes = () => apiFetch("/estudiantes");
 // Ver server/src/features/administracion/catalogos.routes.js.
 const listAreasRemision = () => apiFetch("/remisiones/areas");
 const listEstadosRemision = () => apiFetch("/remisiones/estados");
+const listRutasRemision = () => apiFetch("/remisiones/rutas");
 
-const ESTADO_INICIAL_FORM = { codigoEstudiante: "", areaDestino: "", nivelRiesgo: "Medio", motivoRemision: "" };
+const DIRECTA = "directa";
+
+const ESTADO_INICIAL_FORM = {
+  codigoEstudiante: "",
+  tipoApoyo: "",
+  idRuta: "",
+  areaDestino: "",
+  nivelRiesgo: "Medio",
+  motivoRemision: ""
+};
 
 function estadoBadgeClass(estado) {
   if (estado === "En Atención") return "badge-status-process";
@@ -45,6 +62,7 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
   const [estudiantes, setEstudiantes] = useState([]);
   const [areas, setAreas] = useState([]);
   const [estados, setEstados] = useState([]);
+  const [rutas, setRutas] = useState([]);
   const [form, setForm] = useState({
     ...ESTADO_INICIAL_FORM,
     codigoEstudiante: codigoEstudiante || searchParams.get("estudiante") || ""
@@ -56,21 +74,42 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
   const [modalRecomendaciones, setModalRecomendaciones] = useState("");
 
   useEffect(() => {
-    const base = [listRemisiones(), listAreasRemision(), listEstadosRemision()];
+    const base = [listRemisiones(), listAreasRemision(), listEstadosRemision(), listRutasRemision()];
     const peticiones = fijo ? base : [...base, listEstudiantes()];
     Promise.all(peticiones)
-      .then(([r, a, es, e]) => {
+      .then(([r, a, es, ru, e]) => {
         setRemisiones(r);
         setAreas(a);
         setEstados(es);
-        // Preselecciona la primera área activa (antes se preseleccionaba
-        // AREAS_DESTINO[0], que estaba hardcodeado).
-        setForm((prev) => (prev.areaDestino ? prev : { ...prev, areaDestino: a[0]?.nombre || "" }));
+        setRutas(ru);
         if (e) setEstudiantes(e);
       })
       .catch((err) => setError(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Tipos de apoyo presentes en la matriz, en orden (Apoyo 1..5).
+  const tiposApoyo = useMemo(() => {
+    const vistos = new Map();
+    rutas.forEach((r) => vistos.set(String(r.tipoApoyoNumero), r.tipoApoyo));
+    return [...vistos.entries()].map(([numero, nombre]) => ({ numero, nombre }));
+  }, [rutas]);
+
+  // Servicios del tipo de apoyo elegido, agrupados por programa.
+  const programasDelApoyo = useMemo(() => {
+    const grupos = new Map();
+    rutas
+      .filter((r) => String(r.tipoApoyoNumero) === form.tipoApoyo)
+      .forEach((r) => {
+        if (!grupos.has(r.programa)) grupos.set(r.programa, []);
+        grupos.get(r.programa).push(r);
+      });
+    return [...grupos.entries()];
+  }, [rutas, form.tipoApoyo]);
+
+  const areasDirectas = areas.filter((a) => !a.tieneRutas);
+  const rutaSeleccionada = rutas.find((r) => r.id === form.idRuta) || null;
+  const esDirecta = form.tipoApoyo === DIRECTA;
 
   function nombreDeEstudiante(codigo) {
     if (fijo && codigo === codigoEstudiante) return nombreEstudiante || codigo;
@@ -81,16 +120,23 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
   async function handleSubmit(e) {
     e.preventDefault();
     const codigo = codigoEstudiante || form.codigoEstudiante;
-    if (!codigo || !form.areaDestino || !form.motivoRemision) {
+    const destinoOk = esDirecta ? !!form.areaDestino : !!form.idRuta;
+    if (!codigo || !destinoOk || !form.motivoRemision) {
       setError("Por favor complete todos los campos obligatorios.");
       return;
     }
     setEnviando(true);
     setError("");
     try {
-      const nueva = await crearRemision({ ...form, codigoEstudiante: codigo });
+      const payload = {
+        codigoEstudiante: codigo,
+        nivelRiesgo: form.nivelRiesgo,
+        motivoRemision: form.motivoRemision,
+        ...(esDirecta ? { areaDestino: form.areaDestino } : { idRuta: form.idRuta })
+      };
+      const nueva = await crearRemision(payload);
       setRemisiones((prev) => [nueva, ...prev]);
-      setForm({ ...ESTADO_INICIAL_FORM, areaDestino: areas[0]?.nombre || "", codigoEstudiante: codigoEstudiante || "" });
+      setForm({ ...ESTADO_INICIAL_FORM, codigoEstudiante: codigoEstudiante || "" });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -165,24 +211,88 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
             )}
 
             <div className="form-group">
-              <label className="form-label" htmlFor="remision-area-destino">
-                Área Especializada de Destino (RQF17)
+              <label className="form-label" htmlFor="remision-tipo-apoyo">
+                Tipo de Apoyo (RQF17)
               </label>
               <select
-                id="remision-area-destino"
+                id="remision-tipo-apoyo"
                 className="form-select"
                 required
-                value={form.areaDestino}
-                onChange={(e) => setForm({ ...form, areaDestino: e.target.value })}
+                value={form.tipoApoyo}
+                onChange={(e) => setForm({ ...form, tipoApoyo: e.target.value, idRuta: "", areaDestino: "" })}
               >
-                <option value="">-- Seleccionar área --</option>
-                {areas.map((a) => (
-                  <option key={a.id} value={a.nombre}>
-                    {a.nombre}
+                <option value="">-- Seleccionar tipo de apoyo --</option>
+                {tiposApoyo.map((t) => (
+                  <option key={t.numero} value={t.numero}>
+                    Apoyo {t.numero}: {t.nombre}
                   </option>
                 ))}
+                {areasDirectas.length > 0 && <option value={DIRECTA}>Otra área (remisión directa)</option>}
               </select>
             </div>
+
+            {form.tipoApoyo && !esDirecta && (
+              <div className="form-group">
+                <label className="form-label" htmlFor="remision-ruta">
+                  Programa / Servicio
+                </label>
+                <select
+                  id="remision-ruta"
+                  className="form-select"
+                  required
+                  value={form.idRuta}
+                  onChange={(e) => setForm({ ...form, idRuta: e.target.value })}
+                >
+                  <option value="">-- Seleccionar servicio --</option>
+                  {programasDelApoyo.map(([programa, servicios]) => (
+                    <optgroup key={programa} label={programa}>
+                      {servicios.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.proyecto}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {esDirecta && (
+              <div className="form-group">
+                <label className="form-label" htmlFor="remision-area-destino">
+                  Área de Destino
+                </label>
+                <select
+                  id="remision-area-destino"
+                  className="form-select"
+                  required
+                  value={form.areaDestino}
+                  onChange={(e) => setForm({ ...form, areaDestino: e.target.value })}
+                >
+                  <option value="">-- Seleccionar área --</option>
+                  {areasDirectas.map((a) => (
+                    <option key={a.id} value={a.nombre}>
+                      {a.nombre}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {rutaSeleccionada && (
+              <div
+                style={{ fontSize: "0.8rem", background: "var(--bg-body, #f5f7fa)", borderRadius: 8, padding: "0.75rem 1rem", marginBottom: "1rem", lineHeight: 1.6 }}
+              >
+                <div><strong>Línea de acción:</strong> {rutaSeleccionada.lineaAccion}</div>
+                <div><strong>Componente:</strong> {rutaSeleccionada.componente}</div>
+                <div><strong>Programa:</strong> {rutaSeleccionada.programa}</div>
+                <div>
+                  <strong>Se remite a:</strong> {rutaSeleccionada.oficina}
+                  {" — "}
+                  {rutaSeleccionada.profesionalResponsable || "Profesional por asignar"}
+                </div>
+              </div>
+            )}
 
             <div className="form-group">
               <label className="form-label" htmlFor="remision-riesgo">
@@ -264,6 +374,15 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
                     </td>
                     <td>
                       <strong style={{ color: "var(--brand-primary)" }}>{r.areaDestino}</strong>
+                      {r.programa && (
+                        <>
+                          <br />
+                          <small>
+                            {r.programa}
+                            {r.proyecto && r.proyecto !== r.programa ? ` › ${r.proyecto}` : ""}
+                          </small>
+                        </>
+                      )}
                       <br />
                       <small className="text-muted">{r.profesionalAsignado}</small>
                     </td>
@@ -300,6 +419,12 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
                 &times;
               </button>
             </div>
+
+            {modalRemision.tipoApoyo && (
+              <p style={{ fontSize: "0.83rem", marginBottom: "0.5rem" }}>
+                <strong>{modalRemision.tipoApoyo}</strong> · {modalRemision.programa} › {modalRemision.proyecto}
+              </p>
+            )}
 
             <p style={{ fontSize: "0.83rem", marginBottom: "1rem" }}>
               <strong>Motivo de Remisión:</strong> {modalRemision.motivoRemision}

@@ -1,11 +1,15 @@
 /* ==========================================================================
    SAT-UNICESMAG - Menú Dinámico por Rol (RQF03)
    Portado 1:1 desde assets/js/menu.js del mockup estático.
-   Es la ÚNICA fuente de verdad de "qué rol ve/usa qué módulo": tanto
-   client/src/config/menuConfig.js (para pintar el sidebar) como
-   server/src/middleware/requireRole.js (para proteger cada endpoint) deben
-   reflejar exactamente este mismo mapa. Si cambia el acceso de un rol,
-   se cambia aquí primero y se replica en el cliente.
+   Catálogo de módulos (id, nombre, ícono, ruta, sección).
+
+   Los `roles` de cada sección son ahora solo los PERMISOS POR DEFECTO:
+   el acceso real vive en PostgreSQL (sat.modulos / sat.permisos /
+   sat.roles_permisos) y se edita desde Administración → Matriz de Roles y
+   Permisos. Ver shared/security/permisosModulos.js. Estos valores se usan
+   para sembrar la BD (shared/db/permisos_modulos.sql) y como respaldo si
+   la BD no está disponible. Si agrega un módulo nuevo, agréguelo también
+   a ese SQL.
 
    `hidden: true` en un item = el módulo EXISTE y conserva su RBAC (sigue en
    MODULE_ROLES, requireModule() y ProtectedRoute lo resuelven igual), pero

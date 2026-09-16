@@ -14,7 +14,7 @@
    ========================================================================== */
 
 import { MOCK_DATA } from "../data/mockData.js";
-import { rolesForModule } from "../data/menuConfig.js";
+import { rolesParaModulo } from "../security/permisosModulos.js";
 
 export function identifyUser(req, res, next) {
   const userId = req.headers["x-user-id"];
@@ -29,20 +29,25 @@ export function identifyUser(req, res, next) {
 }
 
 // requireModule("alertas") -> 403 si el rol del usuario activo no tiene
-// ese módulo visible según MENU_CONFIG (misma regla que pinta el sidebar).
+// acceso a ese módulo según la matriz de permisos (sat.roles_permisos,
+// editable desde Administración; ver shared/security/permisosModulos.js).
+// Se evalúa en CADA request, así un cambio en la matriz aplica de inmediato.
 export function requireModule(moduleId) {
-  const allowedRoles = rolesForModule(moduleId);
-
-  return (req, res, next) => {
+  return async (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({ error: "No autenticado." });
     }
-    if (!allowedRoles.includes(req.user.rol)) {
-      return res.status(403).json({
-        error: `El rol "${req.user.rol}" no tiene acceso al módulo "${moduleId}".`
-      });
+    try {
+      const allowedRoles = await rolesParaModulo(moduleId);
+      if (!allowedRoles.includes(req.user.rol)) {
+        return res.status(403).json({
+          error: `El rol "${req.user.rol}" no tiene acceso al módulo "${moduleId}".`
+        });
+      }
+      next();
+    } catch (err) {
+      next(err);
     }
-    next();
   };
 }
 

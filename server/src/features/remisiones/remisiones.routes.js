@@ -3,6 +3,7 @@
    GET   /api/remisiones          -> lista
    GET   /api/remisiones/areas    -> catálogo de áreas de destino ACTIVAS
    GET   /api/remisiones/estados  -> catálogo de estados de remisión ACTIVOS
+   GET   /api/remisiones/rutas    -> Matriz de Bienestar: rutas ACTIVAS
    POST  /api/remisiones          -> crear remisión (RQF17)
    PATCH /api/remisiones/:id      -> actualizar estado / recomendaciones (RQF18)
    ==========================================================================
@@ -11,7 +12,14 @@
    catálogos administrables desde Administración:
      - /areas   <- sat.dependencias (tipo 'AREA_ATENCION', activo=true)
      - /estados <- sat.estados_remision (activo=true)
+     - /rutas   <- sat.rutas_remision + programa/componente/línea/tipo de
+                   apoyo/oficina (ver shared/db/matriz_bienestar.sql)
    El panel de Remisiones ya no trae esas listas hardcodeadas.
+
+   Al crear, el cliente manda `idRuta` y el servidor deduce la oficina
+   (areaDestino) y el profesional responsable desde la BD: no se confía en
+   lo que mande el navegador. `areaDestino` suelto solo se acepta para áreas
+   que no tienen ninguna ruta en la matriz (p. ej. Consultorios Jurídicos).
    ========================================================================== */
 
 import { Router } from "express";
@@ -33,11 +41,15 @@ router.get("/", (req, res) => {
 router.get("/areas", async (req, res, next) => {
   try {
     const { rows } = await query(
-      `SELECT id_dependencias AS id, nombre,
-              es_confidencialidad_especial AS "esConfidencialidad"
-       FROM sat.dependencias
-       WHERE tipo = 'AREA_ATENCION' AND activo = true
-       ORDER BY nombre`
+      `SELECT d.id_dependencias AS id, d.nombre,
+              d.es_confidencialidad_especial AS "esConfidencialidad",
+              EXISTS (
+                SELECT 1 FROM sat.rutas_remision r
+                WHERE r.id_dependencias = d.id_dependencias AND r.activo
+              ) AS "tieneRutas"
+       FROM sat.dependencias d
+       WHERE d.tipo = 'AREA_ATENCION' AND d.activo = true
+       ORDER BY d.nombre`
     );
     res.json(rows);
   } catch (err) {
@@ -62,20 +74,108 @@ router.get("/estados", async (req, res, next) => {
   }
 });
 
-// Espeja crearRemision() de assets/js/remisiones.js.
-router.post("/", (req, res) => {
-  const { codigoEstudiante, areaDestino, nivelRiesgo, motivoRemision } = req.body;
+// --------------------------------------------------------------------------
+// Matriz de Bienestar (Excel "Sistema de bienestar para intervenciones y
+// remisiones"). Solo rutas activas y completas (con oficina y tipo de apoyo).
+// --------------------------------------------------------------------------
+const RUTA_SELECT = `
+  SELECT r.id_rutas_remision        AS id,
+         r.nombre                   AS proyecto,
+         p.nombre                   AS programa,
+         c.nombre                   AS componente,
+         l.nombre                   AS "lineaAccion",
+         t.numero                   AS "tipoApoyoNumero",
+         t.nombre                   AS "tipoApoyo",
+         d.nombre                   AS oficina,
+         d.es_confidencialidad_especial AS "esConfidencialidad",
+         r.profesional_responsable  AS "profesionalResponsable"
+  FROM sat.rutas_remision r
+  JOIN sat.programas_bienestar   p ON p.id_programas_bienestar   = r.id_programas_bienestar
+  JOIN sat.componentes_bienestar c ON c.id_componentes_bienestar = p.id_componentes_bienestar
+  JOIN sat.lineas_accion         l ON l.id_lineas_accion         = c.id_lineas_accion
+  JOIN sat.tipos_apoyo           t ON t.id_tipos_apoyo           = r.id_tipos_apoyo
+  JOIN sat.dependencias          d ON d.id_dependencias          = r.id_dependencias
+  WHERE r.activo AND p.activo AND c.activo AND l.activo AND t.activo AND d.activo
+`;
 
-  if (!codigoEstudiante || !areaDestino || !motivoRemision) {
+router.get("/rutas", async (req, res, next) => {
+  try {
+    const { rows } = await query(`${RUTA_SELECT} ORDER BY t.numero, p.nombre, r.nombre`);
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+const SIN_PROFESIONAL = "Bandeja General / Por Asignar";
+
+// Espeja crearRemision() de assets/js/remisiones.js.
+router.post("/", async (req, res, next) => {
+  const { codigoEstudiante, idRuta, areaDestino, nivelRiesgo, motivoRemision } = req.body;
+
+  if (!codigoEstudiante || (!idRuta && !areaDestino) || !motivoRemision) {
     return res.status(400).json({ error: "Complete todos los campos obligatorios." });
+  }
+
+  // Datos de destino resueltos en el servidor.
+  let destino;
+  try {
+    if (idRuta) {
+      const { rows } = await query(`${RUTA_SELECT} AND r.id_rutas_remision = $1`, [idRuta]);
+      if (!rows.length) {
+        return res.status(400).json({ error: "El servicio seleccionado no existe o está inhabilitado." });
+      }
+      const ruta = rows[0];
+      destino = {
+        idRuta: ruta.id,
+        areaDestino: ruta.oficina,
+        profesionalAsignado: ruta.profesionalResponsable || SIN_PROFESIONAL,
+        proyecto: ruta.proyecto,
+        programa: ruta.programa,
+        componente: ruta.componente,
+        lineaAccion: ruta.lineaAccion,
+        tipoApoyo: `Apoyo ${ruta.tipoApoyoNumero}: ${ruta.tipoApoyo}`
+      };
+    } else {
+      // Remisión directa: solo a áreas activas SIN rutas en la matriz.
+      const { rows } = await query(
+        `SELECT d.nombre
+         FROM sat.dependencias d
+         WHERE d.tipo = 'AREA_ATENCION' AND d.activo AND d.nombre = $1
+           AND NOT EXISTS (
+             SELECT 1 FROM sat.rutas_remision r
+             WHERE r.id_dependencias = d.id_dependencias AND r.activo
+           )`,
+        [areaDestino]
+      );
+      if (!rows.length) {
+        return res.status(400).json({
+          error: "Esa área se atiende por la Matriz de Bienestar: seleccione el tipo de apoyo y el servicio."
+        });
+      }
+      destino = {
+        idRuta: null,
+        areaDestino: rows[0].nombre,
+        profesionalAsignado: SIN_PROFESIONAL,
+        proyecto: null,
+        programa: null,
+        componente: null,
+        lineaAccion: null,
+        tipoApoyo: null
+      };
+    }
+  } catch (err) {
+    if (err.code === "22P02") {
+      return res.status(400).json({ error: "Identificador de servicio inválido." });
+    }
+    return next(err);
   }
 
   const nueva = {
     id: `REM-2025-${Math.floor(100 + Math.random() * 900)}`,
     codigoEstudiante,
     remitidoPor: `${req.user.nombre} (${req.user.cargo})`,
-    areaDestino,
-    profesionalAsignado: "Bandeja General / Por Asignar",
+    ...destino,
     nivelRiesgo: nivelRiesgo || "Medio",
     motivoRemision,
     fechaRemision: new Date().toISOString(),

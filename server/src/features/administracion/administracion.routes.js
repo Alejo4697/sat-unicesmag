@@ -7,10 +7,11 @@
    PUT    /api/administracion/umbrales-riesgo   -> actualizar umbrales (RQF11)
    POST   /api/administracion/sincronizar       -> simula la sincronización
                                                      académica institucional (RQF08)
-   GET    /api/administracion/matriz-permisos   -> MENU_CONFIG + roles[].permisos
-                                                     (la "matriz de roles y
-                                                     permisos" que ya viste como
-                                                     mockup, ahora servida real)
+   GET    /api/administracion/matriz-permisos   -> módulos x roles (editable)
+                                                     + roles[].permisos
+   PUT    /api/administracion/matriz-permisos   -> { modulo, rol, permitido }
+                                                     concede/quita el acceso
+                                                     (sat.roles_permisos)
 
    Catálogos administrables (CRUD contra schema `sat`) en catalogos.routes.js:
      /api/administracion/areas-remision      <-> sat.dependencias
@@ -20,14 +21,16 @@
    Esta feature es la ÚNICA migrada a PostgreSQL real (schema `sat`) - ver
    server/src/shared/db/pool.js. El resto de features (alertas, intervenciones,
    etc.) y el middleware de RBAC (requireRole.js) siguen usando MOCK_DATA a
-   propósito. `accesoModulos` en /matriz-permisos y el endpoint /sincronizar
-   se mantienen como estaban (config estática / simulación).
+   propósito. /sincronizar se mantiene como simulación. La matriz de acceso
+   por módulo ya es editable y vive en BD (shared/security/permisosModulos.js).
 
    La forma del JSON de cada endpoint se conserva 1:1 con la versión mock para
    no romper client/src/features/administracion/AdministracionPage.jsx:
      - usuario  -> { id, nombre, email, rol, cargo, programa }
      - umbrales -> { alto, medio }   (números)
-     - matriz   -> { accesoModulos, rolesYPermisos: [{ id, nombre, integrantes, permisos }] }
+     - matriz   -> { roles: [{ id, nombre, descripcion }],
+                     modulos: [{ id, name, icon, seccion, roles, bloqueados }],
+                     rolesYPermisos: [{ id, nombre, integrantes, permisos }] }
 
    Notas de mapeo (schema `sat` no tiene equivalente directo para todo):
      - `rol`      -> sat.roles.nombre del primer rol asignado (texto tal cual).
@@ -39,6 +42,12 @@
 
 import { Router } from "express";
 import { MENU_CONFIG } from "../../shared/data/menuConfig.js";
+import {
+  getMapaPermisos,
+  setPermisoModulo,
+  esBloqueado,
+  PREFIJO_ACCESO
+} from "../../shared/security/permisosModulos.js";
 import { identifyUser, requireModule } from "../../shared/middleware/requireRole.js";
 import { pool, query } from "../../shared/db/pool.js";
 import catalogosRoutes from "./catalogos.routes.js";
@@ -261,6 +270,29 @@ router.post("/sincronizar", (req, res) => {
 
 router.get("/matriz-permisos", async (req, res, next) => {
   try {
+    const { rows: roles } = await query(
+      `SELECT nombre AS id, nombre, descripcion
+       FROM sat.roles
+       WHERE activo = true
+       ORDER BY array_position(
+                  ARRAY['admin','profesional','directivo','reporte_actividades','estudiante']::varchar[],
+                  nombre
+                ) NULLS LAST,
+                nombre`
+    );
+    const mapa = await getMapaPermisos();
+    const modulos = MENU_CONFIG.flatMap((section) =>
+      section.items.map((item) => ({
+        id: item.id,
+        name: item.name,
+        icon: item.icon,
+        seccion: section.title,
+        oculto: !!item.hidden,
+        roles: mapa[item.id] || [],
+        bloqueados: roles.map((r) => r.id).filter((rol) => esBloqueado(item.id, rol))
+      }))
+    );
+
     const { rows } = await query(
       `SELECT r.id_roles AS id,
               r.nombre,
@@ -275,18 +307,36 @@ router.get("/matriz-permisos", async (req, res, next) => {
                 (SELECT array_agg(p.codigo ORDER BY p.codigo)
                  FROM sat.roles_permisos rp
                  JOIN sat.permisos p ON p.id_permisos = rp.id_permisos
-                 WHERE rp.id_roles = r.id_roles),
+                 WHERE rp.id_roles = r.id_roles
+                   AND p.codigo NOT LIKE $1 || '%'),
                 ARRAY[]::text[]
               ) AS permisos
        FROM sat.roles r
        WHERE r.activo = true
-       ORDER BY r.nombre`
+       ORDER BY r.nombre`,
+      [PREFIJO_ACCESO]
     );
 
     res.json({
-      accesoModulos: MENU_CONFIG,
+      roles,
+      modulos,
       rolesYPermisos: rows
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Concede (permitido=true) o quita (false) el acceso de un rol a un módulo.
+// Responde el módulo con su lista de roles actualizada.
+router.put("/matriz-permisos", async (req, res, next) => {
+  const { modulo, rol, permitido } = req.body || {};
+  if (!modulo || !rol || typeof permitido !== "boolean") {
+    return res.status(400).json({ error: "Envíe { modulo, rol, permitido: true | false }." });
+  }
+  try {
+    const roles = await setPermisoModulo(modulo, rol, permitido);
+    res.json({ modulo, roles });
   } catch (err) {
     next(err);
   }
