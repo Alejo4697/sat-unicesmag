@@ -10,11 +10,8 @@ import { Router } from "express";
 import { MOCK_DATA } from "../../shared/data/mockData.js";
 import { identifyUser, requireModule } from "../../shared/middleware/requireRole.js";
 import { sanitizarIntervencion } from "../../shared/security/vbg.js";
-<<<<<<< HEAD
 import { directivoPuedeVerEstudiante } from "../../shared/security/alcanceDirectivo.js";
-=======
 import { query } from "../../shared/db/pool.js";
->>>>>>> 309929b (Cambios)
 
 const router = Router();
 
@@ -127,33 +124,9 @@ async function buscarPorIdentificador(id) {
   );
 }
 
-<<<<<<< HEAD
-router.get("/", (req, res) => {
-  // Director: solo estudiantes de su propio programa Y en riesgo, antes de
-  // aplicar el filtro de texto de la búsqueda.
-  const base =
-    req.user.rol === "directivo"
-      ? MOCK_DATA.estudiantes.filter((e) => directivoPuedeVerEstudiante(req.user, e))
-      : MOCK_DATA.estudiantes;
-
-  const q = (req.query.q || "").toLowerCase().trim();
-  const estudiantes = !q
-    ? base
-    : base.filter(
-        (e) =>
-          e.codigo.toLowerCase().includes(q) ||
-          e.documento.toLowerCase().includes(q) ||
-          e.nombres.toLowerCase().includes(q) ||
-          e.apellidos.toLowerCase().includes(q) ||
-          e.programa.toLowerCase().includes(q)
-      );
-  res.json(estudiantes);
-});
-=======
 // GET /api/estudiantes - Búsqueda por código, cédula o nombre
 router.get("/", async (req, res, next) => {
   const q = (req.query.q || "").toLowerCase().trim();
->>>>>>> 309929b (Cambios)
 
   try {
     let resultados = [];
@@ -298,24 +271,6 @@ router.get("/", async (req, res, next) => {
   } catch (err) {
     next(err);
   }
-<<<<<<< HEAD
-  if (!directivoPuedeVerEstudiante(req.user, estudiante)) {
-    return res.status(403).json({ error: "No tiene acceso a la información de este estudiante." });
-  }
-  res.json(estudiante);
-});
-
-router.get("/:id/timeline", (req, res) => {
-  const estudiante = buscarPorIdentificador(req.params.id);
-  if (req.user.rol === "directivo" && (!estudiante || !directivoPuedeVerEstudiante(req.user, estudiante))) {
-    return res.status(403).json({ error: "No tiene acceso a la información de este estudiante." });
-  }
-  const codigo = estudiante ? estudiante.codigo : req.params.id;
-  const intervenciones = MOCK_DATA.intervenciones
-    .filter((i) => i.codigoEstudiante === codigo)
-    .map((i) => sanitizarIntervencion(i, req.user));
-  res.json(intervenciones);
-=======
 });
 
 // GET /api/estudiantes/:id - Ficha completa por código o cédula
@@ -324,6 +279,9 @@ router.get("/:id", async (req, res, next) => {
     const estudiante = await buscarPorIdentificador(req.params.id);
     if (!estudiante) {
       return res.status(404).json({ error: "Estudiante no encontrado con ese código o cédula." });
+    }
+    if (!directivoPuedeVerEstudiante(req.user, estudiante)) {
+      return res.status(403).json({ error: "No tiene acceso a la información de este estudiante." });
     }
     res.json(estudiante);
   } catch (err) {
@@ -335,6 +293,9 @@ router.get("/:id", async (req, res, next) => {
 router.get("/:id/timeline", async (req, res, next) => {
   try {
     const estudiante = await buscarPorIdentificador(req.params.id);
+    if (req.user.rol === "directivo" && (!estudiante || !directivoPuedeVerEstudiante(req.user, estudiante))) {
+      return res.status(403).json({ error: "No tiene acceso a la información de este estudiante." });
+    }
     const codigo = estudiante ? estudiante.codigo : req.params.id;
     const intervenciones = MOCK_DATA.intervenciones
       .filter((i) => i.codigoEstudiante === codigo)
@@ -343,7 +304,6 @@ router.get("/:id/timeline", async (req, res, next) => {
   } catch (err) {
     next(err);
   }
->>>>>>> 309929b (Cambios)
 });
 
 export default router;

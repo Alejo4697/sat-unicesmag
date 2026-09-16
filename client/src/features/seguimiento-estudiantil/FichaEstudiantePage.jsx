@@ -1,34 +1,23 @@
 /* ==========================================================================
    Feature: Seguimiento Estudiantil
-<<<<<<< HEAD
-   Migración real de ficha-estudiante.html + assets/js/ficha.js: búsqueda
-   multicriterio, encabezado del perfil 360°, y semaforización por
-   dimensiones (calculada de verdad desde puntajesCampo, no "quemada" como
-   en el mockup). El historial de intervenciones vive ahora en la pestaña
-   "Intervenciones" (ver IntervencionesPanel.jsx), no aquí.
-=======
    Ficha 360° del Estudiante con:
      - Métricas académicas (Promedio, Inasistencias).
      - Semaforización por Dimensiones del Instrumento de Caracterización
        (Individual, Institucional, Académico, Socioeconómico, Gestión Programa).
      - Botón y modal de consulta interactiva de respuestas por sesión/dimensión.
      - Historial de intervenciones y remisiones con secreto profesional (RNF01).
->>>>>>> 309929b (Cambios)
    ========================================================================== */
 
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import AppLayout from "../../shared/layout/AppLayout.jsx";
 import { useAuth } from "../../shared/context/AuthContext.jsx";
+import { moduleRoles } from "../../shared/config/menuConfig.js";
 import IntervencionesPanel from "../../shared/panels/IntervencionesPanel.jsx";
 import RemisionesPanel from "../../shared/panels/RemisionesPanel.jsx";
 import { riskBadgeClass, riskBoxStyle } from "../../shared/utils/risk.js";
-<<<<<<< HEAD
-import { listEstudiantes, getEstudiante } from "./api.js";
-=======
 import { formatDateTime } from "../../shared/utils/formatDateTime.js";
 import { listEstudiantes, getEstudiante, getTimeline, getCaracterizacionesEstudiante } from "./api.js";
->>>>>>> 309929b (Cambios)
 
 const DIMENSIONES_INFO = {
   IND: { nombre: "Nivel Individual", label: "Individual (IND)", color: "var(--brand-primary, #1e3a8a)", bg: "rgba(30, 58, 138, 0.08)", icon: "fa-user" },
@@ -45,12 +34,10 @@ const TABS = [
 ];
 
 export default function FichaEstudiantePage() {
-  const { puedeAcceder } = useAuth();
+  const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [termino, setTermino] = useState(searchParams.get("codigo") || "202510045");
+  const [termino, setTermino] = useState(searchParams.get("codigo") || "220109009");
   const [estudiante, setEstudiante] = useState(null);
-<<<<<<< HEAD
-=======
   const [timeline, setTimeline] = useState([]);
   const [caracterizaciones, setCaracterizaciones] = useState([]);
   const [sesionActivaIdx, setSesionActivaIdx] = useState(0);
@@ -60,22 +47,12 @@ export default function FichaEstudiantePage() {
   const [filtroDimModal, setFiltroDimModal] = useState("TODAS");
   const [busquedaPregunta, setBusquedaPregunta] = useState("");
 
->>>>>>> 309929b (Cambios)
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(false);
   const [tab, setTab] = useState("resumen");
 
-<<<<<<< HEAD
-  // RBAC: mismo criterio que antes protegía las rutas /intervenciones y
-  // /remisiones con <ProtectedRoute moduleId=...>. Si el rol no tiene el
-  // módulo, la pestaña se muestra deshabilitada y su panel no se renderiza
-  // (el backend además revalida cada endpoint con requireModule).
-  const puedeIntervenciones = puedeAcceder("intervenciones");
-  const puedeRemisiones = puedeAcceder("remisiones");
-=======
   const puedeIntervenciones = moduleRoles("intervenciones").includes(user?.rol);
   const puedeRemisiones = moduleRoles("remisiones").includes(user?.rol);
->>>>>>> 309929b (Cambios)
   const tabActiva =
     (tab === "intervenciones" && !puedeIntervenciones) || (tab === "remisiones" && !puedeRemisiones) ? "resumen" : tab;
 
@@ -83,10 +60,6 @@ export default function FichaEstudiantePage() {
     setCargando(true);
     setError("");
     try {
-<<<<<<< HEAD
-      const est = await getEstudiante(codigo);
-      setEstudiante(est);
-=======
       const [est, tl, carList] = await Promise.all([
         getEstudiante(codigo),
         getTimeline(codigo),
@@ -96,7 +69,6 @@ export default function FichaEstudiantePage() {
       setTimeline(tl);
       setCaracterizaciones(carList || []);
       setSesionActivaIdx(0);
->>>>>>> 309929b (Cambios)
     } catch (err) {
       setError(err.message);
       setEstudiante(null);
@@ -106,7 +78,7 @@ export default function FichaEstudiantePage() {
   }
 
   useEffect(() => {
-    const codigo = searchParams.get("codigo") || "202510045";
+    const codigo = searchParams.get("codigo") || "220109009";
     setTermino(codigo);
     cargarPorCodigo(codigo);
   }, [searchParams]);
@@ -133,12 +105,7 @@ export default function FichaEstudiantePage() {
       // 2. Búsqueda por lista y coincidencias parciales
       const resultados = await listEstudiantes(q);
       if (resultados.length === 0) {
-<<<<<<< HEAD
-        setError("No se encontraron estudiantes con ese criterio de búsqueda.");
-        setEstudiante(null);
-=======
         setError("No se encontraron estudiantes con ese código, cédula o nombre.");
->>>>>>> 309929b (Cambios)
         return;
       }
       const exacto = resultados.find(
@@ -193,7 +160,7 @@ export default function FichaEstudiantePage() {
         INS: estudiante.puntajesCampo.asistencial || "Bajo",
         ACA: estudiante.puntajesCampo.academico || "Medio",
         SOC: estudiante.puntajesCampo.socioeconomico || "Medio",
-        GEST_PROG: "Medio"
+        GEST_PROG: estudiante.puntajesCampo.gestionPrograma || "Medio"
       };
     }
     return { IND: "Medio", INS: "Bajo", ACA: "Medio", SOC: "Medio", GEST_PROG: "Medio" };
@@ -255,14 +222,8 @@ export default function FichaEstudiantePage() {
                   </span>
                 </div>
                 <div>
-<<<<<<< HEAD
-                  <span className={`badge ${riskBadgeClass(estudiante.riesgoGlobal)}`}>
-                    <i className="fas fa-circle-exclamation"></i> Riesgo Global: {estudiante.riesgoGlobal}{" "}
-                    <small style={{ opacity: 0.85, fontWeight: 500 }}>({estudiante.puntajeRiesgo}/15)</small>
-=======
                   <span className={`badge ${riskBadgeClass(sesionActiva?.riesgoGlobal || estudiante.riesgoGlobal)}`}>
                     <i className="fas fa-circle-exclamation"></i> Riesgo Global {sesionActiva?.riesgoGlobal || estudiante.riesgoGlobal}
->>>>>>> 309929b (Cambios)
                   </span>
                 </div>
               </div>
@@ -472,8 +433,6 @@ export default function FichaEstudiantePage() {
                   </div>
                 </div>
               </div>
-<<<<<<< HEAD
-=======
 
               {/* Historial de Intervenciones */}
               <div className="card">
@@ -522,7 +481,7 @@ export default function FichaEstudiantePage() {
                             <p style={{ marginTop: 4 }}>
                               <strong>Acuerdos/Compromisos:</strong> {item.resumenAcuerdo}
                             </p>
-                            {item.adjuntos.length > 0 && (
+                            {item.adjuntos?.length > 0 && (
                               <div style={{ marginTop: 8 }}>
                                 <small>
                                   <strong>Evidencias Adjuntas:</strong>
@@ -560,7 +519,6 @@ export default function FichaEstudiantePage() {
                   ))}
                 </div>
               </div>
->>>>>>> 309929b (Cambios)
             </>
           )}
 

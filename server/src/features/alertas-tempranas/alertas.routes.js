@@ -8,11 +8,8 @@ import { Router } from "express";
 import { MOCK_DATA } from "../../shared/data/mockData.js";
 import { identifyUser, requireModule } from "../../shared/middleware/requireRole.js";
 import { sanitizarAlerta } from "../../shared/security/vbg.js";
-<<<<<<< HEAD
 import { directivoPuedeVerEstudiante } from "../../shared/security/alcanceDirectivo.js";
-=======
 import { query } from "../../shared/db/pool.js";
->>>>>>> 309929b (Cambios)
 
 const router = Router();
 
@@ -72,6 +69,10 @@ router.post("/", async (req, res, next) => {
       );
     }
 
+    if (req.user.rol === "directivo" && (!estudiante || !directivoPuedeVerEstudiante(req.user, estudiante))) {
+      return res.status(403).json({ error: "No tiene acceso a la información de este estudiante." });
+    }
+
     const codigoFinal = estudiante ? estudiante.codigo : cleanId;
     const nombreFinal = estudiante ? `${estudiante.nombres} ${estudiante.apellidos}` : cleanId;
     const programaFinal = estudiante ? estudiante.programa : "No especificado";
@@ -97,33 +98,6 @@ router.post("/", async (req, res, next) => {
   } catch (err) {
     next(err);
   }
-<<<<<<< HEAD
-
-  const estudiante = MOCK_DATA.estudiantes.find((e) => e.codigo === codigoEstudiante);
-
-  if (req.user.rol === "directivo" && (!estudiante || !directivoPuedeVerEstudiante(req.user, estudiante))) {
-    return res.status(403).json({ error: "No tiene acceso a la información de este estudiante." });
-  }
-
-  const nuevaAlerta = {
-    id: `ALT-2025-${Math.floor(100 + Math.random() * 900)}`,
-    codigoEstudiante,
-    nombreEstudiante: estudiante ? `${estudiante.nombres} ${estudiante.apellidos}` : codigoEstudiante,
-    programa: estudiante ? estudiante.programa : "No especificado",
-    tipo,
-    categoria: "Manual",
-    nivelRiesgo,
-    descripcion,
-    fechaCreacion: new Date().toISOString(),
-    creador: `${req.user.nombre} (${req.user.cargo})`,
-    estado: "Abierta",
-    esVBG: tipo.includes("VBG") || tipo.includes("Género")
-  };
-
-  MOCK_DATA.alertas.unshift(nuevaAlerta);
-  res.status(201).json(sanitizarAlerta(nuevaAlerta, req.user));
-=======
->>>>>>> 309929b (Cambios)
 });
 
 export default router;
