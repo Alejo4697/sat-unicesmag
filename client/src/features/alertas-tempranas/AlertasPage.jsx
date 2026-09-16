@@ -24,6 +24,20 @@ const TIPOS = [
 
 const ESTADO_INICIAL = { codigoEstudiante: "", tipo: TIPOS[0], nivelRiesgo: "Alto", descripcion: "" };
 
+// Ícono por nivel, consistente con el resto de la app (ej. badge de "Riesgo
+// Global" en Ficha 360° y los iconos KPI del Tablero). Local a esta pantalla:
+// no se tocó risk.js porque ese archivo lo comparten Ficha 360°, Remisiones
+// y Caracterización.
+function riskIconClass(nivel) {
+  if (nivel === "Alto" || nivel === "Muy Alto") return "fa-circle-exclamation";
+  if (nivel === "Medio") return "fa-triangle-exclamation";
+  return "fa-circle-check";
+}
+
+// Badge de riesgo más grande SOLO en esta tabla (estilo inline, no toca la
+// clase .badge base que usan las demás pantallas).
+const BADGE_RIESGO_LG = { fontSize: "0.85rem", padding: "0.35rem 0.85rem" };
+
 export default function AlertasPage() {
   const [alertas, setAlertas] = useState([]);
   const [estudiantes, setEstudiantes] = useState([]);
@@ -168,9 +182,9 @@ export default function AlertasPage() {
                 <tr>
                   <th>ID</th>
                   <th>Estudiante</th>
+                  <th>Riesgo</th>
                   <th>Tipo / Programa</th>
                   <th>Origen</th>
-                  <th>Riesgo</th>
                   <th>Fecha / Creador</th>
                   <th>Acción</th>
                 </tr>
@@ -187,6 +201,11 @@ export default function AlertasPage() {
                       <small className="text-muted">Cód: {a.codigoEstudiante}</small>
                     </td>
                     <td>
+                      <span className={`badge ${riskBadgeClass(a.nivelRiesgo)}`} style={BADGE_RIESGO_LG}>
+                        <i className={`fas ${riskIconClass(a.nivelRiesgo)}`}></i> {a.nivelRiesgo}
+                      </span>
+                    </td>
+                    <td>
                       <strong>{a.tipo}</strong>
                       <br />
                       <small className="text-muted">{a.programa}</small>
@@ -195,9 +214,6 @@ export default function AlertasPage() {
                       <span className={`badge ${a.categoria === "Automática" ? "badge-status-process" : "badge-status-pending"}`}>
                         {a.categoria}
                       </span>
-                    </td>
-                    <td>
-                      <span className={`badge ${riskBadgeClass(a.nivelRiesgo)}`}>{a.nivelRiesgo}</span>
                     </td>
                     <td>
                       {formatDateTime(a.fechaCreacion)}
