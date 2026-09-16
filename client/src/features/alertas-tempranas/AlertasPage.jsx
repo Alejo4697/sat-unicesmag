@@ -1,16 +1,15 @@
 /* ==========================================================================
    Feature: Alertas Tempranas
-   Migración real de alertas.html + assets/js/alertas.js: formulario de
-   alerta manual (RQF15) a la izquierda, registro activo de alertas a la
-   derecha, con acción rápida "Iniciar Atención" hacia Intervenciones.
+   Formulario de alerta manual (RQF15) con búsqueda directa por
+   Cédula o Código Institucional (sin selector dropdown) y registro activo.
    ========================================================================== */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import AppLayout from "../../shared/layout/AppLayout.jsx";
 import { riskBadgeClass } from "../../shared/utils/risk.js";
 import { formatDateTime } from "../../shared/utils/formatDateTime.js";
-import { listAlertas, crearAlerta, listEstudiantesParaSelector } from "./api.js";
+import { listAlertas, crearAlerta, getEstudiante } from "./api.js";
 
 const TIPOS = [
   "Emocional / Psicológica",
@@ -40,24 +39,71 @@ const BADGE_RIESGO_LG = { fontSize: "0.85rem", padding: "0.35rem 0.85rem" };
 
 export default function AlertasPage() {
   const [alertas, setAlertas] = useState([]);
-  const [estudiantes, setEstudiantes] = useState([]);
   const [form, setForm] = useState(ESTADO_INICIAL);
+  
+  // Búsqueda de estudiante por código o cédula
+  const [busquedaEstudiante, setBusquedaEstudiante] = useState("");
+  const [estudianteSeleccionado, setEstudianteSeleccionado] = useState(null);
+  const [buscandoEstudiante, setBuscandoEstudiante] = useState(false);
+  const [errorEstudiante, setErrorEstudiante] = useState("");
+
+  // Filtro de búsqueda en la tabla de alertas
+  const [filtroTabla, setFiltroTabla] = useState("");
+
   const [error, setError] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [mensaje, setMensaje] = useState("");
 
   useEffect(() => {
-    Promise.all([listAlertas(), listEstudiantesParaSelector()])
-      .then(([a, e]) => {
-        setAlertas(a);
-        setEstudiantes(e);
-      })
+    listAlertas()
+      .then((a) => setAlertas(a))
       .catch((err) => setError(err.message));
   }, []);
 
+  async function handleBuscarEstudiante(e) {
+    if (e) e.preventDefault();
+    const q = busquedaEstudiante.trim();
+    if (!q) {
+      setErrorEstudiante("Por favor ingresa un código estudiantil o número de cédula.");
+      return;
+    }
+
+    setBuscandoEstudiante(true);
+    setErrorEstudiante("");
+    try {
+      const est = await getEstudiante(q);
+      if (est && est.codigo) {
+        setEstudianteSeleccionado(est);
+        setForm((prev) => ({ ...prev, codigoEstudiante: est.codigo }));
+        setErrorEstudiante("");
+      } else {
+        setEstudianteSeleccionado(null);
+        setForm((prev) => ({ ...prev, codigoEstudiante: "" }));
+        setErrorEstudiante("No se encontró ningún estudiante con ese código o cédula.");
+      }
+    } catch {
+      setEstudianteSeleccionado(null);
+      setForm((prev) => ({ ...prev, codigoEstudiante: "" }));
+      setErrorEstudiante("No se encontró ningún estudiante con el código o cédula ingresada.");
+    } finally {
+      setBuscandoEstudiante(false);
+    }
+  }
+
+  function handleLimpiarEstudiante() {
+    setEstudianteSeleccionado(null);
+    setBusquedaEstudiante("");
+    setErrorEstudiante("");
+    setForm((prev) => ({ ...prev, codigoEstudiante: "" }));
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!form.codigoEstudiante || !form.tipo || !form.descripcion) {
+    if (!estudianteSeleccionado || !form.codigoEstudiante) {
+      setError("Debes buscar y seleccionar un estudiante antes de registrar la alerta.");
+      return;
+    }
+    if (!form.tipo || !form.descripcion.trim()) {
       setError("Complete todos los campos requeridos.");
       return;
     }
@@ -67,7 +113,10 @@ export default function AlertasPage() {
       const nueva = await crearAlerta(form);
       setAlertas((prev) => [nueva, ...prev]);
       setForm(ESTADO_INICIAL);
-      setMensaje(`Alerta temprana registrada exitosamente para el estudiante ${form.codigoEstudiante}.`);
+      handleLimpiarEstudiante();
+      setMensaje(
+        `Alerta temprana registrada exitosamente para ${nueva.nombreEstudiante} (Cód: ${nueva.codigoEstudiante}).`
+      );
       setTimeout(() => setMensaje(""), 4000);
     } catch (err) {
       setError(err.message);
@@ -75,6 +124,21 @@ export default function AlertasPage() {
       setEnviando(false);
     }
   }
+
+  // Filtrado de alertas activas
+  const alertasFiltradas = useMemo(() => {
+    if (!filtroTabla.trim()) return alertas;
+    const term = filtroTabla.toLowerCase().trim();
+    return alertas.filter(
+      (a) =>
+        (a.id && a.id.toLowerCase().includes(term)) ||
+        (a.nombreEstudiante && a.nombreEstudiante.toLowerCase().includes(term)) ||
+        (a.codigoEstudiante && String(a.codigoEstudiante).toLowerCase().includes(term)) ||
+        (a.documentoEstudiante && String(a.documentoEstudiante).toLowerCase().includes(term)) ||
+        (a.tipo && a.tipo.toLowerCase().includes(term)) ||
+        (a.programa && a.programa.toLowerCase().includes(term))
+    );
+  }, [alertas, filtroTabla]);
 
   return (
     <AppLayout titulo="Gestión de Alertas Tempranas" breadcrumb="Alertas Automáticas y Manuales RQF14 RQF15">
@@ -88,32 +152,147 @@ export default function AlertasPage() {
       )}
 
       <div className="dashboard-grid">
+        {/* Formulario de Creación de Alerta Manual */}
         <div className="card" style={{ gridColumn: "span 12" }}>
           <div className="card-header">
             <h3 className="card-title">Crear Alerta Manual (RQF15)</h3>
           </div>
 
           <form onSubmit={handleSubmit}>
+            {/* Buscador de estudiante por Cédula o Código */}
             <div className="form-group">
-              <label className="form-label" htmlFor="alerta-estudiante">
-                Estudiante
+              <label className="form-label" htmlFor="identificador-estudiante">
+                Buscar Estudiante (Código Institucional o Cédula)
               </label>
-              <select
-                id="alerta-estudiante"
-                className="form-select"
-                required
-                value={form.codigoEstudiante}
-                onChange={(e) => setForm({ ...form, codigoEstudiante: e.target.value })}
-              >
-                <option value="">-- Seleccionar --</option>
-                {estudiantes.map((e) => (
-                  <option key={e.codigo} value={e.codigo}>
-                    {e.nombres} {e.apellidos} ({e.programa})
-                  </option>
-                ))}
-              </select>
+              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <input
+                  type="text"
+                  id="identificador-estudiante"
+                  className="form-control"
+                  placeholder="Ingresa código (ej. 220109009) o cédula (ej. 1085001009)..."
+                  value={busquedaEstudiante}
+                  onChange={(e) => {
+                    setBusquedaEstudiante(e.target.value);
+                    if (errorEstudiante) setErrorEstudiante("");
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleBuscarEstudiante();
+                    }
+                  }}
+                  disabled={buscandoEstudiante || Boolean(estudianteSeleccionado)}
+                />
+                {estudianteSeleccionado ? (
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    onClick={handleLimpiarEstudiante}
+                    title="Cambiar de estudiante"
+                    style={{ whiteSpace: "nowrap", height: "38px" }}
+                  >
+                    <i className="fas fa-xmark"></i> Cambiar
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleBuscarEstudiante}
+                    disabled={buscandoEstudiante || !busquedaEstudiante.trim()}
+                    style={{ whiteSpace: "nowrap", height: "38px", display: "inline-flex", alignItems: "center", gap: "0.4rem" }}
+                  >
+                    <i className={`fas ${buscandoEstudiante ? "fa-spinner fa-spin" : "fa-magnifying-glass"}`}></i>
+                    <span>{buscandoEstudiante ? "Buscando..." : "Buscar"}</span>
+                  </button>
+                )}
+              </div>
+
+              {errorEstudiante && (
+                <div style={{ color: "var(--risk-high-text, #ef4444)", fontSize: "0.8rem", marginTop: 6, fontWeight: 500 }}>
+                  <i className="fas fa-circle-exclamation"></i> {errorEstudiante}
+                </div>
+              )}
+
+              <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 6 }}>
+                Sugerencias de prueba en Base de Datos: <code>220109009</code> (Santiago Villota - CC <code>1085001009</code>),{" "}
+                <code>220109988</code> (Carlos Gómez - CC <code>1085999888</code>), <code>220109010</code> (Estudiante de Prueba)
+              </div>
             </div>
 
+            {/* Ficha rápida de estudiante encontrado */}
+            {estudianteSeleccionado && (
+              <div
+                style={{
+                  background: "var(--surface-sunken, #f8fafc)",
+                  border: "1px solid var(--border-light, #e2e8f0)",
+                  borderRadius: "8px",
+                  padding: "0.85rem 1.1rem",
+                  marginBottom: "1.25rem",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "1rem",
+                  flexWrap: "wrap"
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
+                  <div
+                    style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: "50%",
+                      background: "var(--brand-primary, #002855)",
+                      color: "#fff",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: "1.2rem",
+                      flexShrink: 0
+                    }}
+                  >
+                    <i className="fas fa-user-graduate"></i>
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: "1rem", color: "var(--text-main)" }}>
+                      {estudianteSeleccionado.nombres} {estudianteSeleccionado.apellidos}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: "0.8rem",
+                        color: "var(--text-muted)",
+                        display: "flex",
+                        gap: "0.75rem",
+                        flexWrap: "wrap",
+                        marginTop: 2
+                      }}
+                    >
+                      <span>
+                        <i className="fas fa-id-card"></i> Cód: <strong>{estudianteSeleccionado.codigo}</strong>
+                      </span>
+                      {estudianteSeleccionado.documento && (
+                        <span>
+                          <i className="fas fa-address-card"></i> CC: <strong>{estudianteSeleccionado.documento}</strong>
+                        </span>
+                      )}
+                      <span>
+                        <i className="fas fa-building-columns"></i> {estudianteSeleccionado.programa}
+                      </span>
+                      <span>
+                        <i className="fas fa-calendar"></i> Sem: {estudianteSeleccionado.semestre}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <span className={`badge ${riskBadgeClass(estudianteSeleccionado.riesgoGlobal || "Medio")}`}>
+                    Riesgo: {estudianteSeleccionado.riesgoGlobal || "Sin evaluar"}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Tipología de la Alerta */}
             <div className="form-group">
               <label className="form-label" htmlFor="alerta-tipo">
                 Tipología de la Alerta
@@ -133,6 +312,7 @@ export default function AlertasPage() {
               </select>
             </div>
 
+            {/* Nivel de Riesgo */}
             <div className="form-group">
               <label className="form-label" htmlFor="alerta-riesgo">
                 Nivel de Riesgo
@@ -150,6 +330,7 @@ export default function AlertasPage() {
               </select>
             </div>
 
+            {/* Detalle de la Observación */}
             <div className="form-group">
               <label className="form-label" htmlFor="alerta-descripcion">
                 Detalle de la Observación
@@ -158,22 +339,46 @@ export default function AlertasPage() {
                 id="alerta-descripcion"
                 className="form-control"
                 placeholder="Observaciones y hechos detectados..."
+                rows={3}
                 required
                 value={form.descripcion}
                 onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
               />
             </div>
 
-            <button type="submit" className="btn btn-primary" style={{ width: "100%" }} disabled={enviando}>
-              <i className="fas fa-bell"></i> {enviando ? "Registrando..." : "Registrar Alerta"}
+            <button
+              type="submit"
+              className="btn btn-primary"
+              style={{ width: "100%", height: "42px", fontWeight: 600 }}
+              disabled={enviando || !estudianteSeleccionado}
+            >
+              <i className="fas fa-bell"></i> {enviando ? "Registrando Alerta..." : "Registrar Alerta"}
             </button>
           </form>
         </div>
 
+        {/* Listado de Alertas Activas con Buscador */}
         <div className="card" style={{ gridColumn: "span 12" }}>
-          <div className="card-header">
-            <h3 className="card-title">Registro Activo de Alertas</h3>
-            <span className="badge badge-risk-high">Periodo 2025 II</span>
+          <div
+            className="card-header"
+            style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}
+          >
+            <div>
+              <h3 className="card-title" style={{ margin: 0 }}>Registro Activo de Alertas</h3>
+              <span className="badge badge-risk-high" style={{ marginTop: 4 }}>Periodo 2025 II</span>
+            </div>
+
+            {/* Buscador en la tabla */}
+            <div style={{ minWidth: 260 }}>
+              <input
+                type="text"
+                className="form-control form-control-sm"
+                placeholder="Filtrar por estudiante, cédula, código o tipo..."
+                value={filtroTabla}
+                onChange={(e) => setFiltroTabla(e.target.value)}
+                style={{ fontSize: "0.8rem", padding: "0.35rem 0.65rem" }}
+              />
+            </div>
           </div>
 
           <div className="table-responsive">
@@ -190,15 +395,25 @@ export default function AlertasPage() {
                 </tr>
               </thead>
               <tbody>
-                {alertas.map((a) => (
+                {alertasFiltradas.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="text-muted" style={{ textAlign: "center", padding: "1.5rem" }}>
+                      No se encontraron alertas registradas con ese criterio.
+                    </td>
+                  </tr>
+                )}
+                {alertasFiltradas.map((a) => (
                   <tr key={a.id}>
                     <td>
                       <strong>{a.id}</strong>
                     </td>
                     <td>
-                      {a.nombreEstudiante}
+                      <strong>{a.nombreEstudiante}</strong>
                       <br />
-                      <small className="text-muted">Cód: {a.codigoEstudiante}</small>
+                      <small className="text-muted">
+                        Cód: {a.codigoEstudiante}
+                        {a.documentoEstudiante ? ` | CC: ${a.documentoEstudiante}` : ""}
+                      </small>
                     </td>
                     <td>
                       <span className={`badge ${riskBadgeClass(a.nivelRiesgo)}`} style={BADGE_RIESGO_LG}>
@@ -235,3 +450,4 @@ export default function AlertasPage() {
     </AppLayout>
   );
 }
+

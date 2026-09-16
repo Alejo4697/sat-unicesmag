@@ -1,30 +1,43 @@
 /* ==========================================================================
    Feature: Seguimiento Estudiantil
+<<<<<<< HEAD
    Migración real de ficha-estudiante.html + assets/js/ficha.js: búsqueda
    multicriterio, encabezado del perfil 360°, y semaforización por
    dimensiones (calculada de verdad desde puntajesCampo, no "quemada" como
    en el mockup). El historial de intervenciones vive ahora en la pestaña
    "Intervenciones" (ver IntervencionesPanel.jsx), no aquí.
+=======
+   Ficha 360° del Estudiante con:
+     - Métricas académicas (Promedio, Inasistencias).
+     - Semaforización por Dimensiones del Instrumento de Caracterización
+       (Individual, Institucional, Académico, Socioeconómico, Gestión Programa).
+     - Botón y modal de consulta interactiva de respuestas por sesión/dimensión.
+     - Historial de intervenciones y remisiones con secreto profesional (RNF01).
+>>>>>>> 309929b (Cambios)
    ========================================================================== */
 
-import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams, Link } from "react-router-dom";
 import AppLayout from "../../shared/layout/AppLayout.jsx";
 import { useAuth } from "../../shared/context/AuthContext.jsx";
 import IntervencionesPanel from "../../shared/panels/IntervencionesPanel.jsx";
 import RemisionesPanel from "../../shared/panels/RemisionesPanel.jsx";
 import { riskBadgeClass, riskBoxStyle } from "../../shared/utils/risk.js";
+<<<<<<< HEAD
 import { listEstudiantes, getEstudiante } from "./api.js";
+=======
+import { formatDateTime } from "../../shared/utils/formatDateTime.js";
+import { listEstudiantes, getEstudiante, getTimeline, getCaracterizacionesEstudiante } from "./api.js";
+>>>>>>> 309929b (Cambios)
 
-const DIMENSION_LABELS = {
-  individual: "Individual (IND)",
-  asistencial: "Asistencial (INS)",
-  academico: "Académico (ACA)",
-  socioeconomico: "Socioeconómico (SOC)"
+const DIMENSIONES_INFO = {
+  IND: { nombre: "Nivel Individual", label: "Individual (IND)", color: "var(--brand-primary, #1e3a8a)", bg: "rgba(30, 58, 138, 0.08)", icon: "fa-user" },
+  INS: { nombre: "Nivel Institucional", label: "Institucional (INS)", color: "#0891b2", bg: "rgba(8, 145, 178, 0.08)", icon: "fa-building-columns" },
+  ACA: { nombre: "Nivel Académico", label: "Académico (ACA)", color: "#2563eb", bg: "rgba(37, 99, 235, 0.08)", icon: "fa-graduation-cap" },
+  SOC: { nombre: "Nivel Socioeconómico", label: "Socioeconómico (SOC)", color: "#d97706", bg: "rgba(217, 119, 6, 0.08)", icon: "fa-hand-holding-dollar" },
+  GEST_PROG: { nombre: "Gestión de Permanencia del Programa", label: "Gestión Prog (GEST PROG)", color: "#059669", bg: "rgba(5, 150, 105, 0.08)", icon: "fa-users-gear" }
 };
 
-// Pestañas de la Ficha. Intervenciones/Remisiones ya no son ítems del
-// sidebar: se abren aquí, sin cambiar de ruta ni perder el estudiante.
 const TABS = [
   { id: "resumen", label: "Resumen", icon: "fa-id-card" },
   { id: "intervenciones", label: "Intervenciones", icon: "fa-clipboard-check" },
@@ -36,16 +49,33 @@ export default function FichaEstudiantePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [termino, setTermino] = useState(searchParams.get("codigo") || "202510045");
   const [estudiante, setEstudiante] = useState(null);
+<<<<<<< HEAD
+=======
+  const [timeline, setTimeline] = useState([]);
+  const [caracterizaciones, setCaracterizaciones] = useState([]);
+  const [sesionActivaIdx, setSesionActivaIdx] = useState(0);
+
+  // Modal de Detalle de Respuestas
+  const [modalRespuestasAbierto, setModalRespuestasAbierto] = useState(false);
+  const [filtroDimModal, setFiltroDimModal] = useState("TODAS");
+  const [busquedaPregunta, setBusquedaPregunta] = useState("");
+
+>>>>>>> 309929b (Cambios)
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(false);
   const [tab, setTab] = useState("resumen");
 
+<<<<<<< HEAD
   // RBAC: mismo criterio que antes protegía las rutas /intervenciones y
   // /remisiones con <ProtectedRoute moduleId=...>. Si el rol no tiene el
   // módulo, la pestaña se muestra deshabilitada y su panel no se renderiza
   // (el backend además revalida cada endpoint con requireModule).
   const puedeIntervenciones = puedeAcceder("intervenciones");
   const puedeRemisiones = puedeAcceder("remisiones");
+=======
+  const puedeIntervenciones = moduleRoles("intervenciones").includes(user?.rol);
+  const puedeRemisiones = moduleRoles("remisiones").includes(user?.rol);
+>>>>>>> 309929b (Cambios)
   const tabActiva =
     (tab === "intervenciones" && !puedeIntervenciones) || (tab === "remisiones" && !puedeRemisiones) ? "resumen" : tab;
 
@@ -53,8 +83,20 @@ export default function FichaEstudiantePage() {
     setCargando(true);
     setError("");
     try {
+<<<<<<< HEAD
       const est = await getEstudiante(codigo);
       setEstudiante(est);
+=======
+      const [est, tl, carList] = await Promise.all([
+        getEstudiante(codigo),
+        getTimeline(codigo),
+        getCaracterizacionesEstudiante(codigo).catch(() => [])
+      ]);
+      setEstudiante(est);
+      setTimeline(tl);
+      setCaracterizaciones(carList || []);
+      setSesionActivaIdx(0);
+>>>>>>> 309929b (Cambios)
     } catch (err) {
       setError(err.message);
       setEstudiante(null);
@@ -67,31 +109,99 @@ export default function FichaEstudiantePage() {
     const codigo = searchParams.get("codigo") || "202510045";
     setTermino(codigo);
     cargarPorCodigo(codigo);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
   async function buscar(e) {
     e.preventDefault();
     const q = termino.trim();
     if (!q) return;
+    setError("");
+    setCargando(true);
     try {
+      // 1. Intentar resolver directamente por código o cédula exacta
+      try {
+        const estDirecto = await getEstudiante(q);
+        if (estDirecto && estDirecto.codigo) {
+          setSearchParams({ codigo: estDirecto.codigo });
+          cargarPorCodigo(estDirecto.codigo);
+          return;
+        }
+      } catch {
+        // Continuar con búsqueda por coincidencia
+      }
+
+      // 2. Búsqueda por lista y coincidencias parciales
       const resultados = await listEstudiantes(q);
       if (resultados.length === 0) {
+<<<<<<< HEAD
         setError("No se encontraron estudiantes con ese criterio de búsqueda.");
         setEstudiante(null);
+=======
+        setError("No se encontraron estudiantes con ese código, cédula o nombre.");
+>>>>>>> 309929b (Cambios)
         return;
       }
-      // Si el término es exactamente un código institucional o una cédula,
-      // se prioriza esa coincidencia sobre el primer match por subcadena.
-      const exacto = resultados.find((r) => r.codigo === q || r.documento === q);
-      setSearchParams({ codigo: (exacto || resultados[0]).codigo });
+      const exacto = resultados.find(
+        (r) =>
+          r.codigo.toLowerCase() === q.toLowerCase() ||
+          (r.documento && r.documento.toLowerCase() === q.toLowerCase())
+      );
+      const codigoEncontrado = (exacto || resultados[0]).codigo;
+      setSearchParams({ codigo: codigoEncontrado });
+      cargarPorCodigo(codigoEncontrado);
     } catch (err) {
       setError(err.message);
+    } finally {
+      setCargando(false);
     }
   }
 
+  // Sesión de caracterización actualmente seleccionada para visualizar
+  const sesionActiva = caracterizaciones[sesionActivaIdx] || null;
+
+  // Respuestas filtradas dentro del modal
+  const respuestasFiltradas = useMemo(() => {
+    if (!sesionActiva?.detalles) return [];
+    return sesionActiva.detalles.filter((d) => {
+      const dimKey = (d.dim === "GEST PROG" ? "GEST_PROG" : d.dim) || "IND";
+      if (filtroDimModal !== "TODAS" && dimKey !== filtroDimModal) return false;
+      if (busquedaPregunta.trim()) {
+        const term = busquedaPregunta.toLowerCase();
+        const matchTexto = d.texto.toLowerCase().includes(term);
+        const matchNum = String(d.orden).includes(term);
+        const matchOpcion = (d.opcionTexto || "").toLowerCase().includes(term);
+        if (!matchTexto && !matchNum && !matchOpcion) return false;
+      }
+      return true;
+    });
+  }, [sesionActiva, filtroDimModal, busquedaPregunta]);
+
+  // Mapa de semaforización de 5 dimensiones
+  const semaforizacion5D = useMemo(() => {
+    if (sesionActiva?.porDimension) {
+      return {
+        IND: sesionActiva.porDimension.IND?.riesgo || "Medio",
+        INS: sesionActiva.porDimension.INS?.riesgo || "Bajo",
+        ACA: sesionActiva.porDimension.ACA?.riesgo || "Medio",
+        SOC: sesionActiva.porDimension.SOC?.riesgo || "Medio",
+        GEST_PROG: sesionActiva.porDimension.GEST_PROG?.riesgo || "Medio"
+      };
+    }
+    if (estudiante?.puntajesCampo) {
+      return {
+        IND: estudiante.puntajesCampo.individual || "Medio",
+        INS: estudiante.puntajesCampo.asistencial || "Bajo",
+        ACA: estudiante.puntajesCampo.academico || "Medio",
+        SOC: estudiante.puntajesCampo.socioeconomico || "Medio",
+        GEST_PROG: "Medio"
+      };
+    }
+    return { IND: "Medio", INS: "Bajo", ACA: "Medio", SOC: "Medio", GEST_PROG: "Medio" };
+  }, [sesionActiva, estudiante]);
+
   return (
     <AppLayout titulo="Ficha 360° del Estudiante" breadcrumb="Consulta Integral / Confidencialidad RNF01">
+      {/* Buscador de estudiantes */}
       <div className="card" style={{ padding: "1rem 1.25rem" }}>
         <form onSubmit={buscar} style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <div style={{ flex: 1 }}>
@@ -108,8 +218,9 @@ export default function FichaEstudiantePage() {
           </button>
         </form>
         <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 6 }}>
-          Sugerencias de prueba: <code>202510045</code> o cédula <code>1085324901</code> (Santiago Narváez - Riesgo Alto),{" "}
-          <code>202220112</code> (Mateo Solarte - Caso VBG), <code>202410098</code> (Valeria Guerrero)
+          Sugerencias en Base de Datos: <code>220109009</code> (Santiago Villota - Cédula: <code>1085001009</code>),{" "}
+          <code>220109988</code> (Carlos Gómez - Cédula: <code>1085999888</code>), <code>220109010</code> (Estudiante de Prueba - Cédula: <code>1085002000</code>),{" "}
+          <code>220109001</code> (Alejandro Muñoz - Pendiente)
         </div>
       </div>
 
@@ -117,6 +228,7 @@ export default function FichaEstudiantePage() {
 
       {estudiante && !cargando && (
         <>
+          {/* Header del Estudiante */}
           <div className="student-header-card">
             <div
               className="student-avatar"
@@ -143,9 +255,14 @@ export default function FichaEstudiantePage() {
                   </span>
                 </div>
                 <div>
+<<<<<<< HEAD
                   <span className={`badge ${riskBadgeClass(estudiante.riesgoGlobal)}`}>
                     <i className="fas fa-circle-exclamation"></i> Riesgo Global: {estudiante.riesgoGlobal}{" "}
                     <small style={{ opacity: 0.85, fontWeight: 500 }}>({estudiante.puntajeRiesgo}/15)</small>
+=======
+                  <span className={`badge ${riskBadgeClass(sesionActiva?.riesgoGlobal || estudiante.riesgoGlobal)}`}>
+                    <i className="fas fa-circle-exclamation"></i> Riesgo Global {sesionActiva?.riesgoGlobal || estudiante.riesgoGlobal}
+>>>>>>> 309929b (Cambios)
                   </span>
                 </div>
               </div>
@@ -163,14 +280,17 @@ export default function FichaEstudiantePage() {
                 <span className="tag-item">
                   <i className="fas fa-phone"></i> {estudiante.telefono}
                 </span>
-                <span className="tag-item">
-                  <i className="fas fa-user-group"></i> Acudiente: {estudiante.acudiente.nombre} ({estudiante.acudiente.parentesco}) -{" "}
-                  {estudiante.acudiente.telefono}
-                </span>
+                {estudiante.acudiente && (
+                  <span className="tag-item">
+                    <i className="fas fa-user-group"></i> Acudiente: {estudiante.acudiente.nombre} ({estudiante.acudiente.parentesco}) -{" "}
+                    {estudiante.acudiente.telefono}
+                  </span>
+                )}
               </div>
             </div>
           </div>
 
+          {/* Navegación por pestañas */}
           <div className="card" style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ display: "flex", borderBottom: "1px solid var(--border-light)" }}>
               {TABS.map((t) => {
@@ -222,6 +342,7 @@ export default function FichaEstudiantePage() {
           {tabActiva === "resumen" && (
             <>
               <div className="dashboard-grid">
+                {/* Tarjeta de Métricas Académicas */}
                 <div className="card" style={{ gridColumn: "span 4" }}>
                   <div className="card-header">
                     <h3 className="card-title">Métricas Académicas</h3>
@@ -242,23 +363,430 @@ export default function FichaEstudiantePage() {
                   </div>
                 </div>
 
+                {/* Tarjeta de Semaforización por Dimensiones y Encuesta */}
                 <div className="card" style={{ gridColumn: "span 8" }}>
-                  <div className="card-header">
-                    <h3 className="card-title">Semaforización por Dimensiones (Instrumento de Caracterización)</h3>
+                  <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
+                    <div>
+                      <h3 className="card-title" style={{ margin: 0 }}>
+                        Semaforización por Encuesta de Caracterización
+                      </h3>
+                      <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                        {caracterizaciones.length > 0
+                          ? `Sesión registrada: ${sesionActiva?.fecha || "2025 II"} (${sesionActiva?.promedioGlobal ? `Promedio: ${sesionActiva.promedioGlobal}/4.0` : ""})`
+                          : "Encuesta institucional de permanencia (34 ítems)"}
+                      </span>
+                    </div>
+
+                    {/* Botones de Acción / Sesiones */}
+                    <div style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
+                      {caracterizaciones.length > 1 && (
+                        <div style={{ display: "flex", gap: "0.25rem", marginRight: "0.4rem" }}>
+                          {caracterizaciones.map((s, idx) => (
+                            <button
+                              key={s.id || idx}
+                              type="button"
+                              className={`btn btn-sm ${sesionActivaIdx === idx ? "btn-primary" : "btn-outline"}`}
+                              onClick={() => setSesionActivaIdx(idx)}
+                              title={`Ver sesión del ${s.fecha}`}
+                              style={{ fontSize: "0.75rem", padding: "0.25rem 0.5rem" }}
+                            >
+                              Sesión #{idx + 1}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {caracterizaciones.length > 0 ? (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-primary"
+                          onClick={() => {
+                            setFiltroDimModal("TODAS");
+                            setBusquedaPregunta("");
+                            setModalRespuestasAbierto(true);
+                          }}
+                          style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontWeight: 600 }}
+                        >
+                          <i className="fas fa-list-check"></i>
+                          <span>Ver Respuestas de la Encuesta</span>
+                          <span
+                            style={{
+                              background: "rgba(255,255,255,0.25)",
+                              padding: "0.1rem 0.4rem",
+                              borderRadius: "10px",
+                              fontSize: "0.7rem"
+                            }}
+                          >
+                            {sesionActiva?.detalles?.length || 34}
+                          </span>
+                        </button>
+                      ) : (
+                        <Link
+                          to={`/caracterizacion`}
+                          className="btn btn-sm btn-outline"
+                          style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}
+                        >
+                          <i className="fas fa-file-pen"></i>
+                          <span>Diligenciar Caracterización</span>
+                        </Link>
+                      )}
+                    </div>
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, textAlign: "center" }}>
-                    {Object.entries(estudiante.puntajesCampo).map(([key, nivel]) => (
-                      <div key={key} style={{ ...riskBoxStyle(nivel), padding: "0.7rem 0.4rem", borderRadius: 6 }}>
-                        <span style={{ fontSize: "0.68rem", fontWeight: 700 }}>{DIMENSION_LABELS[key] || key}</span>
-                        <p style={{ fontWeight: 700, margin: "3px 0 0", fontSize: "0.8rem" }}>
-                          {nivel} {nivel === "Alto" ? "🔴" : nivel === "Medio" ? "🟠" : "🟢"}
-                        </p>
-                      </div>
-                    ))}
+
+                  {/* Bloques de Semaforización en las 5 Dimensiones */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8, textAlign: "center", marginTop: "0.75rem" }}>
+                    {Object.entries(DIMENSIONES_INFO).map(([key, info]) => {
+                      const nivel = semaforizacion5D[key] || "Medio";
+                      return (
+                        <div
+                          key={key}
+                          style={{
+                            ...riskBoxStyle(nivel),
+                            padding: "0.75rem 0.4rem",
+                            borderRadius: "var(--radius-sm)",
+                            cursor: caracterizaciones.length > 0 ? "pointer" : "default",
+                            transition: "transform 0.15s ease"
+                          }}
+                          onClick={() => {
+                            if (caracterizaciones.length > 0) {
+                              setFiltroDimModal(key);
+                              setModalRespuestasAbierto(true);
+                            }
+                          }}
+                          title={`Click para ver respuestas de ${info.nombre}`}
+                        >
+                          <span style={{ fontSize: "0.68rem", fontWeight: 700, display: "block" }}>
+                            {info.label}
+                          </span>
+                          <p style={{ fontWeight: 700, margin: "4px 0 0", fontSize: "0.85rem" }}>
+                            {nivel} {nivel === "Alto" ? "🔴" : nivel === "Medio" ? "🟠" : "🟢"}
+                          </p>
+                          {caracterizaciones.length > 0 && (
+                            <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", display: "block", marginTop: "2px" }}>
+                              <i className="fas fa-eye" style={{ marginRight: "2px" }}></i> Ver ítems
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
+<<<<<<< HEAD
+=======
+
+              {/* Historial de Intervenciones */}
+              <div className="card">
+                <div className="card-header">
+                  <h3 className="card-title">Historial de Intervenciones y Procesos de Escucha</h3>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {puedeIntervenciones && (
+                      <button type="button" onClick={() => setTab("intervenciones")} className="btn btn-primary btn-sm">
+                        <i className="fas fa-plus"></i> Nueva Intervención
+                      </button>
+                    )}
+                    {puedeRemisiones && (
+                      <button type="button" onClick={() => setTab("remisiones")} className="btn btn-outline btn-sm">
+                        <i className="fas fa-share-nodes"></i> Remitir
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="timeline">
+                  {timeline.length === 0 && <p className="page-placeholder">No se registran intervenciones previas para este estudiante.</p>}
+                  {timeline.map((item) => (
+                    <div className="timeline-item" key={item.id}>
+                      <div className={`timeline-node ${item.esSensibleVBG ? "badge-vbg" : ""}`}></div>
+                      <div className="timeline-box">
+                        <div className="timeline-top">
+                          <span className="timeline-user">
+                            {item.atendidoPor} ({item.cargoAtendio})
+                          </span>
+                          <span className="timeline-time">
+                            <i className="far fa-clock"></i> {formatDateTime(item.fecha)}
+                          </span>
+                        </div>
+
+                        {item.esSensibleVBG && (
+                          <div className="badge badge-risk-high" style={{ marginBottom: 8 }}>
+                            <i className="fas fa-lock"></i> Caso Sensible VBG
+                          </div>
+                        )}
+
+                        {item.detalleVisible ? (
+                          <>
+                            <p>
+                              <strong>Motivo:</strong> {item.motivo}
+                            </p>
+                            <p style={{ marginTop: 4 }}>
+                              <strong>Acuerdos/Compromisos:</strong> {item.resumenAcuerdo}
+                            </p>
+                            {item.adjuntos.length > 0 && (
+                              <div style={{ marginTop: 8 }}>
+                                <small>
+                                  <strong>Evidencias Adjuntas:</strong>
+                                </small>
+                                <div>
+                                  {item.adjuntos.map((a) => (
+                                    <a
+                                      href="#"
+                                      key={a.nombre}
+                                      onClick={(e) => e.preventDefault()}
+                                      className="btn btn-outline btn-sm"
+                                      style={{ marginTop: 4, marginRight: 4, display: "inline-flex", alignItems: "center", gap: 4 }}
+                                    >
+                                      <i className="fas fa-file-pdf" style={{ color: "#A6192E" }}></i> {a.nombre} ({a.tamano})
+                                    </a>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="confidential-banner">
+                            <i className="fas fa-user-shield confidential-icon"></i>
+                            <div>
+                              <strong>INFORMACIÓN RESTRINGIDA POR SECRETO PROFESIONAL (RNF01)</strong>
+                              <p style={{ fontSize: "0.75rem", margin: 0 }}>
+                                El detalle de este caso de VBG está protegido. Solo es accesible para el profesional registrador,
+                                Consultorios Jurídicos y USP.
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+>>>>>>> 309929b (Cambios)
             </>
+          )}
+
+          {/* -------------------------------------------------------------------------- */}
+          {/* MODAL: DETALLE DE RESPUESTAS POR SESIÓN Y DIMENSIÓN DE LA ENCUESTA           */}
+          {/* -------------------------------------------------------------------------- */}
+          {modalRespuestasAbierto && sesionActiva && (
+            <div
+              className="modal-overlay"
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(0,0,0,0.55)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 1000,
+                padding: "1rem"
+              }}
+            >
+              <div
+                className="card"
+                style={{
+                  width: "100%",
+                  maxWidth: "860px",
+                  maxHeight: "90vh",
+                  display: "flex",
+                  flexDirection: "column",
+                  background: "var(--surface-card)",
+                  borderRadius: "var(--radius-lg)",
+                  boxShadow: "var(--shadow-lg)",
+                  padding: 0,
+                  overflow: "hidden"
+                }}
+              >
+                {/* Encabezado del Modal */}
+                <div
+                  style={{
+                    padding: "1.25rem 1.5rem",
+                    borderBottom: "1px solid var(--border-light)",
+                    background: "linear-gradient(135deg, #FFFFFF 0%, var(--surface-subtle) 100%)",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                    gap: "1rem"
+                  }}
+                >
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.25rem" }}>
+                      <h3 style={{ margin: 0, fontSize: "1.2rem", fontWeight: 700, color: "var(--brand-primary)" }}>
+                        Respuestas de la Encuesta de Caracterización
+                      </h3>
+                      <span className={`badge ${riskBadgeClass(sesionActiva.riesgoGlobal)}`} style={{ fontSize: "0.75rem" }}>
+                        Riesgo {sesionActiva.riesgoGlobal}
+                      </span>
+                    </div>
+                    <p style={{ margin: 0, fontSize: "0.85rem", color: "var(--text-muted)" }}>
+                      Estudiante: <strong>{estudiante.nombres} {estudiante.apellidos}</strong> ({estudiante.codigo}) • Semestre {estudiante.semestre} • Fecha: {sesionActiva.fecha}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setModalRespuestasAbierto(false)}
+                    style={{ background: "none", border: "none", fontSize: "1.2rem", color: "var(--text-muted)", cursor: "pointer", padding: "0.25rem" }}
+                  >
+                    <i className="fas fa-xmark"></i>
+                  </button>
+                </div>
+
+                {/* Filtros por Dimensión (Botones) */}
+                <div style={{ padding: "0.75rem 1.5rem", borderBottom: "1px solid var(--border-light)", background: "#FFFFFF" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.75rem" }}>
+                    <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase" }}>
+                      Filtrar por Dimensión:
+                    </span>
+                    <button
+                      type="button"
+                      className={`btn btn-sm ${filtroDimModal === "TODAS" ? "btn-primary" : "btn-outline"}`}
+                      onClick={() => setFiltroDimModal("TODAS")}
+                      style={{ fontSize: "0.75rem", padding: "0.25rem 0.6rem" }}
+                    >
+                      Todas ({sesionActiva.detalles?.length || 34})
+                    </button>
+                    {Object.entries(DIMENSIONES_INFO).map(([k, c]) => {
+                      const cantidad = sesionActiva.detalles?.filter((d) => (d.dim === "GEST PROG" ? "GEST_PROG" : d.dim) === k).length || 0;
+                      const activa = filtroDimModal === k;
+                      return (
+                        <button
+                          key={k}
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() => setFiltroDimModal(k)}
+                          style={{
+                            fontSize: "0.75rem",
+                            padding: "0.25rem 0.6rem",
+                            background: activa ? c.color : c.bg,
+                            color: activa ? "#FFFFFF" : c.color,
+                            border: `1px solid ${c.color}`
+                          }}
+                        >
+                          <i className={`fas ${c.icon}`} style={{ marginRight: "0.25rem" }}></i>
+                          {c.label} ({cantidad})
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Buscador de preguntas dentro del modal */}
+                  <div style={{ position: "relative" }}>
+                    <i className="fas fa-search" style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)", fontSize: "0.8rem" }}></i>
+                    <input
+                      type="text"
+                      className="form-control"
+                      placeholder="Buscar por texto de pregunta o respuesta..."
+                      value={busquedaPregunta}
+                      onChange={(e) => setBusquedaPregunta(e.target.value)}
+                      style={{ paddingLeft: "32px", fontSize: "0.85rem", height: "34px" }}
+                    />
+                  </div>
+                </div>
+
+                {/* Lista / Tabla de Respuestas */}
+                <div style={{ flex: 1, overflowY: "auto", padding: "1rem 1.5rem" }}>
+                  {respuestasFiltradas.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: "2rem", color: "var(--text-muted)" }}>
+                      <i className="fas fa-circle-question" style={{ fontSize: "2rem", marginBottom: "0.5rem", display: "block" }}></i>
+                      No hay preguntas que coincidan con los filtros aplicados.
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                      {respuestasFiltradas.map((item) => {
+                        const dimKey = (item.dim === "GEST PROG" ? "GEST_PROG" : item.dim) || "IND";
+                        const cfg = DIMENSIONES_INFO[dimKey] || DIMENSIONES_INFO.IND;
+                        const esRiesgoAlto = item.nivelRiesgo === "Alto";
+                        const esRiesgoMedio = item.nivelRiesgo === "Medio";
+
+                        return (
+                          <div
+                            key={item.id || item.orden}
+                            style={{
+                              padding: "0.85rem 1rem",
+                              borderRadius: "var(--radius-md)",
+                              border: "1px solid var(--border-light)",
+                              background: "var(--surface-card)",
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              gap: "1rem"
+                            }}
+                          >
+                            <div style={{ flex: 1 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.3rem" }}>
+                                <span style={{ fontWeight: 700, color: "var(--brand-primary)", fontSize: "0.85rem" }}>
+                                  #{item.orden}
+                                </span>
+                                <span
+                                  style={{
+                                    fontSize: "0.7rem",
+                                    fontWeight: 700,
+                                    padding: "0.15rem 0.5rem",
+                                    borderRadius: "var(--radius-sm)",
+                                    background: cfg.bg,
+                                    color: cfg.color
+                                  }}
+                                >
+                                  {dimKey.replace("_", " ")}
+                                </span>
+                              </div>
+                              <p style={{ margin: 0, fontSize: "0.9rem", color: "var(--text-main)", fontWeight: 500 }}>
+                                {item.texto}
+                              </p>
+                            </div>
+
+                            {/* Opción respondida por el estudiante */}
+                            <div style={{ textAlign: "right", minWidth: "160px", flexShrink: 0 }}>
+                              <span
+                                style={{
+                                  display: "inline-block",
+                                  padding: "0.3rem 0.75rem",
+                                  borderRadius: "20px",
+                                  fontSize: "0.8rem",
+                                  fontWeight: 700,
+                                  background: esRiesgoAlto ? "var(--risk-high-bg)" : esRiesgoMedio ? "var(--risk-medium-bg)" : "var(--risk-low-bg)",
+                                  color: esRiesgoAlto ? "var(--risk-high-text)" : esRiesgoMedio ? "var(--risk-medium-text)" : "var(--risk-low-text)",
+                                  border: `1px solid ${esRiesgoAlto ? "var(--risk-high-border)" : esRiesgoMedio ? "var(--risk-medium-border)" : "var(--risk-low-border)"}`
+                                }}
+                              >
+                                {item.opcionTexto || `Valor: ${item.valor}`}
+                              </span>
+                              <span style={{ display: "block", fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "2px" }}>
+                                Impacto: {item.nivelRiesgo}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer del Modal */}
+                <div
+                  style={{
+                    padding: "0.85rem 1.5rem",
+                    borderTop: "1px solid var(--border-light)",
+                    background: "var(--surface-subtle)",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center"
+                  }}
+                >
+                  <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+                    Total de respuestas evaluadas: <strong>{sesionActiva.detalles?.length || 34}</strong>
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={() => setModalRespuestasAbierto(false)}
+                    style={{ minWidth: "100px" }}
+                  >
+                    Cerrar
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
         </>
       )}

@@ -152,9 +152,77 @@ export const MOCK_DATA = {
   ],
 
   // Envíos ya procesados del instrumento de caracterización (34 ítems).
-  // No existía en el mockup (el motor de riesgo corría solo en el
-  // navegador y no se guardaba); acá sí se persiste cada envío real.
-  caracterizaciones: [],
+  caracterizaciones: [
+    {
+      id: "CAR-2025-001",
+      codigoEstudiante: "202510045",
+      periodo: "2025 II",
+      semestre: 1,
+      fecha: "2025-08-20 10:30",
+      promedioGlobal: 1.95,
+      riesgoGlobal: "Alto",
+      porDimension: {
+        IND: { promedio: 1.88, riesgo: "Alto" },
+        INS: { promedio: 2.86, riesgo: "Medio" },
+        ACA: { promedio: 1.80, riesgo: "Alto" },
+        SOC: { promedio: 1.60, riesgo: "Alto" },
+        GEST_PROG: { promedio: 2.25, riesgo: "Alto" }
+      },
+      respuestas: {
+        item_1: 2, item_2: 1, item_3: 2, item_4: 2, item_5: 2, item_6: 2, item_7: 2, item_8: 2,
+        item_9: 3, item_10: 3, item_11: 3, item_12: 3, item_13: 3, item_14: 3, item_15: 2,
+        item_16: 2, item_17: 2, item_18: 2, item_19: 1, item_20: 2, item_21: 2, item_22: 2, item_23: 2, item_24: 1, item_25: 4,
+        item_26: 1, item_27: 2, item_28: 2, item_29: 1, item_30: 4,
+        item_31: 2, item_32: 2, item_33: 1, item_34: 2
+      }
+    },
+    {
+      id: "CAR-2025-002",
+      codigoEstudiante: "202220112",
+      periodo: "2025 II",
+      semestre: 7,
+      fecha: "2025-08-22 14:15",
+      promedioGlobal: 2.65,
+      riesgoGlobal: "Medio",
+      porDimension: {
+        IND: { promedio: 2.12, riesgo: "Alto" },
+        INS: { promedio: 2.86, riesgo: "Medio" },
+        ACA: { promedio: 3.20, riesgo: "Bajo" },
+        SOC: { promedio: 2.60, riesgo: "Medio" },
+        GEST_PROG: { promedio: 2.75, riesgo: "Medio" }
+      },
+      respuestas: {
+        item_1: 2, item_2: 2, item_3: 2, item_4: 3, item_5: 2, item_6: 2, item_7: 2, item_8: 2,
+        item_9: 3, item_10: 3, item_11: 3, item_12: 3, item_13: 3, item_14: 3, item_15: 2,
+        item_16: 3, item_17: 3, item_18: 3, item_19: 4, item_20: 3, item_21: 3, item_22: 3, item_23: 3, item_24: 3, item_25: 2,
+        item_26: 2, item_27: 3, item_28: 3, item_29: 2, item_30: 3,
+        item_31: 3, item_32: 3, item_33: 4, item_34: 3
+      }
+    },
+    {
+      id: "CAR-2025-003",
+      codigoEstudiante: "202410098",
+      periodo: "2025 II",
+      semestre: 4,
+      fecha: "2025-08-23 09:00",
+      promedioGlobal: 3.55,
+      riesgoGlobal: "Bajo",
+      porDimension: {
+        IND: { promedio: 3.75, riesgo: "Bajo" },
+        INS: { promedio: 3.57, riesgo: "Bajo" },
+        ACA: { promedio: 3.60, riesgo: "Bajo" },
+        SOC: { promedio: 3.40, riesgo: "Bajo" },
+        GEST_PROG: { promedio: 3.50, riesgo: "Bajo" }
+      },
+      respuestas: {
+        item_1: 4, item_2: 4, item_3: 4, item_4: 4, item_5: 3, item_6: 4, item_7: 4, item_8: 3,
+        item_9: 4, item_10: 3, item_11: 4, item_12: 4, item_13: 3, item_14: 4, item_15: 3,
+        item_16: 4, item_17: 4, item_18: 4, item_19: 4, item_20: 3, item_21: 4, item_22: 3, item_23: 4, item_24: 4, item_25: 1,
+        item_26: 3, item_27: 4, item_28: 4, item_29: 3, item_30: 2,
+        item_31: 3, item_32: 4, item_33: 4, item_34: 4
+      }
+    }
+  ],
 
   // Umbrales de semaforización de riesgo (RQF11) - editables desde
   // Administración. En el mockup el botón "Actualizar Umbrales" solo

@@ -104,6 +104,28 @@ export default function DashboardPage() {
 
   const doughnutOptions = useMemo(() => ({ responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } }), []);
 
+  const kpisInstitucionales = useMemo(() => {
+    if (!stats || stats.vista !== "institucional") return null;
+    if (semestre === "1" && stats.porSemestre?.semestre1) {
+      const s = stats.porSemestre.semestre1;
+      return { total: s.total, encuestados: s.encuestados, faltantes: s.faltantes, riesgoAlto: s.riesgoAlto };
+    }
+    if (semestre === "4" && stats.porSemestre?.semestre4) {
+      const s = stats.porSemestre.semestre4;
+      return { total: s.total, encuestados: s.encuestados, faltantes: s.faltantes, riesgoAlto: s.riesgoAlto };
+    }
+    if (semestre === "7" && stats.porSemestre?.semestre7) {
+      const s = stats.porSemestre.semestre7;
+      return { total: s.total, encuestados: s.encuestados, faltantes: s.faltantes, riesgoAlto: s.riesgoAlto };
+    }
+    return {
+      total: stats.totalEstudiantesMatriculados,
+      encuestados: stats.totalEncuestadosCaracterizacion,
+      faltantes: stats.totalFaltantesCaracterizacion,
+      riesgoAlto: stats.distribucionRiesgo?.alto || 0
+    };
+  }, [stats, semestre]);
+
   const titulo = TITULO_POR_VISTA[vista] || "Tablero de Permanencia Estudiantil";
   const breadcrumb =
     vista === "programa"
@@ -140,7 +162,7 @@ export default function DashboardPage() {
             Semestre Focalizado
           </label>
           <select className="form-select" value={semestre} onChange={(e) => setSemestre(e.target.value)}>
-            <option value="todos">Semestres 1, 4 y 7</option>
+            <option value="todos">Todos los Semestres (1, 4 y 7)</option>
             <option value="1">Semestre 1 (Ingreso)</option>
             <option value="4">Semestre 4 (Intermedio)</option>
             <option value="7">Semestre 7 (Avanzado)</option>
@@ -155,13 +177,15 @@ export default function DashboardPage() {
       </div>
       )}
 
-      {/* ---- Vista institucional (admin): sin cambios ---------------------- */}
-      {vista === "institucional" && (
+      {/* ---- Vista institucional (admin): métricas y semestres ---------------------- */}
+      {vista === "institucional" && kpisInstitucionales && (
         <div className="dashboard-grid">
           <div className="kpi-card">
             <div className="kpi-body">
-              <span className="kpi-label">Total Matriculados</span>
-              <span className="kpi-value">{stats.totalEstudiantesMatriculados.toLocaleString("es-CO")}</span>
+              <span className="kpi-label">
+                {semestre === "todos" ? "Total Matriculados" : `Matriculados Semestre ${semestre}`}
+              </span>
+              <span className="kpi-value">{kpisInstitucionales.total.toLocaleString("es-CO")}</span>
             </div>
             <div className="kpi-icon icon-blue">
               <i className="fas fa-graduation-cap"></i>
@@ -171,7 +195,7 @@ export default function DashboardPage() {
           <div className="kpi-card">
             <div className="kpi-body">
               <span className="kpi-label">Encuestas Completadas</span>
-              <span className="kpi-value">{stats.totalEncuestadosCaracterizacion.toLocaleString("es-CO")}</span>
+              <span className="kpi-value">{kpisInstitucionales.encuestados.toLocaleString("es-CO")}</span>
             </div>
             <div className="kpi-icon icon-green">
               <i className="fas fa-circle-check"></i>
@@ -181,7 +205,7 @@ export default function DashboardPage() {
           <div className="kpi-card">
             <div className="kpi-body">
               <span className="kpi-label">Pendientes por Encuestar</span>
-              <span className="kpi-value">{stats.totalFaltantesCaracterizacion.toLocaleString("es-CO")}</span>
+              <span className="kpi-value">{kpisInstitucionales.faltantes.toLocaleString("es-CO")}</span>
             </div>
             <div className="kpi-icon icon-orange">
               <i className="fas fa-clock"></i>
@@ -191,7 +215,7 @@ export default function DashboardPage() {
           <div className="kpi-card">
             <div className="kpi-body">
               <span className="kpi-label">Estudiantes en Riesgo Alto</span>
-              <span className="kpi-value">{stats.distribucionRiesgo.alto.toLocaleString("es-CO")}</span>
+              <span className="kpi-value">{kpisInstitucionales.riesgoAlto.toLocaleString("es-CO")}</span>
             </div>
             <div className="kpi-icon icon-red">
               <i className="fas fa-triangle-exclamation"></i>

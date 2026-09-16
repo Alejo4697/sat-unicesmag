@@ -25,6 +25,11 @@ const router = Router();
 
 router.use(identifyUser, requireModule("caracterizacion"));
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(val) {
+  return typeof val === "string" && UUID_REGEX.test(val);
+}
+
 // Helper para normalizar categorías y tipos
 function mapCategoria(cat) {
   if (!cat) return "IND";
@@ -457,7 +462,7 @@ router.get("/instrumento", async (req, res) => {
   res.json(INSTRUMENTO_ITEMS);
 });
 
-// --------------------------------------------------------------------------
+/// --------------------------------------------------------------------------
 // 9. GET /estudiante-info/:codigo - Consultar datos de solo lectura del estudiante
 // --------------------------------------------------------------------------
 router.get("/estudiante-info/:codigo", async (req, res, next) => {
@@ -482,7 +487,7 @@ router.get("/estudiante-info/:codigo", async (req, res, next) => {
          FROM sat.estudiantes e
          LEFT JOIN sat.programas_academicos p ON e.id_programas_academicos = p.id_programas_academicos
          LEFT JOIN sat.sedes s ON e.id_sedes = s.id_sedes
-         WHERE e.codigo_externo = $1 OR e.id_estudiantes::text = $1
+         WHERE e.codigo_externo = $1 OR e.numero_documento = $1 OR e.id_estudiantes::text = $1
          LIMIT 1`,
         [codigo]
       );
@@ -542,63 +547,71 @@ router.get("/estudiante-info/:codigo", async (req, res, next) => {
   }
 });
 
+// Helper para construir el desglose pregunta por pregunta de una sesión
+function construirDetallesSesion(respuestas = {}, items = INSTRUMENTO_ITEMS) {
+  return items.map((item) => {
+    const rawDim = item.dim || item.categoria || "IND";
+    const dim = rawDim === "GEST PROG" ? "GEST_PROG" : rawDim;
+    const key = item.dbId ? `item_${item.dbId}` : `item_${item.id}`;
+    let val = respuestas[key] ?? respuestas[`item_${item.id}`] ?? respuestas[`item_${item.orden}`] ?? 2;
+    if (typeof val === "string") val = Number(val) || 2;
+
+    let opcionTexto = "En desacuerdo";
+    let nivelRiesgo = "Medio";
+
+    if (item.tipo === "sino" || item.tipo_respuesta === "BOOLEANO") {
+      opcionTexto = val === 4 ? "Sí" : "No";
+      nivelRiesgo = val === 4 ? "Bajo" : "Alto";
+    } else if (item.tipo === "likert_inverso" || item.tipo_respuesta === "LIKERT_INVERSO") {
+      const opcionesInversas = {
+        1: { texto: "Muy en desacuerdo", riesgo: "Bajo" },
+        2: { texto: "En desacuerdo", riesgo: "Bajo" },
+        3: { texto: "De acuerdo", riesgo: "Medio" },
+        4: { texto: "Muy de acuerdo", riesgo: "Alto" }
+      };
+      opcionTexto = opcionesInversas[val]?.texto || "En desacuerdo";
+      nivelRiesgo = opcionesInversas[val]?.riesgo || "Medio";
+    } else {
+      const opcionesLikert = {
+        1: { texto: "Muy en desacuerdo", riesgo: "Alto" },
+        2: { texto: "En desacuerdo", riesgo: "Medio" },
+        3: { texto: "De acuerdo", riesgo: "Bajo" },
+        4: { texto: "Muy de acuerdo", riesgo: "Bajo" }
+      };
+      opcionTexto = opcionesLikert[val]?.texto || "En desacuerdo";
+      nivelRiesgo = opcionesLikert[val]?.riesgo || "Medio";
+    }
+
+    return {
+      id: item.id || item.orden,
+      dbId: item.dbId,
+      orden: item.orden || item.id,
+      texto: item.texto,
+      dim,
+      dimNombre: DIM_NOMBRES[dim] || item.dimNombre || dim,
+      valor: val,
+      opcionTexto,
+      nivelRiesgo,
+      tipo: item.tipo || mapTipoFrontend(item.tipo_respuesta)
+    };
+  });
+}
+
 // --------------------------------------------------------------------------
-// 10. GET /:codigo - Historial de caracterizaciones de un estudiante
+// 10. GET /:codigo - Historial de caracterizaciones con desglose de respuestas
 // --------------------------------------------------------------------------
 router.get("/:codigo", async (req, res, next) => {
   const { codigo } = req.params;
   try {
-    try {
-      const { rows } = await query(
-        `SELECT rc.id_respuestas_caracterizacion AS id,
-                e.codigo_externo AS "codigoEstudiante",
-                rc.creado_en AS fecha,
-                cr.puntaje_global AS "puntajeGlobal",
-                cr.riesgo_global AS "riesgoGlobal",
-                cr.factores
-         FROM sat.respuestas_caracterizacion rc
-         JOIN sat.estudiantes e ON rc.id_estudiantes = e.id_estudiantes
-         LEFT JOIN sat.calificaciones_riesgo cr ON cr.id_respuestas_caracterizacion = rc.id_respuestas_caracterizacion
-         WHERE e.codigo_externo = $1 OR e.id_estudiantes::text = $1
-         ORDER BY rc.creado_en DESC`,
-        [codigo]
-      );
-      if (rows.length > 0) {
-        return res.json(rows);
-      }
-    } catch {
-      // Fallback a mock
-    }
-
-    const envios = MOCK_DATA.caracterizaciones.filter((c) => c.codigoEstudiante === codigo);
-    res.json(envios);
-  } catch (err) {
-    next(err);
-  }
-});
-
-// --------------------------------------------------------------------------
-// 11. POST / - Enviar, evaluar y persistir encuesta en DataBasePractica
-// --------------------------------------------------------------------------
-router.post("/", async (req, res, next) => {
-  const { codigoEstudiante, respuestas } = req.body;
-
-  if (!codigoEstudiante || !respuestas) {
-    return res.status(400).json({ error: "Falta el código del estudiante o las respuestas." });
-  }
-
-  try {
-    // 1. Cargar items activos de la base de datos
+    // 1. Obtener preguntas activas para armar los ítems
     let itemsActivos = INSTRUMENTO_ITEMS;
-    let opcionesMap = new Map(); // id_pregunta + valor -> id_opcion
-
     try {
-      const { rows } = await query(
+      const { rows: pregRows } = await query(
         `SELECT p.id_preguntas_caracterizacion AS "dbId", p.orden AS id, p.orden, p.categoria, p.tipo_respuesta, p.texto
          FROM sat.preguntas_caracterizacion p WHERE p.activo = true ORDER BY p.orden ASC`
       );
-      if (rows.length > 0) {
-        itemsActivos = rows.map((r) => ({
+      if (pregRows.length > 0) {
+        itemsActivos = pregRows.map((r) => ({
           id: r.id,
           dbId: r.dbId,
           orden: r.orden,
@@ -608,14 +621,189 @@ router.post("/", async (req, res, next) => {
           tipo_respuesta: r.tipo_respuesta,
           texto: r.texto
         }));
-
-        const opRes = await query(`SELECT id_opciones_pregunta, id_preguntas_caracterizacion, texto, valor_riesgo, orden FROM sat.opciones_pregunta`);
-        opRes.rows.forEach((op) => {
-          opcionesMap.set(`${op.id_preguntas_caracterizacion}_${op.orden}`, op.id_opciones_pregunta);
-        });
       }
     } catch {
-      // Continúa con fallback
+      // Fallback a INSTRUMENTO_ITEMS
+    }
+
+    // 2. Intentar consultar base de datos
+    try {
+      const { rows: sesionRows } = await query(
+        `SELECT rc.id_respuestas_caracterizacion AS id,
+                e.codigo_externo AS "codigoEstudiante",
+                e.nombres, e.apellidos, e.semestre_actual AS semestre,
+                pa.nombre AS periodo,
+                rc.creado_en AS fecha,
+                cr.puntaje_global AS "puntajeGlobal",
+                COALESCE(rr.nombre, 'MEDIO') AS "riesgoGlobal",
+                cr.factores
+         FROM sat.respuestas_caracterizacion rc
+         JOIN sat.estudiantes e ON rc.id_estudiantes = e.id_estudiantes
+         LEFT JOIN sat.periodos_academicos pa ON rc.id_periodos_academicos = pa.id_periodos_academicos
+         LEFT JOIN sat.calificaciones_riesgo cr ON cr.id_respuestas_caracterizacion = rc.id_respuestas_caracterizacion
+         LEFT JOIN sat.rangos_riesgo rr ON rr.id_rangos_riesgo = cr.id_rangos_riesgo
+         WHERE e.codigo_externo = $1 OR e.numero_documento = $1 OR e.id_estudiantes::text = $1
+         ORDER BY rc.creado_en DESC`,
+        [codigo]
+      );
+
+      if (sesionRows.length > 0) {
+        // Cargar respuestas_detalle para cada sesión
+        const sesionesConDetalle = await Promise.all(
+          sesionRows.map(async (ses) => {
+            const { rows: detRows } = await query(
+              `SELECT rd.id_preguntas_caracterizacion AS "dbId",
+                      p.orden,
+                      p.texto,
+                      p.categoria,
+                      p.tipo_respuesta AS "tipoRespuesta",
+                      rd.valor_numerico AS valor,
+                      COALESCE(op.texto, '') AS "opcionTexto"
+               FROM sat.respuestas_detalle rd
+               JOIN sat.preguntas_caracterizacion p ON rd.id_preguntas_caracterizacion = p.id_preguntas_caracterizacion
+               LEFT JOIN sat.opciones_pregunta op ON rd.id_opciones_pregunta = op.id_opciones_pregunta
+               WHERE rd.id_respuestas_caracterizacion = $1
+               ORDER BY p.orden ASC`,
+              [ses.id]
+            );
+
+            let factoresParsed = {};
+            try {
+              factoresParsed = typeof ses.factores === "string" ? JSON.parse(ses.factores) : ses.factores || {};
+            } catch {
+              factoresParsed = {};
+            }
+
+            const dimsObj = factoresParsed.dimensiones || factoresParsed.porDimension || null;
+            let riesgoGlobalFormatted = ses.riesgoGlobal;
+            if (riesgoGlobalFormatted === "ALTO") riesgoGlobalFormatted = "Alto";
+            else if (riesgoGlobalFormatted === "MEDIO") riesgoGlobalFormatted = "Medio";
+            else if (riesgoGlobalFormatted === "BAJO") riesgoGlobalFormatted = "Bajo";
+
+            const detalles = detRows.length > 0
+              ? detRows.map((d) => {
+                  const dimKey = mapCategoria(d.categoria);
+                  const valor = Number(d.valor) || 2;
+                  let opcionTexto = d.opcionTexto;
+                  let nivelRiesgo = "Medio";
+
+                  if (d.tipoRespuesta === "BOOLEANO") {
+                    opcionTexto = opcionTexto || (valor === 4 ? "Sí" : "No");
+                    nivelRiesgo = valor === 4 ? "Bajo" : "Alto";
+                  } else if (d.tipoRespuesta === "LIKERT_INVERSO") {
+                    if (!opcionTexto) {
+                      const m = { 1: "Muy en desacuerdo", 2: "En desacuerdo", 3: "De acuerdo", 4: "Muy de acuerdo" };
+                      opcionTexto = m[valor] || "En desacuerdo";
+                    }
+                    nivelRiesgo = valor >= 3 ? "Alto" : "Bajo";
+                  } else {
+                    if (!opcionTexto) {
+                      const m = { 1: "Muy en desacuerdo", 2: "En desacuerdo", 3: "De acuerdo", 4: "Muy de acuerdo" };
+                      opcionTexto = m[valor] || "En desacuerdo";
+                    }
+                    nivelRiesgo = valor <= 2 ? "Alto" : "Bajo";
+                  }
+
+                  return {
+                    id: d.orden,
+                    dbId: d.dbId,
+                    orden: d.orden,
+                    texto: d.texto,
+                    dim: dimKey,
+                    dimNombre: DIM_NOMBRES[dimKey] || d.categoria,
+                    valor,
+                    opcionTexto,
+                    nivelRiesgo,
+                    tipo: mapTipoFrontend(d.tipoRespuesta)
+                  };
+                })
+              : construirDetallesSesion({}, itemsActivos);
+
+            return {
+              id: ses.id,
+              codigoEstudiante: ses.codigoEstudiante,
+              fecha: ses.fecha ? new Date(ses.fecha).toISOString().replace("T", " ").substring(0, 16) : "2025-08-20 10:30",
+              periodo: ses.periodo || "2025 II",
+              semestre: ses.semestre || 1,
+              riesgoGlobal: riesgoGlobalFormatted || (dimsObj ? "Medio" : "Medio"),
+              promedioGlobal: ses.puntajeGlobal ? Number((Number(ses.puntajeGlobal) / 25).toFixed(2)) : 2.5,
+              porDimension: dimsObj || {
+                IND: { promedio: 2.0, riesgo: "Medio" },
+                INS: { promedio: 3.0, riesgo: "Bajo" },
+                ACA: { promedio: 2.5, riesgo: "Medio" },
+                SOC: { promedio: 2.0, riesgo: "Medio" },
+                GEST_PROG: { promedio: 2.8, riesgo: "Medio" }
+              },
+              detalles
+            };
+          })
+        );
+
+        return res.json(sesionesConDetalle);
+      }
+    } catch (dbErr) {
+      console.warn("Consulta a sat.respuestas_caracterizacion falló, usando MOCK_DATA:", dbErr.message);
+    }
+
+    // 3. Fallback a MOCK_DATA solo para estudiantes con respuestas registradas
+    const estMock = MOCK_DATA.estudiantes.find((e) => e.codigo === codigo || e.documento === codigo);
+    const codigoReal = estMock ? estMock.codigo : codigo;
+    const envios = MOCK_DATA.caracterizaciones.filter(
+      (c) => c.codigoEstudiante === codigoReal || c.codigoEstudiante === codigo
+    );
+
+    const sesionesEnriquecidas = envios.map((env) => ({
+      ...env,
+      detalles: construirDetallesSesion(env.respuestas || {}, itemsActivos)
+    }));
+
+    res.json(sesionesEnriquecidas);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --------------------------------------------------------------------------
+// 11. POST / - Enviar y calificar encuesta
+// --------------------------------------------------------------------------
+router.post("/", async (req, res, next) => {
+  try {
+    const { codigoEstudiante, respuestas } = req.body;
+
+    if (!codigoEstudiante || !respuestas || typeof respuestas !== "object") {
+      return res.status(400).json({ error: "Datos incompletos para procesar la encuesta." });
+    }
+
+    // 1. Obtener todas las preguntas activas
+    let itemsActivos = INSTRUMENTO_ITEMS;
+    let opcionesMap = new Map(); // `idPregunta_valorNumerico` -> `idOpcion`
+    try {
+      const { rows: pregRows } = await query(
+        `SELECT p.id_preguntas_caracterizacion AS "dbId", p.orden AS id, p.orden, p.categoria, p.tipo_respuesta, p.texto
+         FROM sat.preguntas_caracterizacion p WHERE p.activo = true ORDER BY p.orden ASC`
+      );
+      if (pregRows.length > 0) {
+        itemsActivos = pregRows.map((r) => ({
+          id: r.id,
+          dbId: r.dbId,
+          orden: r.orden,
+          dim: mapCategoria(r.categoria),
+          dimNombre: DIM_NOMBRES[mapCategoria(r.categoria)] || r.categoria,
+          tipo: mapTipoFrontend(r.tipo_respuesta),
+          tipo_respuesta: r.tipo_respuesta,
+          texto: r.texto
+        }));
+      }
+
+      const { rows: opcRows } = await query(
+        `SELECT id_opciones_pregunta, id_preguntas_caracterizacion, valor_numerico
+         FROM sat.opciones_pregunta`
+      );
+      opcRows.forEach((o) => {
+        opcionesMap.set(`${o.id_preguntas_caracterizacion}_${o.valor_numerico}`, o.id_opciones_pregunta);
+      });
+    } catch {
+      // Usar defaults
     }
 
     const totalItems = itemsActivos.length;
@@ -633,9 +821,9 @@ router.post("/", async (req, res, next) => {
     let estudianteDb = null;
     try {
       const estRes = await query(
-        `SELECT id_estudiantes, codigo_externo, nombres, apellidos, semestre_actual, id_programas_academicos, id_sedes 
+        `SELECT id_estudiantes, codigo_externo, numero_documento, nombres, apellidos, semestre_actual, id_programas_academicos, id_sedes 
          FROM sat.estudiantes 
-         WHERE codigo_externo = $1 OR id_estudiantes::text = $1 
+         WHERE codigo_externo = $1 OR numero_documento = $1 OR id_estudiantes::text = $1 
          LIMIT 1`,
         [codigoEstudiante]
       );
@@ -668,7 +856,7 @@ router.post("/", async (req, res, next) => {
             (id_estudiantes, id_encuestas_caracterizacion, id_periodos_academicos, id_usuarios, estado, creado_en)
            VALUES ($1, $2, $3, $4, 'COMPLETA', NOW())
            RETURNING id_respuestas_caracterizacion`,
-          [estudianteDb.id_estudiantes, idEncuesta, idPeriodo, req.user?.id || null]
+           [estudianteDb.id_estudiantes, idEncuesta, idPeriodo, isUuid(req.user?.id) ? req.user.id : null]
         );
         idRespuestaCaracterizacion = rcRes.rows[0]?.id_respuestas_caracterizacion;
 
@@ -690,9 +878,16 @@ router.post("/", async (req, res, next) => {
 
         // Obtener rango de riesgo correspondiente
         let idRangoRiesgo = null;
-        const rangoNombre = resultado.riesgoGlobal; // "Alto", "Medio", "Bajo"
-        const rangoRes = await query(`SELECT id_rangos_riesgo FROM sat.rangos_riesgo WHERE LOWER(nombre) = LOWER($1) LIMIT 1`, [rangoNombre]);
-        idRangoRiesgo = rangoRes.rows[0]?.id_rangos_riesgo || null;
+        const rangoNombre = (resultado.riesgoGlobal || "MEDIO").toUpperCase();
+        const rangoRes = await query(
+          `SELECT id_rangos_riesgo FROM sat.rangos_riesgo WHERE UPPER(nombre) = $1 ORDER BY actualizado_en DESC LIMIT 1`,
+          [rangoNombre]
+        );
+        idRangoRiesgo = rangoRes.rows[0]?.id_rangos_riesgo;
+        if (!idRangoRiesgo) {
+          const fallbackRango = await query(`SELECT id_rangos_riesgo FROM sat.rangos_riesgo LIMIT 1`);
+          idRangoRiesgo = fallbackRango.rows[0]?.id_rangos_riesgo;
+        }
 
         // Insertar calificación de riesgo
         await query(
@@ -747,13 +942,18 @@ router.post("/", async (req, res, next) => {
       } : null,
       docenteAcompanante,
       fecha: new Date().toISOString().replace("T", " ").substring(0, 16),
+      respuestas,
+      detalles: construirDetallesSesion(respuestas, itemsActivos),
       ...resultado
     };
 
     // Actualizar MOCK_DATA en memoria
     MOCK_DATA.caracterizaciones.unshift(envio);
     const estudianteMock = MOCK_DATA.estudiantes.find((e) => e.codigo === codigoEstudiante);
-    if (estudianteMock) estudianteMock.encuestaRespondida = true;
+    if (estudianteMock) {
+      estudianteMock.encuestaRespondida = true;
+      if (resultado.riesgoGlobal) estudianteMock.riesgoGlobal = resultado.riesgoGlobal;
+    }
 
     res.status(201).json(envio);
   } catch (err) {
