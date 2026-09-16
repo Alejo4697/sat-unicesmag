@@ -74,12 +74,15 @@ router.post("/", async (req, res, next) => {
     return next(err);
   }
 
+  const ahora = new Date().toISOString();
   const nueva = {
     id: `INT-2025-${Math.floor(100 + Math.random() * 900)}`,
     codigoEstudiante,
     atendidoPor: req.user.nombre,
     cargoAtendio: req.user.cargo,
-    fecha: new Date().toISOString().replace("T", " ").substring(0, 16),
+    idUsuarioAtendio: req.user.id,
+    fecha: ahora,
+    fechaRegistro: ahora,
     tipoIntervencion,
     motivo,
     resumenAcuerdo,

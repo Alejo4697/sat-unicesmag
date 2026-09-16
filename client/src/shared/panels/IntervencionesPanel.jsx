@@ -60,8 +60,18 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
   const [error, setError] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [expandidos, setExpandidos] = useState(() => new Set());
   const fileInputRef = useRef(null);
   const debounceRef = useRef(null);
+
+  function toggleExpandido(id) {
+    setExpandidos((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   useEffect(() => {
     // Con estudiante fijo no hace falta la lista completa (no hay selector);
@@ -348,58 +358,155 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
           </form>
         </div>
 
-        <div className="card" style={{ gridColumn: "span 12" }}>
-          <div className="card-header">
-            <h3 className="card-title">{fijo ? "Intervenciones del Estudiante" : "Intervenciones Registradas"}</h3>
-          </div>
-          <div className="table-responsive">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Estudiante</th>
-                  <th>Profesional</th>
-                  <th>Fecha</th>
-                  <th>Tipo</th>
-                  {/* Embebido en la Ficha ya se está viendo a este estudiante:
-                      el botón "Ver Ficha" navegaría a la misma pantalla y la
-                      remontaría (perdiendo la pestaña activa), así que se oculta. */}
-                  {!fijo && <th>Acción</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {intervencionesVisibles.length === 0 && (
-                  <tr>
-                    <td colSpan={fijo ? 5 : 6} className="text-muted" style={{ textAlign: "center" }}>
-                      Sin intervenciones registradas.
-                    </td>
-                  </tr>
-                )}
-                {intervencionesVisibles.map((i) => (
-                  <tr key={i.id}>
-                    <td>
-                      <strong>{i.id}</strong>
-                    </td>
-                    <td>
-                      <small className="text-muted">Cód: {i.codigoEstudiante}</small>
-                    </td>
-                    <td>
-                      {i.atendidoPor}
-                      <br />
-                      <small className="text-muted">{i.cargoAtendio}</small>
-                    </td>
-                    <td>{i.fecha}</td>
-                    <td>
-                      {i.tipoIntervencion || <span className="text-muted">—</span>}
+        {fijo ? (
+          <div className="card" style={{ gridColumn: "span 12" }}>
+            <div className="card-header">
+              <h3 className="card-title">Historial de Intervenciones del Estudiante</h3>
+            </div>
+            <div className="timeline">
+              {intervencionesVisibles.length === 0 && (
+                <p className="page-placeholder">Sin intervenciones registradas.</p>
+              )}
+              {intervencionesVisibles.map((i) => {
+                const expandido = expandidos.has(i.id);
+                return (
+                  <div className="timeline-item" key={i.id}>
+                    <div className={`timeline-node ${i.esSensibleVBG ? "badge-vbg" : ""}`}></div>
+                    <div className="timeline-box">
+                      <div className="timeline-top">
+                        <span className="timeline-user">
+                          <strong>{i.id}</strong> — {i.atendidoPor} ({i.cargoAtendio})
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-outline btn-sm"
+                          onClick={() => toggleExpandido(i.id)}
+                          aria-expanded={expandido}
+                        >
+                          <i className={`fas fa-chevron-${expandido ? "up" : "down"}`}></i> {expandido ? "Ver menos" : "Ver más"}
+                        </button>
+                      </div>
+
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, fontSize: "0.75rem", color: "var(--text-muted)", margin: "4px 0" }}>
+                        <span>
+                          <i className="far fa-clock"></i> Atención: {formatDateTime(i.fecha)}
+                        </span>
+                        <span>
+                          <i className="fas fa-clipboard-check"></i> Registro: {formatDateTime(i.fechaRegistro)}
+                        </span>
+                        <span>
+                          <i className="fas fa-tag"></i> {i.tipoIntervencion || "—"}
+                        </span>
+                      </div>
+
                       {i.esSensibleVBG && (
-                        <div style={{ marginTop: 3 }}>
-                          <span className="badge badge-risk-high">
-                            <i className="fas fa-lock"></i> VBG
-                          </span>
+                        <div className="badge badge-risk-high" style={{ marginBottom: 8 }}>
+                          <i className="fas fa-lock"></i> Caso Sensible VBG
                         </div>
                       )}
-                    </td>
-                    {!fijo && (
+
+                      {expandido &&
+                        (i.detalleVisible ? (
+                          <>
+                            <p>
+                              <strong>Motivo:</strong> {i.motivo}
+                            </p>
+                            <p style={{ marginTop: 4 }}>
+                              <strong>Acuerdos/Compromisos:</strong> {i.resumenAcuerdo}
+                            </p>
+                            {i.adjuntos.length > 0 && (
+                              <div style={{ marginTop: 8 }}>
+                                <small>
+                                  <strong>Evidencias Adjuntas:</strong>
+                                </small>
+                                <div>
+                                  {i.adjuntos.map((a) => (
+                                    <a
+                                      href="#"
+                                      key={a.nombre}
+                                      onClick={(e) => e.preventDefault()}
+                                      className="btn btn-outline btn-sm"
+                                      style={{ marginTop: 4, marginRight: 4, display: "inline-flex", alignItems: "center", gap: 4 }}
+                                    >
+                                      <i className="fas fa-file-pdf" style={{ color: "#A6192E" }}></i> {a.nombre} ({a.tamano})
+                                    </a>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="confidential-banner">
+                            <i className="fas fa-user-shield confidential-icon"></i>
+                            <div>
+                              <strong>
+                                {i.esSensibleVBG
+                                  ? "INFORMACIÓN RESTRINGIDA POR SECRETO PROFESIONAL (RNF01)"
+                                  : "DETALLE RESTRINGIDO AL PROFESIONAL REGISTRADOR"}
+                              </strong>
+                              <p style={{ fontSize: "0.75rem", margin: 0 }}>
+                                {i.esSensibleVBG
+                                  ? "El detalle de este caso de VBG está protegido. Solo es accesible para el profesional registrador, Consultorios Jurídicos y USP."
+                                  : "El motivo, los acuerdos y los adjuntos de esta intervención solo son visibles para el profesional que la registró."}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="card" style={{ gridColumn: "span 12" }}>
+            <div className="card-header">
+              <h3 className="card-title">Intervenciones Registradas</h3>
+            </div>
+            <div className="table-responsive">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Estudiante</th>
+                    <th>Profesional</th>
+                    <th>Fecha</th>
+                    <th>Tipo</th>
+                    <th>Acción</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {intervencionesVisibles.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="text-muted" style={{ textAlign: "center" }}>
+                        Sin intervenciones registradas.
+                      </td>
+                    </tr>
+                  )}
+                  {intervencionesVisibles.map((i) => (
+                    <tr key={i.id}>
+                      <td>
+                        <strong>{i.id}</strong>
+                      </td>
+                      <td>
+                        <small className="text-muted">Cód: {i.codigoEstudiante}</small>
+                      </td>
+                      <td>
+                        {i.atendidoPor}
+                        <br />
+                        <small className="text-muted">{i.cargoAtendio}</small>
+                      </td>
+                      <td>{formatDateTime(i.fecha)}</td>
+                      <td>
+                        {i.tipoIntervencion || <span className="text-muted">—</span>}
+                        {i.esSensibleVBG && (
+                          <div style={{ marginTop: 3 }}>
+                            <span className="badge badge-risk-high">
+                              <i className="fas fa-lock"></i> VBG
+                            </span>
+                          </div>
+                        )}
+                      </td>
                       <td>
                         {i.detalleVisible ? (
                           <Link
@@ -416,13 +523,13 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
                           </span>
                         )}
                       </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </>
   );
