@@ -8,7 +8,9 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "db:seed": "node src/shared/db/seed.js"
+    "db:seed": "node src/shared/db/seed.js",
+    "db:matriz": "node src/shared/db/seed.js matriz_bienestar.sql",
+    "db:permisos": "node src/shared/db/seed.js permisos_modulos.sql"
   },
   "dependencies": {
     "cors": "^2.8.5",

@@ -5,6 +5,11 @@
    listado con baja de usuarios, umbrales de riesgo (RQF11), más la matriz
    de roles y permisos que ya se había diseñado como mockup y ahora se sirve
    real desde GET /api/administracion/matriz-permisos.
+
+   La matriz de roles y permisos es EDITABLE: cada celda es una casilla que
+   concede/quita el acceso del rol al módulo (PUT /matriz-permisos). Tras
+   guardar se recarga la matriz del AuthContext para que el sidebar del
+   usuario activo refleje el cambio de inmediato.
    ========================================================================== */
 
 import { useEffect, useState } from "react";
@@ -17,11 +22,13 @@ import {
   actualizarUmbralesRiesgo,
   sincronizarAcademico,
   getMatrizPermisos,
+  actualizarPermisoModulo,
   areasRemisionApi,
   estadosRemisionApi,
   tiposIntervencionApi
 } from "./api.js";
 import CatalogoAdmin from "./CatalogoAdmin.jsx";
+import { useAuth } from "../../shared/context/AuthContext.jsx";
 
 // Catálogos administrables (schema `sat`). `campos` describe las columnas
 // extra de cada uno además de "nombre"/"activo":
@@ -64,6 +71,9 @@ export default function AdministracionPage() {
   const [mensaje, setMensaje] = useState("");
   const [error, setError] = useState("");
   const [sincronizando, setSincronizando] = useState(false);
+  // "modulo|rol" de la celda que se está guardando
+  const [guardandoCelda, setGuardandoCelda] = useState("");
+  const { user, recargarPermisos } = useAuth();
 
   useEffect(() => {
     Promise.all([listUsuariosAdmin(), getMatrizPermisos(), getUmbralesRiesgo()])
@@ -78,6 +88,31 @@ export default function AdministracionPage() {
   function avisar(texto) {
     setMensaje(texto);
     setTimeout(() => setMensaje(""), 4000);
+  }
+
+  async function handleTogglePermiso(modulo, rolId, permitido) {
+    const celda = `${modulo.id}|${rolId}`;
+    setGuardandoCelda(celda);
+    setError("");
+    try {
+      const res = await actualizarPermisoModulo({ modulo: modulo.id, rol: rolId, permitido });
+      setMatriz((prev) => ({
+        ...prev,
+        modulos: prev.modulos.map((m) => (m.id === res.modulo ? { ...m, roles: res.roles } : m))
+      }));
+      const etiqueta = ROLE_LABELS[rolId] || rolId;
+      avisar(
+        permitido
+          ? `Se concedió "${modulo.name}" al rol ${etiqueta}.`
+          : `Se quitó "${modulo.name}" al rol ${etiqueta}.`
+      );
+      // Si el cambio afecta al rol con el que estoy conectado, actualiza el sidebar ya.
+      if (user?.rol === rolId) recargarPermisos();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setGuardandoCelda("");
+    }
   }
 
   async function handleSincronizar() {
@@ -375,35 +410,58 @@ export default function AdministracionPage() {
             <div className="card-header">
               <span className="card-title">Matriz de Roles y Permisos</span>
             </div>
+            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "0 0 1rem" }}>
+              Marque o desmarque una casilla para conceder o quitar el acceso de un rol a un módulo. El cambio se guarda
+              al instante y aplica en el próximo clic de los usuarios de ese rol.
+            </p>
             <div className="table-responsive">
               <table className="table">
                 <thead>
                   <tr>
                     <th>Módulo</th>
-                    {Object.values(ROLE_LABELS).map((label) => (
-                      <th key={label}>{label}</th>
+                    {matriz.roles.map((rol) => (
+                      <th key={rol.id} style={{ textAlign: "center" }}>
+                        {ROLE_LABELS[rol.id] || rol.descripcion || rol.nombre}
+                      </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {matriz.accesoModulos.map((section) =>
-                    section.items.map((item) => (
-                      <tr key={item.id}>
-                        <td>
-                          <i className={`fas ${item.icon}`}></i> {item.name}
-                        </td>
-                        {Object.keys(ROLE_LABELS).map((roleId) => (
-                          <td key={roleId} style={{ textAlign: "center" }}>
-                            {section.roles.includes(roleId) ? (
-                              <i className="fas fa-check" style={{ color: "var(--risk-low, #16A34A)" }}></i>
-                            ) : (
-                              <i className="fas fa-xmark" style={{ color: "var(--text-muted)" }}></i>
-                            )}
+                  {matriz.modulos.map((modulo) => (
+                    <tr key={modulo.id}>
+                      <td>
+                        <i className={`fas ${modulo.icon}`}></i> {modulo.name}
+                        {modulo.oculto && (
+                          <small className="text-muted" style={{ display: "block" }}>
+                            Se abre desde la Ficha 360°
+                          </small>
+                        )}
+                      </td>
+                      {matriz.roles.map((rol) => {
+                        const permitido = modulo.roles.includes(rol.id);
+                        const bloqueado = modulo.bloqueados.includes(rol.id);
+                        const celda = `${modulo.id}|${rol.id}`;
+                        return (
+                          <td key={rol.id} style={{ textAlign: "center" }}>
+                            <input
+                              type="checkbox"
+                              aria-label={`${modulo.name} - ${ROLE_LABELS[rol.id] || rol.nombre}`}
+                              title={bloqueado ? "Obligatorio: el administrador no puede perder este acceso" : undefined}
+                              checked={permitido}
+                              disabled={bloqueado || guardandoCelda === celda}
+                              onChange={(e) => handleTogglePermiso(modulo, rol.id, e.target.checked)}
+                              style={{
+                                width: 18,
+                                height: 18,
+                                cursor: bloqueado ? "not-allowed" : "pointer",
+                                accentColor: "var(--brand-primary, #9B1B30)"
+                              }}
+                            />
                           </td>
-                        ))}
-                      </tr>
-                    ))
-                  )}
+                        );
+                      })}
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>

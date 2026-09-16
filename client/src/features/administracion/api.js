@@ -7,6 +7,9 @@ export const getUmbralesRiesgo = () => apiFetch("/administracion/umbrales-riesgo
 export const actualizarUmbralesRiesgo = (data) => apiFetch("/administracion/umbrales-riesgo", { method: "PUT", body: data });
 export const sincronizarAcademico = () => apiFetch("/administracion/sincronizar", { method: "POST" });
 export const getMatrizPermisos = () => apiFetch("/administracion/matriz-permisos");
+// { modulo, rol, permitido } -> { modulo, roles }
+export const actualizarPermisoModulo = (data) =>
+  apiFetch("/administracion/matriz-permisos", { method: "PUT", body: data });
 
 // Catálogos administrables (schema `sat`). Los 3 comparten la misma forma:
 // listar (incluye inhabilitados), crear, editar y activar/inhabilitar.

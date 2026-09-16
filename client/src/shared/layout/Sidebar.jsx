@@ -9,9 +9,10 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { menuForRole } from "../config/menuConfig.js";
 
 export default function Sidebar() {
-  const { user, cerrarSesion } = useAuth();
+  const { user, cerrarSesion, permisos } = useAuth();
   const navigate = useNavigate();
-  const secciones = user ? menuForRole(user.rol) : [];
+  // `permisos` = matriz editable desde Administración (null -> por defecto).
+  const secciones = user ? menuForRole(user.rol, permisos) : [];
   const iniciales = user ? user.nombre.split(" ").map((n) => n[0]).slice(0, 2).join("") : "";
 
   function handleCerrarSesion(e) {
