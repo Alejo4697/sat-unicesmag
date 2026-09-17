@@ -19,11 +19,24 @@ import RemisionesPage from "./features/remisiones/RemisionesPage.jsx";
 import CaracterizacionPage from "./features/caracterizacion/CaracterizacionPage.jsx";
 import ReportesPage from "./features/reportes-snies/ReportesPage.jsx";
 import AdministracionPage from "./features/administracion/AdministracionPage.jsx";
+import EstudianteLoginPage from "./features/estudiante/EstudianteLoginPage.jsx";
+import EstudiantePortalPage from "./features/estudiante/EstudiantePortalPage.jsx";
+
 
 export default function App() {
   return (
     <Routes>
       <Route path="/" element={<LoginPage />} />
+      <Route path="/estudiante/login" element={<EstudianteLoginPage />} />
+      <Route
+        path="/estudiante/portal"
+        element={
+          <ProtectedRoute moduleId="estudiante">
+            <EstudiantePortalPage />
+          </ProtectedRoute>
+        }
+      />
+
 
       <Route
         path="/dashboard"

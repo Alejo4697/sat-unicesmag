@@ -101,6 +101,50 @@ export default function LoginPage() {
             <p className="login-subtitle">
               Sistema de Alertas Tempranas y Seguimiento a la Permanencia Estudiantil
             </p>
+
+            {/* Pestañas de Acceso Rápido */}
+            <div style={{ display: "flex", background: "#f1f5f9", padding: "4px", borderRadius: "8px", marginTop: "1rem" }}>
+              <button
+                type="button"
+                style={{
+                  flex: 1,
+                  padding: "8px 12px",
+                  borderRadius: "6px",
+                  border: "none",
+                  background: "#ffffff",
+                  color: "#002855",
+                  fontWeight: "700",
+                  fontSize: "0.8rem",
+                  boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+                  cursor: "default"
+                }}
+              >
+                <i className="fas fa-user-shield" style={{ marginRight: "6px" }}></i>
+                Docentes / Personal
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate("/estudiante/login")}
+                style={{
+                  flex: 1,
+                  padding: "8px 12px",
+                  borderRadius: "6px",
+                  border: "none",
+                  background: "transparent",
+                  color: "#059669",
+                  fontWeight: "600",
+                  fontSize: "0.8rem",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "6px"
+                }}
+              >
+                <i className="fas fa-graduation-cap"></i>
+                <span>Estudiantes (OTP)</span>
+              </button>
+            </div>
           </div>
 
           {/* Formulario */}
@@ -123,7 +167,13 @@ export default function LoginPage() {
                   id="login-role"
                   className="login-select"
                   value={rol}
-                  onChange={(e) => setRol(e.target.value)}
+                  onChange={(e) => {
+                    if (e.target.value === "estudiante") {
+                      navigate("/estudiante/login");
+                    } else {
+                      setRol(e.target.value);
+                    }
+                  }}
                 >
                   {ROLES_INFO.map((r) => (
                     <option key={r.value} value={r.value}>
@@ -134,6 +184,7 @@ export default function LoginPage() {
                 <i className="fas fa-chevron-down login-select-arrow"></i>
               </div>
             </div>
+
 
             {/* Campo: Correo Institucional */}
             <div className="login-form-group">

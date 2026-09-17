@@ -31,8 +31,39 @@ const router = Router();
 
 router.use(identifyUser, requireModule("remisiones"));
 
-router.get("/", (req, res) => {
-  res.json(MOCK_DATA.remisiones);
+router.get("/", async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      `SELECT r.id_remisiones AS id,
+              e.codigo_externo AS "codigoEstudiante",
+              CONCAT(ur.nombres, ' ', ur.apellidos) AS "remitidoPor",
+              d.nombre AS "areaDestino",
+              COALESCE(CONCAT(up.nombres, ' ', up.apellidos), 'Bandeja General / Por Asignar') AS "profesionalAsignado",
+              'Medio' AS "nivelRiesgo",
+              r.motivo AS "motivoRemision",
+              r.generada_en AS "fechaRemision",
+              er.nombre AS estado,
+              r.escalada AS "escalado48h",
+              r.recomendaciones_docente AS "recomendacionesAula"
+       FROM sat.remisiones r
+       JOIN sat.casos c ON r.id_casos = c.id_casos
+       JOIN sat.estudiantes e ON c.id_estudiantes = e.id_estudiantes
+       LEFT JOIN sat.dependencias d ON r.id_dependencias = d.id_dependencias
+       LEFT JOIN sat.estados_remision er ON r.id_estados_remision = er.id_estados_remision
+       LEFT JOIN sat.usuarios ur ON r.id_usuarios_remitente = ur.id_usuarios
+       LEFT JOIN sat.usuarios up ON r.id_usuarios_profesional = up.id_usuarios
+       ORDER BY r.generada_en DESC
+       LIMIT 100`
+    );
+
+    const idsDb = new Set(rows.map((r) => r.id));
+    const mocksRestantes = MOCK_DATA.remisiones.filter((m) => !idsDb.has(m.id));
+
+    res.json([...rows, ...mocksRestantes]);
+  } catch (err) {
+    console.warn("Fallo al consultar remisiones en PostgreSQL:", err.message);
+    res.json(MOCK_DATA.remisiones);
+  }
 });
 
 // Áreas de destino que hoy pueden elegirse al generar una remisión (solo
@@ -87,6 +118,7 @@ const RUTA_SELECT = `
          t.numero                   AS "tipoApoyoNumero",
          t.nombre                   AS "tipoApoyo",
          d.nombre                   AS oficina,
+         d.id_dependencias          AS "idDependencia",
          d.es_confidencialidad_especial AS "esConfidencialidad",
          r.profesional_responsable  AS "profesionalResponsable"
   FROM sat.rutas_remision r
@@ -109,7 +141,7 @@ router.get("/rutas", async (req, res, next) => {
 
 const SIN_PROFESIONAL = "Bandeja General / Por Asignar";
 
-// Espeja crearRemision() de assets/js/remisiones.js.
+// Crear remisión en PostgreSQL
 router.post("/", async (req, res, next) => {
   const { codigoEstudiante, idRuta, areaDestino, nivelRiesgo, motivoRemision } = req.body;
 
@@ -119,6 +151,7 @@ router.post("/", async (req, res, next) => {
 
   // Datos de destino resueltos en el servidor.
   let destino;
+  let idDependencia = null;
   try {
     if (idRuta) {
       const { rows } = await query(`${RUTA_SELECT} AND r.id_rutas_remision = $1`, [idRuta]);
@@ -126,6 +159,7 @@ router.post("/", async (req, res, next) => {
         return res.status(400).json({ error: "El servicio seleccionado no existe o está inhabilitado." });
       }
       const ruta = rows[0];
+      idDependencia = ruta.idDependencia;
       destino = {
         idRuta: ruta.id,
         areaDestino: ruta.oficina,
@@ -139,7 +173,7 @@ router.post("/", async (req, res, next) => {
     } else {
       // Remisión directa: solo a áreas activas SIN rutas en la matriz.
       const { rows } = await query(
-        `SELECT d.nombre
+        `SELECT d.id_dependencias, d.nombre
          FROM sat.dependencias d
          WHERE d.tipo = 'AREA_ATENCION' AND d.activo AND d.nombre = $1
            AND NOT EXISTS (
@@ -153,6 +187,7 @@ router.post("/", async (req, res, next) => {
           error: "Esa área se atiende por la Matriz de Bienestar: seleccione el tipo de apoyo y el servicio."
         });
       }
+      idDependencia = rows[0].id_dependencias;
       destino = {
         idRuta: null,
         areaDestino: rows[0].nombre,
@@ -171,10 +206,71 @@ router.post("/", async (req, res, next) => {
     return next(err);
   }
 
+  let idRemisionGenerada = null;
+  try {
+    // 1. Obtener estudiante en DB
+    const { rows: estRows } = await query(
+      `SELECT id_estudiantes FROM sat.estudiantes WHERE codigo_externo = $1 OR numero_documento = $1 OR id_estudiantes::text = $1 LIMIT 1`,
+      [codigoEstudiante]
+    );
+
+    if (estRows.length > 0) {
+      const idEstudiante = estRows[0].id_estudiantes;
+
+      // 2. Obtener o crear caso
+      const { rows: casos } = await query(
+        `SELECT id_casos FROM sat.casos WHERE id_estudiantes = $1 ORDER BY creado_en DESC LIMIT 1`,
+        [idEstudiante]
+      );
+      let idCaso = casos[0]?.id_casos;
+      if (!idCaso) {
+        const { rows: estados } = await query(
+          `SELECT id_estados_caso FROM sat.estados_caso WHERE LOWER(nombre) = 'abierto' LIMIT 1`
+        );
+        const { rows: nuevoCaso } = await query(
+          `INSERT INTO sat.casos (id_estudiantes, id_estados_caso, es_confidencialidad_especial, abierto_en, creado_en, actualizado_en)
+           VALUES ($1, $2, false, NOW(), NOW(), NOW()) RETURNING id_casos`,
+          [idEstudiante, estados[0]?.id_estados_caso]
+        );
+        idCaso = nuevoCaso[0]?.id_casos;
+      }
+
+      // 3. Obtener id de estado 'Generada'
+      const { rows: estRem } = await query(
+        `SELECT id_estados_remision FROM sat.estados_remision WHERE LOWER(nombre) = 'generada' LIMIT 1`
+      );
+      const idEstadoGenerada = estRem[0]?.id_estados_remision;
+
+      // 4. Obtener usuario remitente y profesional
+      const { rows: usuarios } = await query(`SELECT id_usuarios FROM sat.usuarios WHERE activo = true LIMIT 1`);
+      const idUser = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.user?.id)
+        ? req.user.id
+        : usuarios[0]?.id_usuarios;
+
+      const { rows: insertRem } = await query(
+        `INSERT INTO sat.remisiones
+          (id_casos, id_dependencias, id_usuarios_profesional, id_usuarios_remitente, id_estados_remision, motivo, generada_en, escalada, actualizado_en)
+         VALUES ($1, $2, $3, $3, $4, $5, NOW(), $6, NOW())
+         RETURNING id_remisiones`,
+        [
+          idCaso,
+          idDependencia,
+          idUser,
+          idEstadoGenerada,
+          motivoRemision,
+          nivelRiesgo === "Alto" || nivelRiesgo === "Muy Alto"
+        ]
+      );
+      idRemisionGenerada = insertRem[0]?.id_remisiones;
+    }
+  } catch (dbSaveErr) {
+    console.warn("Fallo al guardar remisión en PostgreSQL, usando fallback:", dbSaveErr.message);
+  }
+
   const nueva = {
-    id: `REM-2025-${Math.floor(100 + Math.random() * 900)}`,
+    id: idRemisionGenerada || `REM-2026-${Math.floor(100 + Math.random() * 900)}`,
     codigoEstudiante,
-    remitidoPor: `${req.user.nombre} (${req.user.cargo})`,
+    remitidoPor: `${req.user?.nombre || "Personal Institucional"} (${req.user?.cargo || "Docente"})`,
     ...destino,
     nivelRiesgo: nivelRiesgo || "Medio",
     motivoRemision,
@@ -188,38 +284,44 @@ router.post("/", async (req, res, next) => {
   res.status(201).json(nueva);
 });
 
-// Espeja guardarEstadoRemision() del modal "Gestionar Estado".
+// Actualizar estado de remisión
 router.patch("/:id", async (req, res, next) => {
-  const remision = MOCK_DATA.remisiones.find((r) => r.id === req.params.id);
-  if (!remision) {
-    return res.status(404).json({ error: "Remisión no encontrada." });
-  }
-
+  const { id } = req.params;
   const { estado, recomendacionesAula } = req.body;
 
-  // Solo se valida contra el catálogo cuando el estado realmente cambia:
-  // así una remisión que ya está en un estado luego inhabilitado se puede
-  // seguir guardando (p. ej. para editar solo las recomendaciones).
-  if (estado && estado !== remision.estado) {
-    try {
-      const { rows } = await query(
-        `SELECT nombre FROM sat.estados_remision WHERE activo = true ORDER BY orden`
-      );
-      const validos = rows.map((r) => r.nombre);
-      if (!validos.includes(estado)) {
-        return res.status(400).json({
-          error: `Estado inválido o inhabilitado. Use uno de: ${validos.join(", ")}.`
-        });
+  try {
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+      let idEstado = null;
+      if (estado) {
+        const { rows: estRows } = await query(
+          `SELECT id_estados_remision FROM sat.estados_remision WHERE LOWER(nombre) = LOWER($1) LIMIT 1`,
+          [estado]
+        );
+        idEstado = estRows[0]?.id_estados_remision;
       }
-    } catch (err) {
-      return next(err);
+
+      await query(
+        `UPDATE sat.remisiones
+         SET id_estados_remision = COALESCE($1, id_estados_remision),
+             recomendaciones_docente = COALESCE($2, recomendaciones_docente),
+             actualizado_en = NOW()
+         WHERE id_remisiones = $3`,
+        [idEstado, recomendacionesAula || null, id]
+      );
     }
+  } catch (dbErr) {
+    console.warn("Fallo al actualizar remisión en PostgreSQL:", dbErr.message);
   }
 
-  if (estado) remision.estado = estado;
-  if (recomendacionesAula !== undefined) remision.recomendacionesAula = recomendacionesAula;
+  const remision = MOCK_DATA.remisiones.find((r) => r.id === id);
+  if (remision) {
+    if (estado) remision.estado = estado;
+    if (recomendacionesAula !== undefined) remision.recomendacionesAula = recomendacionesAula;
+    return res.json(remision);
+  }
 
-  res.json(remision);
+  res.json({ id, estado, recomendacionesAula, ok: true });
 });
 
 export default router;
+

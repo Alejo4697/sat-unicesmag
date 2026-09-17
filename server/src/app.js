@@ -17,6 +17,7 @@ import remisionesRoutes from "./features/remisiones/remisiones.routes.js";
 import caracterizacionRoutes from "./features/caracterizacion/caracterizacion.routes.js";
 import reportesRoutes from "./features/reportes-snies/reportes.routes.js";
 import administracionRoutes from "./features/administracion/administracion.routes.js";
+import estudianteRoutes from "./features/estudiante/estudiante.routes.js";
 
 export function createApp() {
   const app = express();
@@ -29,6 +30,7 @@ export function createApp() {
   app.use("/api/menu", menuRoutes);
 
   app.use("/api/auth", authRoutes);
+  app.use("/api/estudiante", estudianteRoutes);
   app.use("/api/dashboard", dashboardRoutes);
   app.use("/api/estudiantes", estudiantesRoutes);
   app.use("/api/alertas", alertasRoutes);
@@ -37,6 +39,7 @@ export function createApp() {
   app.use("/api/caracterizacion", caracterizacionRoutes);
   app.use("/api/reportes", reportesRoutes);
   app.use("/api/administracion", administracionRoutes);
+
 
   app.use(notFoundHandler);
   app.use(errorHandler);

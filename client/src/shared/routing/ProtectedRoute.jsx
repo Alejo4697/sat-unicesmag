@@ -26,6 +26,19 @@ export default function ProtectedRoute({ moduleId, children }) {
   if (cargando) return null;
   if (!user) return <Navigate to="/" replace />;
 
+  // Aislamiento estricto del Rol Estudiante
+  if (user.rol === "estudiante") {
+    if (moduleId !== "estudiante") {
+      return <Navigate to="/estudiante/portal" replace />;
+    }
+    return children;
+  }
+
+  // Si un usuario administrativo intenta entrar al módulo de estudiante
+  if (moduleId === "estudiante") {
+    return <Navigate to="/dashboard" replace />;
+  }
+
   if (!puedeAcceder(moduleId)) {
     const destino = primeraRutaPermitida(puedeAcceder);
     if (destino) return <Navigate to={destino} replace />;
@@ -46,3 +59,4 @@ export default function ProtectedRoute({ moduleId, children }) {
 
   return children;
 }
+
