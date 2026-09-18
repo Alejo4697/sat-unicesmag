@@ -96,7 +96,6 @@ export default function LoginPage() {
                 className="login-escudo"
               />
             </div>
-            <div className="login-inst-badge">UNIVERSIDAD CESMAG</div>
             <h1 className="login-title">SAT-UNICESMAG</h1>
             <p className="login-subtitle">
               Sistema de Alertas Tempranas y Seguimiento a la Permanencia Estudiantil
