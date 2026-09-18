@@ -16,8 +16,7 @@ import { moduleRoles } from "../../shared/config/menuConfig.js";
 import IntervencionesPanel from "../../shared/panels/IntervencionesPanel.jsx";
 import RemisionesPanel from "../../shared/panels/RemisionesPanel.jsx";
 import { riskBadgeClass, riskBoxStyle } from "../../shared/utils/risk.js";
-import { formatDateTime } from "../../shared/utils/formatDateTime.js";
-import { listEstudiantes, getEstudiante, getTimeline, getCaracterizacionesEstudiante } from "./api.js";
+import { listEstudiantes, getEstudiante, getCaracterizacionesEstudiante } from "./api.js";
 
 const DIMENSIONES_INFO = {
   IND: { nombre: "Nivel Individual", label: "Individual (IND)", color: "var(--brand-primary, #1e3a8a)", bg: "rgba(30, 58, 138, 0.08)", icon: "fa-user" },
@@ -38,7 +37,6 @@ export default function FichaEstudiantePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [termino, setTermino] = useState(searchParams.get("codigo") || "220109009");
   const [estudiante, setEstudiante] = useState(null);
-  const [timeline, setTimeline] = useState([]);
   const [caracterizaciones, setCaracterizaciones] = useState([]);
   const [sesionActivaIdx, setSesionActivaIdx] = useState(0);
 
@@ -60,13 +58,11 @@ export default function FichaEstudiantePage() {
     setCargando(true);
     setError("");
     try {
-      const [est, tl, carList] = await Promise.all([
+      const [est, carList] = await Promise.all([
         getEstudiante(codigo),
-        getTimeline(codigo),
         getCaracterizacionesEstudiante(codigo).catch(() => [])
       ]);
       setEstudiante(est);
-      setTimeline(tl);
       setCaracterizaciones(carList || []);
       setSesionActivaIdx(0);
     } catch (err) {
@@ -431,92 +427,6 @@ export default function FichaEstudiantePage() {
                       );
                     })}
                   </div>
-                </div>
-              </div>
-
-              {/* Historial de Intervenciones */}
-              <div className="card">
-                <div className="card-header">
-                  <h3 className="card-title">Historial de Intervenciones y Procesos de Escucha</h3>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    {puedeIntervenciones && (
-                      <button type="button" onClick={() => setTab("intervenciones")} className="btn btn-primary btn-sm">
-                        <i className="fas fa-plus"></i> Nueva Intervención
-                      </button>
-                    )}
-                    {puedeRemisiones && (
-                      <button type="button" onClick={() => setTab("remisiones")} className="btn btn-outline btn-sm">
-                        <i className="fas fa-share-nodes"></i> Remitir
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="timeline">
-                  {timeline.length === 0 && <p className="page-placeholder">No se registran intervenciones previas para este estudiante.</p>}
-                  {timeline.map((item) => (
-                    <div className="timeline-item" key={item.id}>
-                      <div className={`timeline-node ${item.esSensibleVBG ? "badge-vbg" : ""}`}></div>
-                      <div className="timeline-box">
-                        <div className="timeline-top">
-                          <span className="timeline-user">
-                            {item.atendidoPor} ({item.cargoAtendio})
-                          </span>
-                          <span className="timeline-time">
-                            <i className="far fa-clock"></i> {formatDateTime(item.fecha)}
-                          </span>
-                        </div>
-
-                        {item.esSensibleVBG && (
-                          <div className="badge badge-risk-high" style={{ marginBottom: 8 }}>
-                            <i className="fas fa-lock"></i> Caso Sensible VBG
-                          </div>
-                        )}
-
-                        {item.detalleVisible ? (
-                          <>
-                            <p>
-                              <strong>Motivo:</strong> {item.motivo}
-                            </p>
-                            <p style={{ marginTop: 4 }}>
-                              <strong>Acuerdos/Compromisos:</strong> {item.resumenAcuerdo}
-                            </p>
-                            {item.adjuntos?.length > 0 && (
-                              <div style={{ marginTop: 8 }}>
-                                <small>
-                                  <strong>Evidencias Adjuntas:</strong>
-                                </small>
-                                <div>
-                                  {item.adjuntos.map((a) => (
-                                    <a
-                                      href="#"
-                                      key={a.nombre}
-                                      onClick={(e) => e.preventDefault()}
-                                      className="btn btn-outline btn-sm"
-                                      style={{ marginTop: 4, marginRight: 4, display: "inline-flex", alignItems: "center", gap: 4 }}
-                                    >
-                                      <i className="fas fa-file-pdf" style={{ color: "#A6192E" }}></i> {a.nombre} ({a.tamano})
-                                    </a>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <div className="confidential-banner">
-                            <i className="fas fa-user-shield confidential-icon"></i>
-                            <div>
-                              <strong>INFORMACIÓN RESTRINGIDA POR SECRETO PROFESIONAL (RNF01)</strong>
-                              <p style={{ fontSize: "0.75rem", margin: 0 }}>
-                                El detalle de este caso de VBG está protegido. Solo es accesible para el profesional registrador,
-                                Consultorios Jurídicos y USP.
-                              </p>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
                 </div>
               </div>
             </>
