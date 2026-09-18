@@ -12,7 +12,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import AppLayout from "../../shared/layout/AppLayout.jsx";
 import { useAuth } from "../../shared/context/AuthContext.jsx";
-import { moduleRoles } from "../../shared/config/menuConfig.js";
 import IntervencionesPanel from "../../shared/panels/IntervencionesPanel.jsx";
 import RemisionesPanel from "../../shared/panels/RemisionesPanel.jsx";
 import { riskBadgeClass, riskBoxStyle } from "../../shared/utils/risk.js";
@@ -33,7 +32,7 @@ const TABS = [
 ];
 
 export default function FichaEstudiantePage() {
-  const { user } = useAuth();
+  const { puedeAcceder } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [termino, setTermino] = useState(searchParams.get("codigo") || "220109009");
   const [estudiante, setEstudiante] = useState(null);
@@ -49,8 +48,8 @@ export default function FichaEstudiantePage() {
   const [cargando, setCargando] = useState(false);
   const [tab, setTab] = useState("resumen");
 
-  const puedeIntervenciones = moduleRoles("intervenciones").includes(user?.rol);
-  const puedeRemisiones = moduleRoles("remisiones").includes(user?.rol);
+  const puedeIntervenciones = puedeAcceder("intervenciones");
+  const puedeRemisiones = puedeAcceder("remisiones");
   const tabActiva =
     (tab === "intervenciones" && !puedeIntervenciones) || (tab === "remisiones" && !puedeRemisiones) ? "resumen" : tab;
 
