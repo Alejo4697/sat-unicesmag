@@ -71,8 +71,8 @@ JOIN (VALUES
   ('acceso:remisiones',      'directivo'),
 
   ('acceso:caracterizacion', 'admin'),
-  ('acceso:caracterizacion', 'profesional'),
   ('acceso:caracterizacion', 'estudiante'),
+
 
   ('acceso:reportes',        'admin'),
   ('acceso:reportes',        'profesional'),

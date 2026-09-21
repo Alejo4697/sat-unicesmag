@@ -32,11 +32,12 @@ export const MENU_CONFIG = [
   },
   {
     title: "Caracterización",
-    roles: ["admin", "profesional", "estudiante"],
+    roles: ["admin", "estudiante"],
     items: [
       { id: "caracterizacion", name: "Formulario Caracterización (Instrumento)", icon: "fa-list-check", href: "/caracterizacion" }
     ]
   },
+
   {
     title: "Informes & SNIES",
     roles: ["admin", "profesional", "directivo", "reporte_actividades"],
