@@ -89,7 +89,14 @@ router.get("/", async (req, res, next) => {
     const lista = codigoEstudiante
       ? MOCK_DATA.intervenciones.filter((i) => i.codigoEstudiante === codigoEstudiante)
       : MOCK_DATA.intervenciones;
-    res.json(lista.map((i) => sanitizarIntervencion(i, req.user)));
+    res.json(
+      lista.map((i) =>
+        sanitizarIntervencion(
+          { ...i, adjuntos: i.adjuntos ?? [], notasAclaratorias: i.notasAclaratorias ?? [] },
+          req.user
+        )
+      )
+    );
   }
 });
 

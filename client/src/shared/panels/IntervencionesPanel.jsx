@@ -414,7 +414,7 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
                             <p style={{ marginTop: 4 }}>
                               <strong>Acuerdos/Compromisos:</strong> {i.resumenAcuerdo}
                             </p>
-                            {i.adjuntos.length > 0 && (
+                            {i.adjuntos?.length > 0 && (
                               <div style={{ marginTop: 8 }}>
                                 <small>
                                   <strong>Evidencias Adjuntas:</strong>
