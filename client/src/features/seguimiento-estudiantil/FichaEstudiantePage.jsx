@@ -39,6 +39,10 @@ export default function FichaEstudiantePage() {
   const [caracterizaciones, setCaracterizaciones] = useState([]);
   const [sesionActivaIdx, setSesionActivaIdx] = useState(0);
 
+  // Selector de matrícula: se llena cuando el documento buscado tiene más
+  // de un código asociado (ej. pregrado + posgrado simultáneos).
+  const [selectorMatriculas, setSelectorMatriculas] = useState(null);
+
   // Modal de Detalle de Respuestas
   const [modalRespuestasAbierto, setModalRespuestasAbierto] = useState(false);
   const [filtroDimModal, setFiltroDimModal] = useState("TODAS");
@@ -56,11 +60,17 @@ export default function FichaEstudiantePage() {
   async function cargarPorCodigo(codigo) {
     setCargando(true);
     setError("");
+    setSelectorMatriculas(null);
     try {
-      const [est, carList] = await Promise.all([
-        getEstudiante(codigo),
-        getCaracterizacionesEstudiante(codigo).catch(() => [])
-      ]);
+      const est = await getEstudiante(codigo);
+      if (est?.multiple) {
+        // El identificador era un documento con varias matrículas: no hay
+        // ficha todavía, se le pide al usuario elegir con cuál trabajar.
+        setEstudiante(null);
+        setSelectorMatriculas(est);
+        return;
+      }
+      const carList = await getCaracterizacionesEstudiante(codigo).catch(() => []);
       setEstudiante(est);
       setCaracterizaciones(carList || []);
       setSesionActivaIdx(0);
@@ -70,6 +80,13 @@ export default function FichaEstudiantePage() {
     } finally {
       setCargando(false);
     }
+  }
+
+  // Continúa el flujo normal una vez elegida una matrícula del selector.
+  function elegirMatricula(codigo) {
+    setSelectorMatriculas(null);
+    setSearchParams({ codigo });
+    cargarPorCodigo(codigo);
   }
 
   useEffect(() => {
@@ -88,6 +105,11 @@ export default function FichaEstudiantePage() {
       // 1. Intentar resolver directamente por código o cédula exacta
       try {
         const estDirecto = await getEstudiante(q);
+        if (estDirecto?.multiple) {
+          setEstudiante(null);
+          setSelectorMatriculas(estDirecto);
+          return;
+        }
         if (estDirecto && estDirecto.codigo) {
           setSearchParams({ codigo: estDirecto.codigo });
           cargarPorCodigo(estDirecto.codigo);
@@ -187,6 +209,118 @@ export default function FichaEstudiantePage() {
       </div>
 
       {error && <div className="auth-error">{error}</div>}
+
+      {/* -------------------------------------------------------------------------- */}
+      {/* MODAL: SELECCIÓN DE MATRÍCULA (documento con varios códigos asociados)      */}
+      {/* -------------------------------------------------------------------------- */}
+      {selectorMatriculas && (
+        <div
+          className="modal-overlay"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: "1rem"
+          }}
+        >
+          <div
+            className="card"
+            style={{
+              width: "100%",
+              maxWidth: "560px",
+              maxHeight: "85vh",
+              display: "flex",
+              flexDirection: "column",
+              background: "var(--surface-card)",
+              borderRadius: "var(--radius-lg)",
+              boxShadow: "var(--shadow-lg)",
+              padding: 0,
+              overflow: "hidden"
+            }}
+          >
+            <div
+              style={{
+                padding: "1.25rem 1.5rem",
+                borderBottom: "1px solid var(--border-light)",
+                background: "linear-gradient(135deg, #FFFFFF 0%, var(--surface-subtle) 100%)"
+              }}
+            >
+              <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 700, color: "var(--brand-primary)" }}>
+                <i className="fas fa-id-card-clip" style={{ marginRight: 8 }}></i>
+                Esta persona tiene varias matrículas
+              </h3>
+              <p style={{ margin: "0.5rem 0 0", fontSize: "0.85rem", color: "var(--text-muted)" }}>
+                <strong>
+                  {selectorMatriculas.nombres} {selectorMatriculas.apellidos}
+                </strong>{" "}
+                (Doc: {selectorMatriculas.documento}) tiene {selectorMatriculas.matriculas.length} códigos activos.
+                Elige con cuál quieres trabajar:
+              </p>
+            </div>
+
+            <div style={{ flex: 1, overflowY: "auto", padding: "1rem 1.5rem", display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+              {selectorMatriculas.matriculas.map((m) => (
+                <button
+                  key={m.codigo}
+                  type="button"
+                  onClick={() => elegirMatricula(m.codigo)}
+                  className="card"
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: "1rem",
+                    padding: "0.85rem 1rem",
+                    borderRadius: "var(--radius-md)",
+                    border: "1px solid var(--border-light)",
+                    background: "var(--surface-card)",
+                    cursor: "pointer",
+                    textAlign: "left",
+                    width: "100%"
+                  }}
+                >
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                      <span style={{ fontWeight: 700, color: "var(--brand-primary)", fontSize: "0.95rem" }}>{m.codigo}</span>
+                      <span className="badge badge-status-process" style={{ fontSize: "0.65rem" }}>
+                        {m.estado || "Activo"}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: "0.8rem", color: "var(--text-main)" }}>
+                      <i className="fas fa-graduation-cap" style={{ marginRight: 5, color: "var(--text-muted)" }}></i>
+                      {m.programa}
+                      {m.semestre ? ` — Semestre ${m.semestre}` : ""}
+                    </div>
+                    <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
+                      <i className="fas fa-calendar" style={{ marginRight: 5 }}></i>
+                      Periodo {m.periodo}
+                    </div>
+                  </div>
+                  <i className="fas fa-chevron-right" style={{ color: "var(--text-muted)" }}></i>
+                </button>
+              ))}
+            </div>
+
+            <div
+              style={{
+                padding: "0.85rem 1.5rem",
+                borderTop: "1px solid var(--border-light)",
+                background: "var(--surface-subtle)",
+                display: "flex",
+                justifyContent: "flex-end"
+              }}
+            >
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => setSelectorMatriculas(null)}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {estudiante && !cargando && (
         <>
