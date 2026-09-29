@@ -51,6 +51,7 @@ import {
 import { identifyUser, requireModule } from "../../shared/middleware/requireRole.js";
 import { pool, query } from "../../shared/db/pool.js";
 import catalogosRoutes from "./catalogos.routes.js";
+import { ejecutarSincronizacion } from "../../shared/services/syncService.js";
 
 const router = Router();
 
@@ -74,9 +75,12 @@ const USUARIO_SELECT = `
            ORDER BY ur.asignado_en NULLS LAST
            LIMIT 1
          ) AS rol,
-         '' AS cargo,
-         'Todos' AS programa
+         COALESCE(p.cargo, 'Personal Institucional') AS cargo,
+         COALESCE(prog.nombre, 'Todos') AS programa
   FROM sat.usuarios u
+  LEFT JOIN sat.personas p ON u.id_personas = p.id
+  LEFT JOIN sat.docentes d ON d.id_usuarios = u.id_usuarios
+  LEFT JOIN sat.programas_academicos prog ON d.id_programas_academicos = prog.id_programas_academicos
 `;
 
 router.get("/usuarios", async (req, res, next) => {
@@ -85,6 +89,37 @@ router.get("/usuarios", async (req, res, next) => {
       `${USUARIO_SELECT} WHERE u.eliminado_en IS NULL ORDER BY u.creado_en`
     );
     res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Endpoint para consultar el estado y métricas de la sincronización institucional
+router.get("/estado-sincronizacion", async (req, res, next) => {
+  try {
+    const { rows: cargaRows } = await query(`
+      SELECT id_cargas_sincronizacion, tipo_dato, iniciada_en, finalizada_en, estado, registros_procesados
+      FROM sat.cargas_sincronizacion
+      ORDER BY iniciada_en DESC
+      LIMIT 1;
+    `);
+
+    const { rows: conteos } = await query(`
+      SELECT 
+        (SELECT COUNT(*) FROM sat.estudiantes) AS total_estudiantes,
+        (SELECT COUNT(*) FROM sat.personas) AS total_personas,
+        (SELECT COUNT(*) FROM sat.matriculas) AS total_matriculas,
+        (SELECT COUNT(*) FROM sat.matriculas_asignaturas) AS total_calificaciones,
+        (SELECT COUNT(*) FROM sat.asignaturas) AS total_asignaturas,
+        (SELECT COUNT(*) FROM sat.usuarios WHERE eliminado_en IS NULL) AS total_usuarios;
+    `);
+
+    res.json({
+      ok: true,
+      conectado: true,
+      ultimaCarga: cargaRows[0] || null,
+      metricas: conteos[0] || {}
+    });
   } catch (err) {
     next(err);
   }
@@ -254,18 +289,26 @@ router.put("/umbrales-riesgo", async (req, res, next) => {
   }
 });
 
-// Espeja simularSincronizacionAcademica() - sigue siendo una simulación
-// (no hay un sistema académico real que consultar todavía), pero ahora
-// corre en el servidor en vez de ser un setTimeout puramente decorativo
-// en el navegador. `estudiantesSincronizados` es un número simulado hasta
-// que exista la integración real con el sistema académico (RQF08).
-router.post("/sincronizar", (req, res) => {
-  const estudiantesSincronizados = 4800 + Math.floor(Math.random() * 120);
-  res.json({
-    ok: true,
-    estudiantesSincronizados,
-    mensaje: `Se sincronizaron ${estudiantesSincronizados} estudiantes correctamente.`
-  });
+// Sincronización institucional real con la base de datos de producción (prod18sep2)
+router.post("/sincronizar", async (req, res, next) => {
+  try {
+    const resultado = await ejecutarSincronizacion();
+    res.json({
+      ok: true,
+      estudiantesSincronizados: resultado.estudiantes,
+      totalProcesados: resultado.totalProcesados,
+      calificaciones: resultado.calificaciones,
+      duracionSegundos: resultado.duracionSegundos,
+      mensaje: `Sincronización exitosa: ${resultado.estudiantes} estudiantes, ${resultado.personas} personas y ${resultado.calificaciones} calificaciones procesadas en ${resultado.duracionSegundos}s.`
+    });
+  } catch (err) {
+    console.error("Error en endpoint /sincronizar:", err);
+    res.status(500).json({
+      ok: false,
+      error: "Error durante la sincronización institucional",
+      detalle: err.message
+    });
+  }
 });
 
 router.get("/matriz-permisos", async (req, res, next) => {

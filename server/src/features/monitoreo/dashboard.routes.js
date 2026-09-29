@@ -24,15 +24,17 @@ async function obtenerEstudiantesCombinados() {
     const { rows } = await query(`
       SELECT e.id_estudiantes AS id,
              e.codigo_externo AS codigo,
-             e.numero_documento AS documento,
-             e.nombres,
-             e.apellidos,
-             COALESCE(e.semestre_actual, 1) AS semestre,
-             COALESCE(p.nombre, 'Ingeniería de Sistemas') AS programa,
+             COALESCE(per.numero_identificacion, e.numero_documento) AS documento,
+             COALESCE(CONCAT_WS(' ', per.primer_nombre, per.segundo_nombre), e.nombres) AS nombres,
+             COALESCE(CONCAT_WS(' ', per.primer_apellido, per.segundo_apellido), e.apellidos) AS apellidos,
+             COALESCE(m.semestre, e.semestre_actual, 1) AS semestre,
+             COALESCE(p.nombre, 'Programa Institucional') AS programa,
              COALESCE(rr.nombre, 'Sin evaluar') AS "riesgoGlobal",
              EXISTS(SELECT 1 FROM sat.respuestas_caracterizacion rc WHERE rc.id_estudiantes = e.id_estudiantes) AS "encuestaRespondida"
       FROM sat.estudiantes e
-      LEFT JOIN sat.programas_academicos p ON e.id_programas_academicos = p.id_programas_academicos
+      LEFT JOIN sat.personas per ON per.id = e.id_personas
+      LEFT JOIN sat.matriculas m ON m.id_estudiantes = e.id_estudiantes
+      LEFT JOIN sat.programas_academicos p ON p.id_programas_academicos = COALESCE(m.id_programas_academicos, e.id_programas_academicos)
       LEFT JOIN LATERAL (
         SELECT cr_1.id_rangos_riesgo
         FROM sat.calificaciones_riesgo cr_1

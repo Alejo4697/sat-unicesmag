@@ -6,6 +6,7 @@ export const eliminarUsuarioAdmin = (id) => apiFetch(`/administracion/usuarios/$
 export const getUmbralesRiesgo = () => apiFetch("/administracion/umbrales-riesgo");
 export const actualizarUmbralesRiesgo = (data) => apiFetch("/administracion/umbrales-riesgo", { method: "PUT", body: data });
 export const sincronizarAcademico = () => apiFetch("/administracion/sincronizar", { method: "POST" });
+export const getEstadoSincronizacion = () => apiFetch("/administracion/estado-sincronizacion");
 export const getMatrizPermisos = () => apiFetch("/administracion/matriz-permisos");
 // { modulo, rol, permitido } -> { modulo, roles }
 export const actualizarPermisoModulo = (data) =>

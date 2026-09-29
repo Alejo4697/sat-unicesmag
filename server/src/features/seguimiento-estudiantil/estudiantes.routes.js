@@ -54,31 +54,43 @@ async function obtenerRiesgoGlobal(idEstudiante) {
 async function construirFichaPorCodigo(idEstudiante, codigo) {
   const { rows } = await query(
     `SELECT e.id_estudiantes AS id,
-            e.numero_documento AS documento,
-            e.nombres,
-            e.apellidos,
-            e.correo_institucional AS email,
-            e.telefono,
+            COALESCE(per.numero_identificacion, e.numero_documento) AS documento,
+            COALESCE(CONCAT_WS(' ', per.primer_nombre, per.segundo_nombre), e.nombres) AS nombres,
+            COALESCE(CONCAT_WS(' ', per.primer_apellido, per.segundo_apellido), e.apellidos) AS apellidos,
+            COALESCE(per.correo_institucional, per.correo_electronico, e.correo_institucional) AS email,
+            COALESCE(per.celular, per.telefono, e.telefono) AS telefono,
+            per.direccion,
+            per.estrato,
+            per.genero,
+            per.eps,
             COALESCE(m.semestre, e.semestre_actual, 1) AS semestre,
             COALESCE(pa.nombre, '2026-1') AS periodo,
-            COALESCE(pm.nombre, p.nombre, 'Ingeniería de Sistemas') AS programa,
-            3.8 AS "promedioAcademico",
-            4 AS "inasistenciasAcumuladas",
+            COALESCE(pm.nombre, p.nombre, 'Programa Institucional') AS programa,
+            COALESCE(metricas_acad.promedio_calc, 3.8) AS "promedioAcademico",
+            COALESCE(metricas_acad.inasistencias_calc, 0) AS "inasistenciasAcumuladas",
             EXISTS(SELECT 1 FROM sat.respuestas_caracterizacion rc WHERE rc.id_estudiantes = e.id_estudiantes) AS "encuestaRespondida",
             cr.factores,
             cr.puntaje_individual,
             cr.puntaje_institucional,
             cr.puntaje_academico,
             cr.puntaje_socioeconomico,
-            a.nombres AS acudiente_nombre,
-            a.parentesco AS acudiente_parentesco,
-            a.telefono AS acudiente_telefono
+            COALESCE(a.nombres, 'Contacto Familiar') AS acudiente_nombre,
+            COALESCE(a.parentesco, 'Acudiente') AS acudiente_parentesco,
+            COALESCE(a.telefono, per.telefono, '3187654321') AS acudiente_telefono
      FROM sat.estudiantes e
-     LEFT JOIN sat.matriculas m ON m.id_estudiantes = e.id_estudiantes AND m.codigo_externo = $2
+     LEFT JOIN sat.personas per ON per.id = e.id_personas
+     LEFT JOIN sat.matriculas m ON m.id_estudiantes = e.id_estudiantes AND (m.codigo_externo = $2 OR $2 IS NULL)
      LEFT JOIN sat.programas_academicos pm ON pm.id_programas_academicos = m.id_programas_academicos
      LEFT JOIN sat.programas_academicos p ON p.id_programas_academicos = e.id_programas_academicos
      LEFT JOIN sat.periodos_academicos pa ON pa.id_periodos_academicos = m.id_periodos_academicos
      LEFT JOIN sat.acudientes a ON a.id_estudiantes = e.id_estudiantes
+     LEFT JOIN LATERAL (
+       SELECT 
+         ROUND(AVG(ma.nota_final)::numeric, 1) AS promedio_calc,
+         SUM(COALESCE(ma.inasistencias_corte_1, 0) + COALESCE(ma.inasistencias_corte_2, 0) + COALESCE(ma.inasistencias_corte_3, 0)) AS inasistencias_calc
+       FROM sat.matriculas_asignaturas ma
+       WHERE ma.id_matriculas = m.id_matriculas
+     ) metricas_acad ON true
      LEFT JOIN LATERAL (
        SELECT cr_1.id_rangos_riesgo, cr_1.factores, cr_1.puntaje_individual, cr_1.puntaje_institucional, cr_1.puntaje_academico, cr_1.puntaje_socioeconomico
        FROM sat.calificaciones_riesgo cr_1
@@ -128,14 +140,14 @@ async function construirFichaPorCodigo(idEstudiante, codigo) {
     periodo: r.periodo,
     programa: r.programa,
     promedioAcademico: Number(r.promedioAcademico) || 3.8,
-    inasistenciasAcumuladas: Number(r.inasistenciasAcumuladas) || 4,
+    inasistenciasAcumuladas: Number(r.inasistenciasAcumuladas) || 0,
     riesgoGlobal: riesgoGlobal === "Sin evaluar" && r.encuestaRespondida ? "Medio" : riesgoGlobal,
     puntajesCampo,
     encuestaRespondida: r.encuestaRespondida,
     acudiente: {
-      nombre: r.acudiente_nombre || "Carmen Bastidas",
-      telefono: r.acudiente_telefono || "3187654321",
-      parentesco: r.acudiente_parentesco || "Madre"
+      nombre: r.acudiente_nombre,
+      telefono: r.acudiente_telefono,
+      parentesco: r.acudiente_parentesco
     }
   };
 }
@@ -154,27 +166,29 @@ async function buscarPorIdentificador(id, user) {
   if (!cleanId) return null;
 
   try {
-    // 1) ¿Es un código de matrícula? (fuente de verdad nueva)
-    const { rows: porMatricula } = await query(
-      `SELECT id_estudiantes FROM sat.matriculas WHERE codigo_externo = $1 LIMIT 1`,
+    // 1) ¿Es un código de matrícula o código estudiantil?
+    const { rows: porCodigo } = await query(
+      `SELECT e.id_estudiantes, e.codigo_externo 
+       FROM sat.estudiantes e
+       LEFT JOIN sat.matriculas m ON m.id_estudiantes = e.id_estudiantes
+       WHERE m.codigo_externo = $1 OR e.codigo_externo = $1 
+       LIMIT 1`,
       [cleanId]
     );
-    if (porMatricula.length > 0) {
-      return await construirFichaPorCodigo(porMatricula[0].id_estudiantes, cleanId);
+    if (porCodigo.length > 0) {
+      return await construirFichaPorCodigo(porCodigo[0].id_estudiantes, cleanId);
     }
 
-    // 2) ¿Es el código legado de sat.estudiantes (fila sin matrícula backfillada)?
-    const { rows: porCodigoLegado } = await query(
-      `SELECT id_estudiantes, codigo_externo FROM sat.estudiantes WHERE codigo_externo = $1 LIMIT 1`,
-      [cleanId]
-    );
-    if (porCodigoLegado.length > 0) {
-      return await construirFichaPorCodigo(porCodigoLegado[0].id_estudiantes, porCodigoLegado[0].codigo_externo);
-    }
-
-    // 3) ¿Es un documento? (numero_documento es UNIQUE - identifica una persona)
+    // 2) ¿Es un documento? (en sat.estudiantes o sat.personas)
     const { rows: porDocumento } = await query(
-      `SELECT id_estudiantes, nombres, apellidos, numero_documento FROM sat.estudiantes WHERE numero_documento = $1 LIMIT 1`,
+      `SELECT e.id_estudiantes, e.codigo_externo,
+              COALESCE(CONCAT_WS(' ', per.primer_nombre, per.segundo_nombre), e.nombres) AS nombres,
+              COALESCE(CONCAT_WS(' ', per.primer_apellido, per.segundo_apellido), e.apellidos) AS apellidos,
+              COALESCE(per.numero_identificacion, e.numero_documento) AS numero_documento
+       FROM sat.estudiantes e
+       LEFT JOIN sat.personas per ON per.id = e.id_personas
+       WHERE e.numero_documento = $1 OR per.numero_identificacion = $1
+       LIMIT 1`,
       [cleanId]
     );
     if (porDocumento.length === 0) {
@@ -183,21 +197,21 @@ async function buscarPorIdentificador(id, user) {
     const persona = porDocumento[0];
 
     const { rows: matriculas } = await query(
-      `SELECT m.codigo_externo AS codigo,
+      `SELECT COALESCE(m.codigo_externo, e.codigo_externo) AS codigo,
               COALESCE(p.nombre, 'Sin programa asignado') AS programa,
-              COALESCE(pa.nombre, 'Sin periodo') AS periodo,
-              m.semestre,
-              m.estado
-       FROM sat.matriculas m
-       LEFT JOIN sat.programas_academicos p ON p.id_programas_academicos = m.id_programas_academicos
+              COALESCE(pa.nombre, '2026-1') AS periodo,
+              COALESCE(m.semestre, e.semestre_actual, 1) AS semestre,
+              COALESCE(m.estado, 'ACTIVA') AS estado
+       FROM sat.estudiantes e
+       LEFT JOIN sat.matriculas m ON m.id_estudiantes = e.id_estudiantes
+       LEFT JOIN sat.programas_academicos p ON p.id_programas_academicos = COALESCE(m.id_programas_academicos, e.id_programas_academicos)
        LEFT JOIN sat.periodos_academicos pa ON pa.id_periodos_academicos = m.id_periodos_academicos
-       WHERE m.id_estudiantes = $1 AND m.codigo_externo IS NOT NULL
-       ORDER BY m.codigo_externo`,
+       WHERE e.id_estudiantes = $1
+       ORDER BY m.id_matriculas DESC NULLS LAST`,
       [persona.id_estudiantes]
     );
 
-    // Director: mismo alcance que ya aplica a la ficha (propio programa + en
-    // riesgo), pero evaluado por matrícula para no listarle códigos ajenos.
+    // Director: mismo alcance que ya aplica a la ficha
     let matriculasVisibles = matriculas;
     if (user?.rol === "directivo") {
       const riesgoGlobal = await obtenerRiesgoGlobal(persona.id_estudiantes);
@@ -214,18 +228,14 @@ async function buscarPorIdentificador(id, user) {
       };
     }
 
-    if (matriculasVisibles.length === 1) {
+    if (matriculasVisibles.length === 1 && matriculasVisibles[0].codigo) {
       return await construirFichaPorCodigo(persona.id_estudiantes, matriculasVisibles[0].codigo);
     }
 
-    // Documento sin ninguna matrícula con código (o ninguna visible para
-    // este rol): intenta con el código legado de sat.estudiantes.
-    const { rows: legado } = await query(`SELECT codigo_externo FROM sat.estudiantes WHERE id_estudiantes = $1`, [
-      persona.id_estudiantes
-    ]);
-    if (legado[0]?.codigo_externo) {
-      return await construirFichaPorCodigo(persona.id_estudiantes, legado[0].codigo_externo);
+    if (persona.codigo_externo) {
+      return await construirFichaPorCodigo(persona.id_estudiantes, persona.codigo_externo);
     }
+
     return null;
   } catch (err) {
     console.warn("Consulta a sat.estudiantes falló, usando fallback:", err.message);
@@ -241,118 +251,80 @@ router.get("/", async (req, res, next) => {
   try {
     let resultados = [];
 
-    // Intentar consultar base de datos
+    // Consultar base de datos real (sat.estudiantes + sat.personas + sat.matriculas)
     try {
-      if (q) {
-        const { rows } = await query(
-          `SELECT e.id_estudiantes AS id,
-                  e.codigo_externo AS codigo,
-                  e.numero_documento AS documento,
-                  e.nombres,
-                  e.apellidos,
-                  e.correo_institucional AS email,
-                  e.telefono,
-                  COALESCE(e.semestre_actual, 1) AS semestre,
-                  '2025 II' AS periodo,
-                  COALESCE(p.nombre, 'Ingeniería de Sistemas') AS programa,
-                  COALESCE(rr.nombre, 'Sin evaluar') AS "riesgoGlobal",
-                  EXISTS(SELECT 1 FROM sat.respuestas_caracterizacion rc WHERE rc.id_estudiantes = e.id_estudiantes) AS "encuestaRespondida"
-           FROM sat.estudiantes e
-           LEFT JOIN sat.programas_academicos p ON e.id_programas_academicos = p.id_programas_academicos
-           LEFT JOIN LATERAL (
-             SELECT cr_1.id_rangos_riesgo
-             FROM sat.calificaciones_riesgo cr_1
-             WHERE cr_1.id_estudiantes = e.id_estudiantes AND cr_1.vigente = true
-             ORDER BY cr_1.calculado_en DESC
-             LIMIT 1
-           ) cr ON true
-           LEFT JOIN sat.rangos_riesgo rr ON rr.id_rangos_riesgo = cr.id_rangos_riesgo
-           WHERE LOWER(e.codigo_externo) LIKE $1
-              OR LOWER(e.numero_documento) LIKE $1
-              OR LOWER(e.nombres) LIKE $1
-              OR LOWER(e.apellidos) LIKE $1
-              OR LOWER(COALESCE(p.nombre, '')) LIKE $1
-           LIMIT 20`,
-          [`%${q}%`]
-        );
-        if (rows.length > 0) {
-          resultados = rows.map((r) => {
-            let riesgoFormatted = r.riesgoGlobal;
-            if (riesgoFormatted === "ALTO") riesgoFormatted = "Alto";
-            else if (riesgoFormatted === "MEDIO") riesgoFormatted = "Medio";
-            else if (riesgoFormatted === "BAJO") riesgoFormatted = "Bajo";
+      const sql = `
+        SELECT e.id_estudiantes AS id,
+               e.codigo_externo AS codigo,
+               COALESCE(per.numero_identificacion, e.numero_documento) AS documento,
+               COALESCE(CONCAT_WS(' ', per.primer_nombre, per.segundo_nombre), e.nombres) AS nombres,
+               COALESCE(CONCAT_WS(' ', per.primer_apellido, per.segundo_apellido), e.apellidos) AS apellidos,
+               COALESCE(per.correo_institucional, per.correo_electronico, e.correo_institucional) AS email,
+               COALESCE(per.celular, per.telefono, e.telefono) AS telefono,
+               COALESCE(m.semestre, e.semestre_actual, 1) AS semestre,
+               '2026-1' AS periodo,
+               COALESCE(p.nombre, 'Programa Institucional') AS programa,
+               COALESCE(rr.nombre, 'Sin evaluar') AS "riesgoGlobal",
+               COALESCE(metricas_acad.promedio_calc, 3.8) AS "promedioAcademico",
+               COALESCE(metricas_acad.inasistencias_calc, 0) AS "inasistenciasAcumuladas",
+               EXISTS(SELECT 1 FROM sat.respuestas_caracterizacion rc WHERE rc.id_estudiantes = e.id_estudiantes) AS "encuestaRespondida"
+        FROM sat.estudiantes e
+        LEFT JOIN sat.personas per ON per.id = e.id_personas
+        LEFT JOIN sat.matriculas m ON m.id_estudiantes = e.id_estudiantes
+        LEFT JOIN sat.programas_academicos p ON p.id_programas_academicos = COALESCE(m.id_programas_academicos, e.id_programas_academicos)
+        LEFT JOIN LATERAL (
+          SELECT 
+            ROUND(AVG(ma.nota_final)::numeric, 1) AS promedio_calc,
+            SUM(COALESCE(ma.inasistencias_corte_1, 0) + COALESCE(ma.inasistencias_corte_2, 0) + COALESCE(ma.inasistencias_corte_3, 0)) AS inasistencias_calc
+          FROM sat.matriculas_asignaturas ma
+          WHERE ma.id_matriculas = m.id_matriculas
+        ) metricas_acad ON true
+        LEFT JOIN LATERAL (
+          SELECT cr_1.id_rangos_riesgo
+          FROM sat.calificaciones_riesgo cr_1
+          WHERE cr_1.id_estudiantes = e.id_estudiantes AND cr_1.vigente = true
+          ORDER BY cr_1.calculado_en DESC
+          LIMIT 1
+        ) cr ON true
+        LEFT JOIN sat.rangos_riesgo rr ON rr.id_rangos_riesgo = cr.id_rangos_riesgo
+        ${q ? `WHERE LOWER(COALESCE(e.codigo_externo, '')) LIKE $1
+                  OR LOWER(COALESCE(e.numero_documento, '')) LIKE $1
+                  OR LOWER(COALESCE(per.numero_identificacion, '')) LIKE $1
+                  OR LOWER(COALESCE(per.primer_nombre, '')) LIKE $1
+                  OR LOWER(COALESCE(per.primer_apellido, '')) LIKE $1
+                  OR LOWER(COALESCE(e.nombres, '')) LIKE $1
+                  OR LOWER(COALESCE(e.apellidos, '')) LIKE $1
+                  OR LOWER(COALESCE(p.nombre, '')) LIKE $1` : ""}
+        ORDER BY e.codigo_externo ASC
+        LIMIT 25
+      `;
+      const params = q ? [`%${q}%`] : [];
+      const { rows } = await query(sql, params);
+      if (rows.length > 0) {
+        resultados = rows.map((r) => {
+          let riesgoFormatted = r.riesgoGlobal;
+          if (riesgoFormatted === "ALTO") riesgoFormatted = "Alto";
+          else if (riesgoFormatted === "MEDIO") riesgoFormatted = "Medio";
+          else if (riesgoFormatted === "BAJO") riesgoFormatted = "Bajo";
 
-            return {
-              id: r.id,
-              codigo: r.codigo,
-              documento: r.documento,
-              nombres: r.nombres,
-              apellidos: r.apellidos,
-              email: r.email,
-              telefono: r.telefono || "3165432109",
-              semestre: r.semestre,
-              periodo: r.periodo,
-              programa: r.programa,
-              promedioAcademico: 3.8,
-              inasistenciasAcumuladas: 4,
-              riesgoGlobal: riesgoFormatted || (r.encuestaRespondida ? "Medio" : "Sin evaluar"),
-              encuestaRespondida: r.encuestaRespondida,
-              acudiente: { nombre: "Contacto Familiar", telefono: "3187654321", parentesco: "Acudiente" }
-            };
-          });
-        }
-      } else {
-        const { rows } = await query(
-          `SELECT e.id_estudiantes AS id,
-                  e.codigo_externo AS codigo,
-                  e.numero_documento AS documento,
-                  e.nombres,
-                  e.apellidos,
-                  e.correo_institucional AS email,
-                  e.telefono,
-                  COALESCE(e.semestre_actual, 1) AS semestre,
-                  '2025 II' AS periodo,
-                  COALESCE(p.nombre, 'Ingeniería de Sistemas') AS programa,
-                  COALESCE(rr.nombre, 'Sin evaluar') AS "riesgoGlobal",
-                  EXISTS(SELECT 1 FROM sat.respuestas_caracterizacion rc WHERE rc.id_estudiantes = e.id_estudiantes) AS "encuestaRespondida"
-           FROM sat.estudiantes e
-           LEFT JOIN sat.programas_academicos p ON e.id_programas_academicos = p.id_programas_academicos
-           LEFT JOIN LATERAL (
-             SELECT cr_1.id_rangos_riesgo
-             FROM sat.calificaciones_riesgo cr_1
-             WHERE cr_1.id_estudiantes = e.id_estudiantes AND cr_1.vigente = true
-             ORDER BY cr_1.calculado_en DESC
-             LIMIT 1
-           ) cr ON true
-           LEFT JOIN sat.rangos_riesgo rr ON rr.id_rangos_riesgo = cr.id_rangos_riesgo
-           LIMIT 20`
-        );
-        if (rows.length > 0) {
-          resultados = rows.map((r) => {
-            let riesgoFormatted = r.riesgoGlobal;
-            if (riesgoFormatted === "ALTO") riesgoFormatted = "Alto";
-            else if (riesgoFormatted === "MEDIO") riesgoFormatted = "Medio";
-            else if (riesgoFormatted === "BAJO") riesgoFormatted = "Bajo";
-
-            return {
-              id: r.id,
-              codigo: r.codigo,
-              documento: r.documento,
-              nombres: r.nombres,
-              apellidos: r.apellidos,
-              email: r.email,
-              telefono: r.telefono || "3165432109",
-              semestre: r.semestre,
-              periodo: r.periodo,
-              programa: r.programa,
-              promedioAcademico: 3.8,
-              inasistenciasAcumuladas: 4,
-              riesgoGlobal: riesgoFormatted || (r.encuestaRespondida ? "Medio" : "Sin evaluar"),
-              encuestaRespondida: r.encuestaRespondida,
-              acudiente: { nombre: "Contacto Familiar", telefono: "3187654321", parentesco: "Acudiente" }
-            };
-          });
-        }
+          return {
+            id: r.id,
+            codigo: r.codigo,
+            documento: r.documento,
+            nombres: r.nombres,
+            apellidos: r.apellidos,
+            email: r.email,
+            telefono: r.telefono || "3165432109",
+            semestre: r.semestre,
+            periodo: r.periodo,
+            programa: r.programa,
+            promedioAcademico: Number(r.promedioAcademico) || 3.8,
+            inasistenciasAcumuladas: Number(r.inasistenciasAcumuladas) || 0,
+            riesgoGlobal: riesgoFormatted || (r.encuestaRespondida ? "Medio" : "Sin evaluar"),
+            encuestaRespondida: r.encuestaRespondida,
+            acudiente: { nombre: "Contacto Familiar", telefono: "3187654321", parentesco: "Acudiente" }
+          };
+        });
       }
     } catch (err) {
       console.warn("Consulta listado sat.estudiantes falló:", err.message);

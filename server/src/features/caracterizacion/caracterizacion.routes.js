@@ -631,7 +631,9 @@ router.get("/:codigo", async (req, res, next) => {
       const { rows: sesionRows } = await query(
         `SELECT rc.id_respuestas_caracterizacion AS id,
                 e.codigo_externo AS "codigoEstudiante",
-                e.nombres, e.apellidos, e.semestre_actual AS semestre,
+                COALESCE(CONCAT_WS(' ', per.primer_nombre, per.segundo_nombre), e.nombres) AS nombres,
+                COALESCE(CONCAT_WS(' ', per.primer_apellido, per.segundo_apellido), e.apellidos) AS apellidos,
+                e.semestre_actual AS semestre,
                 pa.nombre AS periodo,
                 rc.creado_en AS fecha,
                 cr.puntaje_global AS "puntajeGlobal",
@@ -639,10 +641,12 @@ router.get("/:codigo", async (req, res, next) => {
                 cr.factores
          FROM sat.respuestas_caracterizacion rc
          JOIN sat.estudiantes e ON rc.id_estudiantes = e.id_estudiantes
+         LEFT JOIN sat.personas per ON per.id = e.id_personas
+         LEFT JOIN sat.matriculas m ON m.id_estudiantes = e.id_estudiantes
          LEFT JOIN sat.periodos_academicos pa ON rc.id_periodos_academicos = pa.id_periodos_academicos
          LEFT JOIN sat.calificaciones_riesgo cr ON cr.id_respuestas_caracterizacion = rc.id_respuestas_caracterizacion
          LEFT JOIN sat.rangos_riesgo rr ON rr.id_rangos_riesgo = cr.id_rangos_riesgo
-         WHERE e.codigo_externo = $1 OR e.numero_documento = $1 OR e.id_estudiantes::text = $1
+         WHERE e.codigo_externo = $1 OR e.numero_documento = $1 OR per.numero_identificacion = $1 OR m.codigo_externo = $1 OR e.id_estudiantes::text = $1
          ORDER BY rc.creado_en DESC`,
         [codigo]
       );
@@ -821,9 +825,15 @@ router.post("/", async (req, res, next) => {
     let estudianteDb = null;
     try {
       const estRes = await query(
-        `SELECT id_estudiantes, codigo_externo, numero_documento, nombres, apellidos, semestre_actual, id_programas_academicos, id_sedes 
-         FROM sat.estudiantes 
-         WHERE codigo_externo = $1 OR numero_documento = $1 OR id_estudiantes::text = $1 
+        `SELECT e.id_estudiantes, e.codigo_externo,
+                COALESCE(per.numero_identificacion, e.numero_documento) AS numero_documento,
+                COALESCE(CONCAT_WS(' ', per.primer_nombre, per.segundo_nombre), e.nombres) AS nombres,
+                COALESCE(CONCAT_WS(' ', per.primer_apellido, per.segundo_apellido), e.apellidos) AS apellidos,
+                e.semestre_actual, e.id_programas_academicos, e.id_sedes 
+         FROM sat.estudiantes e
+         LEFT JOIN sat.personas per ON per.id = e.id_personas
+         LEFT JOIN sat.matriculas m ON m.id_estudiantes = e.id_estudiantes
+         WHERE e.codigo_externo = $1 OR e.numero_documento = $1 OR per.numero_identificacion = $1 OR m.codigo_externo = $1 OR e.id_estudiantes::text = $1 
          LIMIT 1`,
         [codigoEstudiante]
       );
