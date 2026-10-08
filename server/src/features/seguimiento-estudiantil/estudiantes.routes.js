@@ -52,8 +52,126 @@ async function obtenerRiesgoGlobal(idEstudiante) {
 // hay matrícula backfillada para ese código, cae a los campos legado de
 // sat.estudiantes).
 async function construirFichaPorCodigo(idEstudiante, codigo) {
+  // 1. Obtener todas las matrículas / programas de la persona (tanto Pregrado como Posgrado)
+  const { rows: matriculasRows } = await query(
+    `SELECT m.id_matriculas,
+            COALESCE(m.codigo_externo, e.codigo_externo) AS codigo,
+            COALESCE(p.nombre, 'Programa Institucional') AS programa,
+            p.codigo_externo AS "codigoPrograma",
+            CASE 
+              WHEN UPPER(p.nombre) LIKE '%ESPECIALIZA%' OR UPPER(p.nombre) LIKE '%MAESTR%' OR UPPER(p.nombre) LIKE '%POSGRADO%' THEN 'POSGRADO'
+              ELSE 'PREGRADO'
+            END AS nivel,
+            COALESCE(m.semestre, e.semestre_actual, 1) AS semestre,
+            COALESCE(m.jornada, 'DIURNA') AS jornada,
+            COALESCE(pa.nombre, '2026-1') AS periodo,
+            COALESCE(m.estado, 'ACTIVA') AS estado,
+            metricas.promedio AS "promedioAcademico",
+            COALESCE(metricas.inasistencias, 0) AS "inasistenciasAcumuladas",
+            COALESCE(metricas.total_asignaturas, 0) AS "totalAsignaturas",
+            COALESCE(metricas.asignaturas_evaluadas, 0) AS "asignaturasEvaluadas"
+     FROM sat.matriculas m
+     JOIN sat.estudiantes e ON e.id_estudiantes = m.id_estudiantes
+     LEFT JOIN sat.programas_academicos p ON p.id_programas_academicos = m.id_programas_academicos
+     LEFT JOIN sat.periodos_academicos pa ON pa.id_periodos_academicos = m.id_periodos_academicos
+     LEFT JOIN LATERAL (
+       SELECT 
+         ROUND(
+           AVG(
+             COALESCE(
+               ma.nota_final,
+               (
+                 SELECT AVG(val)
+                 FROM (VALUES (ma.nota_corte_1), (ma.nota_corte_2), (ma.nota_corte_3)) AS v(val)
+                 WHERE val IS NOT NULL
+               )
+             )
+           )::numeric, 
+           2
+         ) AS promedio,
+         SUM(COALESCE(ma.inasistencias_corte_1, 0) + COALESCE(ma.inasistencias_corte_2, 0) + COALESCE(ma.inasistencias_corte_3, 0)) AS inasistencias,
+         COUNT(ma.id_matriculas_asignaturas) AS total_asignaturas,
+         COUNT(
+           CASE WHEN ma.nota_final IS NOT NULL 
+             OR ma.nota_corte_1 IS NOT NULL 
+             OR ma.nota_corte_2 IS NOT NULL 
+             OR ma.nota_corte_3 IS NOT NULL 
+           THEN 1 END
+         ) AS asignaturas_evaluadas
+       FROM sat.matriculas_asignaturas ma
+       WHERE ma.id_matriculas = m.id_matriculas
+     ) metricas ON true
+     WHERE m.id_estudiantes = $1
+     ORDER BY (CASE WHEN UPPER(p.nombre) LIKE '%ESPECIALIZA%' OR UPPER(p.nombre) LIKE '%MAESTR%' THEN 2 ELSE 1 END), m.semestre DESC`,
+    [idEstudiante]
+  );
+
+  // 1.1 Obtener detalle de asignaturas para cada matrícula
+  for (const mat of matriculasRows) {
+    const { rows: asigs } = await query(
+      `SELECT a.codigo_externo AS codigo,
+              a.nombre AS nombre,
+              ma.nota_corte_1 AS "corte1",
+              ma.nota_corte_2 AS "corte2",
+              ma.nota_corte_3 AS "corte3",
+              ma.nota_final AS "notaFinal",
+              COALESCE(
+                ma.nota_final,
+                ROUND(
+                  (SELECT AVG(val) FROM (VALUES (ma.nota_corte_1), (ma.nota_corte_2), (ma.nota_corte_3)) AS v(val) WHERE val IS NOT NULL)::numeric,
+                  2
+                )
+              ) AS "notaActual",
+              (COALESCE(ma.inasistencias_corte_1, 0) + COALESCE(ma.inasistencias_corte_2, 0) + COALESCE(ma.inasistencias_corte_3, 0)) AS inasistencias,
+              COALESCE(ma.estado, 'CURSANDO') AS estado
+       FROM sat.matriculas_asignaturas ma
+       JOIN sat.grupos_asignatura ga ON ga.id_grupos_asignatura = ma.id_grupos_asignatura
+       JOIN sat.asignaturas a ON a.id_asignaturas = ga.id_asignaturas
+       WHERE ma.id_matriculas = $1
+       ORDER BY a.nombre ASC`,
+      [mat.id_matriculas]
+    );
+
+    mat.asignaturas = asigs.map((a) => ({
+      ...a,
+      corte1: a.corte1 !== null ? Number(a.corte1) : null,
+      corte2: a.corte2 !== null ? Number(a.corte2) : null,
+      corte3: a.corte3 !== null ? Number(a.corte3) : null,
+      notaFinal: a.notaFinal !== null ? Number(a.notaFinal) : null,
+      notaActual: a.notaActual !== null ? Number(a.notaActual) : null,
+      inasistencias: Number(a.inasistencias) || 0
+    }));
+    mat.promedioAcademico = mat.promedioAcademico !== null ? Number(mat.promedioAcademico) : null;
+    mat.inasistenciasAcumuladas = Number(mat.inasistenciasAcumuladas) || 0;
+    mat.totalAsignaturas = Number(mat.totalAsignaturas) || 0;
+    mat.asignaturasEvaluadas = Number(mat.asignaturasEvaluadas) || 0;
+
+    const c1Notas = mat.asignaturas.filter((a) => a.corte1 !== null).map((a) => a.corte1);
+    const c2Notas = mat.asignaturas.filter((a) => a.corte2 !== null).map((a) => a.corte2);
+    const c3Notas = mat.asignaturas.filter((a) => a.corte3 !== null).map((a) => a.corte3);
+
+    mat.promedioCorte1 = c1Notas.length > 0 ? Number((c1Notas.reduce((a, b) => a + b, 0) / c1Notas.length).toFixed(2)) : null;
+    mat.promedioCorte2 = c2Notas.length > 0 ? Number((c2Notas.reduce((a, b) => a + b, 0) / c2Notas.length).toFixed(2)) : null;
+    mat.promedioCorte3 = c3Notas.length > 0 ? Number((c3Notas.reduce((a, b) => a + b, 0) / c3Notas.length).toFixed(2)) : null;
+
+    mat.materiasAprobadas = mat.asignaturas.filter((a) => a.notaActual !== null && a.notaActual >= 3.0).length;
+    mat.materiasEnRiesgo = mat.asignaturas.filter((a) => a.notaActual !== null && a.notaActual < 3.0).length;
+    mat.materiasPendientes = mat.asignaturas.filter((a) => a.notaActual === null).length;
+  }
+
+  // Matrícula activa/seleccionada
+  let matActiva = null;
+  if (codigo) {
+    matActiva = matriculasRows.find((m) => String(m.codigo).toLowerCase() === String(codigo).toLowerCase());
+  }
+  if (!matActiva && matriculasRows.length > 0) {
+    matActiva = matriculasRows[0];
+  }
+  const codActivo = matActiva?.codigo || codigo;
+
   const { rows } = await query(
     `SELECT e.id_estudiantes AS id,
+            COALESCE(m.codigo_externo, e.codigo_externo, $2) AS codigo,
             COALESCE(per.numero_identificacion, e.numero_documento) AS documento,
             COALESCE(CONCAT_WS(' ', per.primer_nombre, per.segundo_nombre), e.nombres) AS nombres,
             COALESCE(CONCAT_WS(' ', per.primer_apellido, per.segundo_apellido), e.apellidos) AS apellidos,
@@ -66,8 +184,6 @@ async function construirFichaPorCodigo(idEstudiante, codigo) {
             COALESCE(m.semestre, e.semestre_actual, 1) AS semestre,
             COALESCE(pa.nombre, '2026-1') AS periodo,
             COALESCE(pm.nombre, p.nombre, 'Programa Institucional') AS programa,
-            COALESCE(metricas_acad.promedio_calc, 3.8) AS "promedioAcademico",
-            COALESCE(metricas_acad.inasistencias_calc, 0) AS "inasistenciasAcumuladas",
             EXISTS(SELECT 1 FROM sat.respuestas_caracterizacion rc WHERE rc.id_estudiantes = e.id_estudiantes) AS "encuestaRespondida",
             cr.factores,
             cr.puntaje_individual,
@@ -85,13 +201,6 @@ async function construirFichaPorCodigo(idEstudiante, codigo) {
      LEFT JOIN sat.periodos_academicos pa ON pa.id_periodos_academicos = m.id_periodos_academicos
      LEFT JOIN sat.acudientes a ON a.id_estudiantes = e.id_estudiantes
      LEFT JOIN LATERAL (
-       SELECT 
-         ROUND(AVG(ma.nota_final)::numeric, 1) AS promedio_calc,
-         SUM(COALESCE(ma.inasistencias_corte_1, 0) + COALESCE(ma.inasistencias_corte_2, 0) + COALESCE(ma.inasistencias_corte_3, 0)) AS inasistencias_calc
-       FROM sat.matriculas_asignaturas ma
-       WHERE ma.id_matriculas = m.id_matriculas
-     ) metricas_acad ON true
-     LEFT JOIN LATERAL (
        SELECT cr_1.id_rangos_riesgo, cr_1.factores, cr_1.puntaje_individual, cr_1.puntaje_institucional, cr_1.puntaje_academico, cr_1.puntaje_socioeconomico
        FROM sat.calificaciones_riesgo cr_1
        WHERE cr_1.id_estudiantes = e.id_estudiantes AND cr_1.vigente = true
@@ -100,7 +209,7 @@ async function construirFichaPorCodigo(idEstudiante, codigo) {
      ) cr ON true
      WHERE e.id_estudiantes = $1
      LIMIT 1`,
-    [idEstudiante, codigo]
+    [idEstudiante, codActivo]
   );
 
   if (rows.length === 0) return null;
@@ -128,19 +237,67 @@ async function construirFichaPorCodigo(idEstudiante, codigo) {
 
   const riesgoGlobal = await obtenerRiesgoGlobal(idEstudiante);
 
+  const programaPregrado = matriculasRows.find((m) => m.nivel === "PREGRADO") || null;
+  const programaPosgrado = matriculasRows.find((m) => m.nivel === "POSGRADO") || null;
+  const tieneDoblePrograma = !!(programaPregrado && programaPosgrado);
+
+  // Promedio global del estudiante combinando todas las materias de sus matrículas
+  const todasLasNotas = matriculasRows
+    .flatMap((m) => m.asignaturas || [])
+    .filter((a) => a.notaActual !== null && a.notaActual !== undefined)
+    .map((a) => a.notaActual);
+
+  const promedioGlobalEstudiante = todasLasNotas.length > 0
+    ? Number((todasLasNotas.reduce((acc, curr) => acc + curr, 0) / todasLasNotas.length).toFixed(2))
+    : (matActiva?.promedioAcademico || null);
+
+  const programasFormateados = matriculasRows.length > 0 ? matriculasRows : [
+    {
+      id_matriculas: "mat-default",
+      codigo: r.codigo || codActivo,
+      programa: r.programa,
+      nivel: String(r.programa).toUpperCase().includes("ESPECIALIZA") || String(r.programa).toUpperCase().includes("MAESTR") ? "POSGRADO" : "PREGRADO",
+      semestre: r.semestre,
+      periodo: r.periodo,
+      promedioAcademico: null,
+      promedioCorte1: null,
+      promedioCorte2: null,
+      promedioCorte3: null,
+      inasistenciasAcumuladas: 0,
+      totalAsignaturas: 0,
+      asignaturasEvaluadas: 0,
+      materiasAprobadas: 0,
+      materiasEnRiesgo: 0,
+      materiasPendientes: 0,
+      estado: "ACTIVA",
+      asignaturas: []
+    }
+  ];
+
   return {
     id: r.id,
-    codigo: codigo || null,
+    codigo: matActiva?.codigo || r.codigo || codActivo || null,
     documento: r.documento,
     nombres: r.nombres,
     apellidos: r.apellidos,
-    email: r.email || `${codigo}@est.unicesmag.edu.co`,
+    email: r.email || `${codActivo}@est.unicesmag.edu.co`,
     telefono: r.telefono || "3165432109",
-    semestre: r.semestre,
-    periodo: r.periodo,
-    programa: r.programa,
-    promedioAcademico: Number(r.promedioAcademico) || 3.8,
-    inasistenciasAcumuladas: Number(r.inasistenciasAcumuladas) || 0,
+    semestre: matActiva?.semestre || r.semestre,
+    periodo: matActiva?.periodo || r.periodo,
+    programa: matActiva?.programa || r.programa,
+    nivel: matActiva?.nivel || (String(r.programa).toUpperCase().includes("ESPECIALIZA") || String(r.programa).toUpperCase().includes("MAESTR") ? "POSGRADO" : "PREGRADO"),
+    promedioAcademico: matActiva?.promedioAcademico !== undefined ? matActiva.promedioAcademico : null,
+    promedioCorte1: matActiva?.promedioCorte1 || null,
+    promedioCorte2: matActiva?.promedioCorte2 || null,
+    promedioCorte3: matActiva?.promedioCorte3 || null,
+    inasistenciasAcumuladas: matActiva?.inasistenciasAcumuladas || 0,
+    asignaturas: matActiva?.asignaturas || [],
+    totalAsignaturas: matActiva?.totalAsignaturas || 0,
+    asignaturasEvaluadas: matActiva?.asignaturasEvaluadas || 0,
+    materiasAprobadas: matActiva?.materiasAprobadas || 0,
+    materiasEnRiesgo: matActiva?.materiasEnRiesgo || 0,
+    materiasPendientes: matActiva?.materiasPendientes || 0,
+    promedioGlobalEstudiante,
     riesgoGlobal: riesgoGlobal === "Sin evaluar" && r.encuestaRespondida ? "Medio" : riesgoGlobal,
     puntajesCampo,
     encuestaRespondida: r.encuestaRespondida,
@@ -148,30 +305,100 @@ async function construirFichaPorCodigo(idEstudiante, codigo) {
       nombre: r.acudiente_nombre,
       telefono: r.acudiente_telefono,
       parentesco: r.acudiente_parentesco
-    }
+    },
+    // Información de programas simultáneos (Pregrado y Posgrado)
+    tieneDoblePrograma,
+    programaPregrado,
+    programaPosgrado,
+    programasMatriculados: programasFormateados
   };
 }
 
 function buscarEnMock(cleanId) {
-  return MOCK_DATA.estudiantes.find(
+  const m = MOCK_DATA.estudiantes.find(
     (e) => e.codigo.toLowerCase() === cleanId.toLowerCase() || e.documento.toLowerCase() === cleanId.toLowerCase()
   );
+  if (!m) return null;
+
+  const asigs = (m.asignaturas || []).map((a) => ({
+    ...a,
+    corte1: a.corte1 !== null && a.corte1 !== undefined ? Number(a.corte1) : null,
+    corte2: a.corte2 !== null && a.corte2 !== undefined ? Number(a.corte2) : null,
+    corte3: a.corte3 !== null && a.corte3 !== undefined ? Number(a.corte3) : null,
+    notaFinal: a.notaFinal !== null && a.notaFinal !== undefined ? Number(a.notaFinal) : null,
+    notaActual: a.notaActual !== null && a.notaActual !== undefined ? Number(a.notaActual) : (a.corte1 ?? null),
+    inasistencias: Number(a.inasistencias) || 0,
+    estado: a.estado || "CURSANDO"
+  }));
+
+  const asigsConNota = asigs.filter((a) => a.notaActual !== null);
+  const c1Notas = asigs.filter((a) => a.corte1 !== null).map((a) => a.corte1);
+  const c2Notas = asigs.filter((a) => a.corte2 !== null).map((a) => a.corte2);
+  const c3Notas = asigs.filter((a) => a.corte3 !== null).map((a) => a.corte3);
+
+  const promedioCorte1 = c1Notas.length > 0 ? Number((c1Notas.reduce((a, b) => a + b, 0) / c1Notas.length).toFixed(2)) : null;
+  const promedioCorte2 = c2Notas.length > 0 ? Number((c2Notas.reduce((a, b) => a + b, 0) / c2Notas.length).toFixed(2)) : null;
+  const promedioCorte3 = c3Notas.length > 0 ? Number((c3Notas.reduce((a, b) => a + b, 0) / c3Notas.length).toFixed(2)) : null;
+
+  const materiasAprobadas = asigs.filter((a) => a.notaActual !== null && a.notaActual >= 3.0).length;
+  const materiasEnRiesgo = asigs.filter((a) => a.notaActual !== null && a.notaActual < 3.0).length;
+  const materiasPendientes = asigs.filter((a) => a.notaActual === null).length;
+
+  const progPregrado = {
+    id_matriculas: `mat-mock-${m.codigo}`,
+    codigo: m.codigo,
+    programa: m.programa,
+    codigoPrograma: "SIS",
+    nivel: "PREGRADO",
+    semestre: m.semestre,
+    jornada: "DIURNA",
+    periodo: m.periodo || "2025 II",
+    estado: "ACTIVA",
+    promedioAcademico: m.promedioAcademico,
+    promedioCorte1,
+    promedioCorte2,
+    promedioCorte3,
+    inasistenciasAcumuladas: m.inasistenciasAcumuladas || 0,
+    totalAsignaturas: asigs.length,
+    asignaturasEvaluadas: asigsConNota.length,
+    materiasAprobadas,
+    materiasEnRiesgo,
+    materiasPendientes,
+    asignaturas: asigs
+  };
+
+  return {
+    ...m,
+    promedioCorte1,
+    promedioCorte2,
+    promedioCorte3,
+    materiasAprobadas,
+    materiasEnRiesgo,
+    materiasPendientes,
+    totalAsignaturas: asigs.length,
+    asignaturasEvaluadas: asigsConNota.length,
+    promedioGlobalEstudiante: m.promedioAcademico,
+    tieneDoblePrograma: false,
+    programaPregrado: progPregrado,
+    programaPosgrado: null,
+    programasMatriculados: [progPregrado],
+    asignaturas: asigs
+  };
 }
 
-// Resuelve un identificador (código o documento) a: null (no encontrado),
-// una ficha completa (código, o documento con 0-1 matrícula), o
-// { multiple: true, matriculas: [...] } (documento con 2+ matrículas).
+// Resuelve un identificador (código o documento) a una ficha completa,
+// incluyendo todos sus programas matriculados (pregrado y posgrado).
 async function buscarPorIdentificador(id, user) {
   const cleanId = String(id || "").trim();
   if (!cleanId) return null;
 
   try {
-    // 1) ¿Es un código de matrícula o código estudiantil?
+    // 1) ¿Es un código de matrícula o código estudiantil? (Búsqueda case-insensitive)
     const { rows: porCodigo } = await query(
-      `SELECT e.id_estudiantes, e.codigo_externo 
+      `SELECT e.id_estudiantes, COALESCE(m.codigo_externo, e.codigo_externo) AS codigo 
        FROM sat.estudiantes e
        LEFT JOIN sat.matriculas m ON m.id_estudiantes = e.id_estudiantes
-       WHERE m.codigo_externo = $1 OR e.codigo_externo = $1 
+       WHERE LOWER(m.codigo_externo) = LOWER($1) OR LOWER(e.codigo_externo) = LOWER($1) 
        LIMIT 1`,
       [cleanId]
     );
@@ -187,56 +414,14 @@ async function buscarPorIdentificador(id, user) {
               COALESCE(per.numero_identificacion, e.numero_documento) AS numero_documento
        FROM sat.estudiantes e
        LEFT JOIN sat.personas per ON per.id = e.id_personas
-       WHERE e.numero_documento = $1 OR per.numero_identificacion = $1
+       WHERE TRIM(e.numero_documento) = $1 OR TRIM(per.numero_identificacion) = $1
        LIMIT 1`,
       [cleanId]
     );
-    if (porDocumento.length === 0) {
-      return buscarEnMock(cleanId);
+    if (porDocumento.length > 0) {
+      const persona = porDocumento[0];
+      return await construirFichaPorCodigo(persona.id_estudiantes, null);
     }
-    const persona = porDocumento[0];
-
-    const { rows: matriculas } = await query(
-      `SELECT COALESCE(m.codigo_externo, e.codigo_externo) AS codigo,
-              COALESCE(p.nombre, 'Sin programa asignado') AS programa,
-              COALESCE(pa.nombre, '2026-1') AS periodo,
-              COALESCE(m.semestre, e.semestre_actual, 1) AS semestre,
-              COALESCE(m.estado, 'ACTIVA') AS estado
-       FROM sat.estudiantes e
-       LEFT JOIN sat.matriculas m ON m.id_estudiantes = e.id_estudiantes
-       LEFT JOIN sat.programas_academicos p ON p.id_programas_academicos = COALESCE(m.id_programas_academicos, e.id_programas_academicos)
-       LEFT JOIN sat.periodos_academicos pa ON pa.id_periodos_academicos = m.id_periodos_academicos
-       WHERE e.id_estudiantes = $1
-       ORDER BY m.id_matriculas DESC NULLS LAST`,
-      [persona.id_estudiantes]
-    );
-
-    // Director: mismo alcance que ya aplica a la ficha
-    let matriculasVisibles = matriculas;
-    if (user?.rol === "directivo") {
-      const riesgoGlobal = await obtenerRiesgoGlobal(persona.id_estudiantes);
-      matriculasVisibles = matriculas.filter((m) => directivoPuedeVerEstudiante(user, { programa: m.programa, riesgoGlobal }));
-    }
-
-    if (matriculasVisibles.length > 1) {
-      return {
-        multiple: true,
-        documento: persona.numero_documento,
-        nombres: persona.nombres,
-        apellidos: persona.apellidos,
-        matriculas: matriculasVisibles
-      };
-    }
-
-    if (matriculasVisibles.length === 1 && matriculasVisibles[0].codigo) {
-      return await construirFichaPorCodigo(persona.id_estudiantes, matriculasVisibles[0].codigo);
-    }
-
-    if (persona.codigo_externo) {
-      return await construirFichaPorCodigo(persona.id_estudiantes, persona.codigo_externo);
-    }
-
-    return null;
   } catch (err) {
     console.warn("Consulta a sat.estudiantes falló, usando fallback:", err.message);
   }
@@ -265,7 +450,7 @@ router.get("/", async (req, res, next) => {
                '2026-1' AS periodo,
                COALESCE(p.nombre, 'Programa Institucional') AS programa,
                COALESCE(rr.nombre, 'Sin evaluar') AS "riesgoGlobal",
-               COALESCE(metricas_acad.promedio_calc, 3.8) AS "promedioAcademico",
+               metricas_acad.promedio_calc AS "promedioAcademico",
                COALESCE(metricas_acad.inasistencias_calc, 0) AS "inasistenciasAcumuladas",
                EXISTS(SELECT 1 FROM sat.respuestas_caracterizacion rc WHERE rc.id_estudiantes = e.id_estudiantes) AS "encuestaRespondida"
         FROM sat.estudiantes e
@@ -274,7 +459,19 @@ router.get("/", async (req, res, next) => {
         LEFT JOIN sat.programas_academicos p ON p.id_programas_academicos = COALESCE(m.id_programas_academicos, e.id_programas_academicos)
         LEFT JOIN LATERAL (
           SELECT 
-            ROUND(AVG(ma.nota_final)::numeric, 1) AS promedio_calc,
+            ROUND(
+              AVG(
+                COALESCE(
+                  ma.nota_final,
+                  (
+                    SELECT AVG(val)
+                    FROM (VALUES (ma.nota_corte_1), (ma.nota_corte_2), (ma.nota_corte_3)) AS v(val)
+                    WHERE val IS NOT NULL
+                  )
+                )
+              )::numeric, 
+              2
+            ) AS promedio_calc,
             SUM(COALESCE(ma.inasistencias_corte_1, 0) + COALESCE(ma.inasistencias_corte_2, 0) + COALESCE(ma.inasistencias_corte_3, 0)) AS inasistencias_calc
           FROM sat.matriculas_asignaturas ma
           WHERE ma.id_matriculas = m.id_matriculas
@@ -318,7 +515,7 @@ router.get("/", async (req, res, next) => {
             semestre: r.semestre,
             periodo: r.periodo,
             programa: r.programa,
-            promedioAcademico: Number(r.promedioAcademico) || 3.8,
+            promedioAcademico: r.promedioAcademico !== null && r.promedioAcademico !== undefined ? Number(r.promedioAcademico) : null,
             inasistenciasAcumuladas: Number(r.inasistenciasAcumuladas) || 0,
             riesgoGlobal: riesgoFormatted || (r.encuestaRespondida ? "Medio" : "Sin evaluar"),
             encuestaRespondida: r.encuestaRespondida,

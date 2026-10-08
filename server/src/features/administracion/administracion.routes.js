@@ -111,7 +111,9 @@ router.get("/estado-sincronizacion", async (req, res, next) => {
         (SELECT COUNT(*) FROM sat.matriculas) AS total_matriculas,
         (SELECT COUNT(*) FROM sat.matriculas_asignaturas) AS total_calificaciones,
         (SELECT COUNT(*) FROM sat.asignaturas) AS total_asignaturas,
-        (SELECT COUNT(*) FROM sat.usuarios WHERE eliminado_en IS NULL) AS total_usuarios;
+        (SELECT COUNT(*) FROM sat.usuarios WHERE eliminado_en IS NULL) AS total_usuarios,
+        (SELECT COUNT(*) FROM sat.docentes) AS total_docentes,
+        (SELECT COUNT(*) FROM sat.facultades) AS total_facultades;
     `);
 
     res.json({
@@ -298,8 +300,10 @@ router.post("/sincronizar", async (req, res, next) => {
       estudiantesSincronizados: resultado.estudiantes,
       totalProcesados: resultado.totalProcesados,
       calificaciones: resultado.calificaciones,
+      facultades: resultado.facultades,
+      docentes: resultado.docentes,
       duracionSegundos: resultado.duracionSegundos,
-      mensaje: `Sincronización exitosa: ${resultado.estudiantes} estudiantes, ${resultado.personas} personas y ${resultado.calificaciones} calificaciones procesadas en ${resultado.duracionSegundos}s.`
+      mensaje: `Sincronización exitosa: ${resultado.estudiantes} estudiantes, ${resultado.docentes || 0} docentes, ${resultado.facultades || 0} facultades y ${resultado.calificaciones} calificaciones procesadas en ${resultado.duracionSegundos}s.`
     });
   } catch (err) {
     console.error("Error en endpoint /sincronizar:", err);

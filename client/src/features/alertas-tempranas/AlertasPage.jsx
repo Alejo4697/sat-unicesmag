@@ -18,10 +18,15 @@ const TIPOS = [
   "Violencia Basada en Género (VBG - RNF01)",
   "Socioeconómica y Transporte",
   "Consumo de Sustancias (SPA)",
-  "Académica / Asistencia"
+  "Académica / Asistencia",
 ];
 
-const ESTADO_INICIAL = { codigoEstudiante: "", tipo: TIPOS[0], nivelRiesgo: "Alto", descripcion: "" };
+const ESTADO_INICIAL = {
+  codigoEstudiante: "",
+  tipo: TIPOS[0],
+  nivelRiesgo: "Alto",
+  descripcion: "",
+};
 
 // Ícono por nivel, consistente con el resto de la app (ej. badge de "Riesgo
 // Global" en Ficha 360° y los iconos KPI del Tablero). Local a esta pantalla:
@@ -40,7 +45,7 @@ const BADGE_RIESGO_LG = { fontSize: "0.85rem", padding: "0.35rem 0.85rem" };
 export default function AlertasPage() {
   const [alertas, setAlertas] = useState([]);
   const [form, setForm] = useState(ESTADO_INICIAL);
-  
+
   // Búsqueda de estudiante por código o cédula
   const [busquedaEstudiante, setBusquedaEstudiante] = useState("");
   const [estudianteSeleccionado, setEstudianteSeleccionado] = useState(null);
@@ -64,7 +69,9 @@ export default function AlertasPage() {
     if (e) e.preventDefault();
     const q = busquedaEstudiante.trim();
     if (!q) {
-      setErrorEstudiante("Por favor ingresa un código estudiantil o número de cédula.");
+      setErrorEstudiante(
+        "Por favor ingresa un código estudiantil o número de cédula.",
+      );
       return;
     }
 
@@ -79,12 +86,16 @@ export default function AlertasPage() {
       } else {
         setEstudianteSeleccionado(null);
         setForm((prev) => ({ ...prev, codigoEstudiante: "" }));
-        setErrorEstudiante("No se encontró ningún estudiante con ese código o cédula.");
+        setErrorEstudiante(
+          "No se encontró ningún estudiante con ese código o cédula.",
+        );
       }
     } catch {
       setEstudianteSeleccionado(null);
       setForm((prev) => ({ ...prev, codigoEstudiante: "" }));
-      setErrorEstudiante("No se encontró ningún estudiante con el código o cédula ingresada.");
+      setErrorEstudiante(
+        "No se encontró ningún estudiante con el código o cédula ingresada.",
+      );
     } finally {
       setBuscandoEstudiante(false);
     }
@@ -100,7 +111,9 @@ export default function AlertasPage() {
   async function handleSubmit(e) {
     e.preventDefault();
     if (!estudianteSeleccionado || !form.codigoEstudiante) {
-      setError("Debes buscar y seleccionar un estudiante antes de registrar la alerta.");
+      setError(
+        "Debes buscar y seleccionar un estudiante antes de registrar la alerta.",
+      );
       return;
     }
     if (!form.tipo || !form.descripcion.trim()) {
@@ -115,7 +128,7 @@ export default function AlertasPage() {
       setForm(ESTADO_INICIAL);
       handleLimpiarEstudiante();
       setMensaje(
-        `Alerta temprana registrada exitosamente para ${nueva.nombreEstudiante} (Cód: ${nueva.codigoEstudiante}).`
+        `Alerta manual registrada exitosamente para ${nueva.nombreEstudiante} (Cód: ${nueva.codigoEstudiante}).`,
       );
       setTimeout(() => setMensaje(""), 4000);
     } catch (err) {
@@ -132,16 +145,22 @@ export default function AlertasPage() {
     return alertas.filter(
       (a) =>
         (a.id && a.id.toLowerCase().includes(term)) ||
-        (a.nombreEstudiante && a.nombreEstudiante.toLowerCase().includes(term)) ||
-        (a.codigoEstudiante && String(a.codigoEstudiante).toLowerCase().includes(term)) ||
-        (a.documentoEstudiante && String(a.documentoEstudiante).toLowerCase().includes(term)) ||
+        (a.nombreEstudiante &&
+          a.nombreEstudiante.toLowerCase().includes(term)) ||
+        (a.codigoEstudiante &&
+          String(a.codigoEstudiante).toLowerCase().includes(term)) ||
+        (a.documentoEstudiante &&
+          String(a.documentoEstudiante).toLowerCase().includes(term)) ||
         (a.tipo && a.tipo.toLowerCase().includes(term)) ||
-        (a.programa && a.programa.toLowerCase().includes(term))
+        (a.programa && a.programa.toLowerCase().includes(term)),
     );
   }, [alertas, filtroTabla]);
 
   return (
-    <AppLayout titulo="Gestión de Alertas Tempranas" breadcrumb="Alertas Automáticas y Manuales RQF14 RQF15">
+    <AppLayout
+      titulo="Gestión de Alertas Manuales"
+      breadcrumb="Alertas Automáticas y Manuales RQF14 RQF15"
+    >
       {error && <div className="auth-error">{error}</div>}
       {mensaje && (
         <div className="autosave-banner">
@@ -164,7 +183,9 @@ export default function AlertasPage() {
               <label className="form-label" htmlFor="identificador-estudiante">
                 Buscar Estudiante (Código Institucional o Cédula)
               </label>
-              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+              <div
+                style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}
+              >
                 <input
                   type="text"
                   id="identificador-estudiante"
@@ -181,7 +202,9 @@ export default function AlertasPage() {
                       handleBuscarEstudiante();
                     }
                   }}
-                  disabled={buscandoEstudiante || Boolean(estudianteSeleccionado)}
+                  disabled={
+                    buscandoEstudiante || Boolean(estudianteSeleccionado)
+                  }
                 />
                 {estudianteSeleccionado ? (
                   <button
@@ -199,23 +222,48 @@ export default function AlertasPage() {
                     className="btn btn-primary"
                     onClick={handleBuscarEstudiante}
                     disabled={buscandoEstudiante || !busquedaEstudiante.trim()}
-                    style={{ whiteSpace: "nowrap", height: "38px", display: "inline-flex", alignItems: "center", gap: "0.4rem" }}
+                    style={{
+                      whiteSpace: "nowrap",
+                      height: "38px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "0.4rem",
+                    }}
                   >
-                    <i className={`fas ${buscandoEstudiante ? "fa-spinner fa-spin" : "fa-magnifying-glass"}`}></i>
+                    <i
+                      className={`fas ${buscandoEstudiante ? "fa-spinner fa-spin" : "fa-magnifying-glass"}`}
+                    ></i>
                     <span>{buscandoEstudiante ? "Buscando..." : "Buscar"}</span>
                   </button>
                 )}
               </div>
 
               {errorEstudiante && (
-                <div style={{ color: "var(--risk-high-text, #ef4444)", fontSize: "0.8rem", marginTop: 6, fontWeight: 500 }}>
-                  <i className="fas fa-circle-exclamation"></i> {errorEstudiante}
+                <div
+                  style={{
+                    color: "var(--risk-high-text, #ef4444)",
+                    fontSize: "0.8rem",
+                    marginTop: 6,
+                    fontWeight: 500,
+                  }}
+                >
+                  <i className="fas fa-circle-exclamation"></i>{" "}
+                  {errorEstudiante}
                 </div>
               )}
 
-              <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 6 }}>
-                Sugerencias de prueba en Base de Datos: <code>220109009</code> (Santiago Villota - CC <code>1085001009</code>),{" "}
-                <code>220109988</code> (Carlos Gómez - CC <code>1085999888</code>), <code>220109010</code> (Estudiante de Prueba)
+              <div
+                style={{
+                  fontSize: "0.75rem",
+                  color: "var(--text-muted)",
+                  marginTop: 6,
+                }}
+              >
+                Sugerencias de prueba en Base de Datos: <code>220109009</code>{" "}
+                (Santiago Villota - CC <code>1085001009</code>),{" "}
+                <code>220109988</code> (Carlos Gómez - CC{" "}
+                <code>1085999888</code>), <code>220109010</code> (Estudiante de
+                Prueba)
               </div>
             </div>
 
@@ -232,10 +280,16 @@ export default function AlertasPage() {
                   alignItems: "center",
                   justifyContent: "space-between",
                   gap: "1rem",
-                  flexWrap: "wrap"
+                  flexWrap: "wrap",
                 }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.85rem",
+                  }}
+                >
                   <div
                     style={{
                       width: 44,
@@ -247,14 +301,21 @@ export default function AlertasPage() {
                       alignItems: "center",
                       justifyContent: "center",
                       fontSize: "1.2rem",
-                      flexShrink: 0
+                      flexShrink: 0,
                     }}
                   >
                     <i className="fas fa-user-graduate"></i>
                   </div>
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: "1rem", color: "var(--text-main)" }}>
-                      {estudianteSeleccionado.nombres} {estudianteSeleccionado.apellidos}
+                    <div
+                      style={{
+                        fontWeight: 700,
+                        fontSize: "1rem",
+                        color: "var(--text-main)",
+                      }}
+                    >
+                      {estudianteSeleccionado.nombres}{" "}
+                      {estudianteSeleccionado.apellidos}
                     </div>
                     <div
                       style={{
@@ -263,30 +324,37 @@ export default function AlertasPage() {
                         display: "flex",
                         gap: "0.75rem",
                         flexWrap: "wrap",
-                        marginTop: 2
+                        marginTop: 2,
                       }}
                     >
                       <span>
-                        <i className="fas fa-id-card"></i> Cód: <strong>{estudianteSeleccionado.codigo}</strong>
+                        <i className="fas fa-id-card"></i> Cód:{" "}
+                        <strong>{estudianteSeleccionado.codigo}</strong>
                       </span>
                       {estudianteSeleccionado.documento && (
                         <span>
-                          <i className="fas fa-address-card"></i> CC: <strong>{estudianteSeleccionado.documento}</strong>
+                          <i className="fas fa-address-card"></i> CC:{" "}
+                          <strong>{estudianteSeleccionado.documento}</strong>
                         </span>
                       )}
                       <span>
-                        <i className="fas fa-building-columns"></i> {estudianteSeleccionado.programa}
+                        <i className="fas fa-building-columns"></i>{" "}
+                        {estudianteSeleccionado.programa}
                       </span>
                       <span>
-                        <i className="fas fa-calendar"></i> Sem: {estudianteSeleccionado.semestre}
+                        <i className="fas fa-calendar"></i> Sem:{" "}
+                        {estudianteSeleccionado.semestre}
                       </span>
                     </div>
                   </div>
                 </div>
 
                 <div>
-                  <span className={`badge ${riskBadgeClass(estudianteSeleccionado.riesgoGlobal || "Medio")}`}>
-                    Riesgo: {estudianteSeleccionado.riesgoGlobal || "Sin evaluar"}
+                  <span
+                    className={`badge ${riskBadgeClass(estudianteSeleccionado.riesgoGlobal || "Medio")}`}
+                  >
+                    Riesgo:{" "}
+                    {estudianteSeleccionado.riesgoGlobal || "Sin evaluar"}
                   </span>
                 </div>
               </div>
@@ -322,7 +390,9 @@ export default function AlertasPage() {
                 className="form-select"
                 required
                 value={form.nivelRiesgo}
-                onChange={(e) => setForm({ ...form, nivelRiesgo: e.target.value })}
+                onChange={(e) =>
+                  setForm({ ...form, nivelRiesgo: e.target.value })
+                }
               >
                 <option value="Alto">Alto 🔴</option>
                 <option value="Medio">Medio 🟠</option>
@@ -342,7 +412,9 @@ export default function AlertasPage() {
                 rows={3}
                 required
                 value={form.descripcion}
-                onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
+                onChange={(e) =>
+                  setForm({ ...form, descripcion: e.target.value })
+                }
               />
             </div>
 
@@ -352,7 +424,8 @@ export default function AlertasPage() {
               style={{ width: "100%", height: "42px", fontWeight: 600 }}
               disabled={enviando || !estudianteSeleccionado}
             >
-              <i className="fas fa-bell"></i> {enviando ? "Registrando Alerta..." : "Registrar Alerta"}
+              <i className="fas fa-bell"></i>{" "}
+              {enviando ? "Registrando Alerta..." : "Registrar Alerta"}
             </button>
           </form>
         </div>
@@ -361,11 +434,21 @@ export default function AlertasPage() {
         <div className="card" style={{ gridColumn: "span 12" }}>
           <div
             className="card-header"
-            style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "0.5rem",
+            }}
           >
             <div>
-              <h3 className="card-title" style={{ margin: 0 }}>Registro Activo de Alertas</h3>
-              <span className="badge badge-risk-high" style={{ marginTop: 4 }}>Periodo 2025 II</span>
+              <h3 className="card-title" style={{ margin: 0 }}>
+                Registro Activo de Alertas
+              </h3>
+              <span className="badge badge-risk-high" style={{ marginTop: 4 }}>
+                Periodo 2025 II
+              </span>
             </div>
 
             {/* Buscador en la tabla */}
@@ -397,7 +480,11 @@ export default function AlertasPage() {
               <tbody>
                 {alertasFiltradas.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="text-muted" style={{ textAlign: "center", padding: "1.5rem" }}>
+                    <td
+                      colSpan={7}
+                      className="text-muted"
+                      style={{ textAlign: "center", padding: "1.5rem" }}
+                    >
                       No se encontraron alertas registradas con ese criterio.
                     </td>
                   </tr>
@@ -412,12 +499,20 @@ export default function AlertasPage() {
                       <br />
                       <small className="text-muted">
                         Cód: {a.codigoEstudiante}
-                        {a.documentoEstudiante ? ` | CC: ${a.documentoEstudiante}` : ""}
+                        {a.documentoEstudiante
+                          ? ` | CC: ${a.documentoEstudiante}`
+                          : ""}
                       </small>
                     </td>
                     <td>
-                      <span className={`badge ${riskBadgeClass(a.nivelRiesgo)}`} style={BADGE_RIESGO_LG}>
-                        <i className={`fas ${riskIconClass(a.nivelRiesgo)}`}></i> {a.nivelRiesgo}
+                      <span
+                        className={`badge ${riskBadgeClass(a.nivelRiesgo)}`}
+                        style={BADGE_RIESGO_LG}
+                      >
+                        <i
+                          className={`fas ${riskIconClass(a.nivelRiesgo)}`}
+                        ></i>{" "}
+                        {a.nivelRiesgo}
                       </span>
                     </td>
                     <td>
@@ -426,7 +521,9 @@ export default function AlertasPage() {
                       <small className="text-muted">{a.programa}</small>
                     </td>
                     <td>
-                      <span className={`badge ${a.categoria === "Automática" ? "badge-status-process" : "badge-status-pending"}`}>
+                      <span
+                        className={`badge ${a.categoria === "Automática" ? "badge-status-process" : "badge-status-pending"}`}
+                      >
                         {a.categoria}
                       </span>
                     </td>
@@ -436,8 +533,12 @@ export default function AlertasPage() {
                       <small className="text-muted">{a.creador}</small>
                     </td>
                     <td>
-                      <Link to={`/intervenciones?estudiante=${a.codigoEstudiante}`} className="btn btn-secondary btn-sm">
-                        <i className="fas fa-hand-holding-heart"></i> Iniciar Atención
+                      <Link
+                        to={`/intervenciones?estudiante=${a.codigoEstudiante}`}
+                        className="btn btn-secondary btn-sm"
+                      >
+                        <i className="fas fa-hand-holding-heart"></i> Iniciar
+                        Atención
                       </Link>
                     </td>
                   </tr>
@@ -450,4 +551,3 @@ export default function AlertasPage() {
     </AppLayout>
   );
 }
-

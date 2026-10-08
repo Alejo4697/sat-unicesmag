@@ -53,6 +53,7 @@ sat-unicesmag/
 │           ├── intervenciones/           → IntervencionesPage.jsx + api.js
 │           ├── remisiones/               → RemisionesPage.jsx + api.js
 │           ├── caracterizacion/          → CaracterizacionPage.jsx + api.js  (instrumento de 34 ítems)
+│           ├── actividades/              → ActividadesPage.jsx + api.js  (catálogo VEC, asistentes y exportación)
 │           ├── reportes-snies/           → ReportesPage.jsx + api.js
 │           └── administracion/           → AdministracionPage.jsx + api.js
 │
@@ -74,6 +75,7 @@ sat-unicesmag/
             ├── intervenciones/           → intervenciones.routes.js (/api/intervenciones)
             ├── remisiones/               → remisiones.routes.js     (/api/remisiones)
             ├── caracterizacion/          → caracterizacion.routes.js + instrumento.js (/api/caracterizacion)
+            ├── actividades/              → participantes.routes.js  (/api/actividades/participantes)
             ├── reportes-snies/           → reportes.routes.js       (/api/reportes)
             └── administracion/           → administracion.routes.js (/api/administracion)
 ```
@@ -97,7 +99,7 @@ el resto del sistema.
 
 ## Qué ya está migrado de verdad
 
-Las 9 features están completas, no solo enrutadas — cada pantalla trae el
+Las 10 features están completas, no solo enrutadas — cada pantalla trae el
 mismo formulario, tabla y lógica del mockup original, ahora contra la API
 real (nada vive ya solo en `localStorage` salvo lo que es legítimamente
 por-dispositivo, como el borrador de intervenciones):
@@ -127,6 +129,27 @@ por-dispositivo, como el borrador de intervenciones):
   mockup corría solo en el navegador y nunca se guardaba; acá corre en el
   servidor (`features/caracterizacion/instrumento.js`, la fuente de
   verdad) y cada envío se persiste.
+- **Actividades VEC**: catálogo institucional, registros vinculados a
+  participantes, filtro por actividad/periodo y búsqueda de asistentes.
+  La exportación genera un libro `.xlsx` de consulta con únicamente las hojas
+  de colaboradores, estudiantes, egresados y externos; excluye las bases,
+  hojas de apoyo, validaciones de captura y macros de la plantilla.
+  La verificación de listas físicas requiere aplicar
+  `server/src/features/actividades/verificacion_elegibilidad.sql` sobre la base
+  SAT. El cambio añade marcas de asistencia desactivadas por defecto; la
+  restricción única actividad-participante evita inscripciones repetidas en una
+  misma sesión. Al registrar una persona con varios roles, el formulario muestra
+  una advertencia para confirmar el rol y el tipo de apoyo antes de guardar.
+  La verificación se encuentra en «Asistencia y reportes»: se selecciona la
+  actividad, periodo y jornada; luego se puede comparar un Excel `.xlsx` con
+  documentos pegados o confirmar cada asistente en el checklist. El archivo se
+  procesa localmente y solo se verifican personas ya inscritas en esa jornada.
+  «Consultar apoyos» consulta los apoyos financieros sincronizados en
+  `sat.apoyos_financieros`, vinculados con `sat.estudiantes`, `sat.personas` y
+  `sat.periodos_academicos`. Permite filtrar por nombre/concepto del apoyo,
+  periodo e identificación, nombre o código, y agrupa por estudiante para
+  contar beneficiarios únicos. Esta fuente es independiente de los tipos de
+  apoyo que pueden seleccionarse al registrar participantes de una actividad.
 - **Reportes y SNIES**: las 3 exportaciones CSV reales (SNIES/MEN,
   Intervenciones, Remisiones) descargadas desde datos reales del backend,
   más el generador de informes filtrado.

@@ -23,7 +23,8 @@ BEGIN;
 INSERT INTO sat.modulos (codigo, nombre, icono, orden) VALUES
   ('dashboard',       'Tablero General',                          'fa-chart-pie',        1),
   ('ficha',           'Ficha 360° Estudiante',                    'fa-address-card',     2),
-  ('alertas',         'Alertas Tempranas',                        'fa-bell',             3),
+  ('alertas',         'Alertas Manuales',                         'fa-bell',             3),
+  ('actividades',     'Actividades',                               'fa-list-check',       4),
   ('intervenciones',  'Intervenciones',                           'fa-clipboard-check',  4),
   ('remisiones',      'Remisiones',                               'fa-share-nodes',      5),
   ('caracterizacion', 'Formulario Caracterización (Instrumento)', 'fa-list-check',       6),

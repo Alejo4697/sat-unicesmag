@@ -135,6 +135,7 @@ export default function AdministracionPage() {
 
       avisar(
         `¡Sincronización exitosa! Se procesaron ${res.estudiantesSincronizados?.toLocaleString()} estudiantes, ` +
+        `${(res.docentes || 0).toLocaleString()} docentes, ${(res.facultades || 0).toLocaleString()} facultades, ` +
         `${res.calificaciones?.toLocaleString()} calificaciones y se actualizaron los estados institucionales en ${res.duracionSegundos}s.`
       );
     } catch (err) {
@@ -206,13 +207,19 @@ export default function AdministracionPage() {
               </span>
             </div>
             <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "4px 0 10px" }}>
-              Sincroniza en 1 clic los estudiantes nuevos, matrículas activas, notas, inasistencias y estados académicos desde la base de datos institucional.
+              Sincroniza en 1 clic y automáticamente en segundo plano los estudiantes nuevos, docentes, facultades, matrículas activas, notas, inasistencias y estados académicos desde la base de datos institucional.
             </p>
 
             {/* Métricas sincronizadas en vivo */}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10, fontSize: "0.8rem" }}>
               <div style={{ background: "var(--surface-card)", padding: "4px 10px", borderRadius: 6, border: "1px solid var(--border-color)" }}>
                 <strong><i className="fas fa-user-graduate text-muted"></i> Estudiantes:</strong> {estadoSync?.metricas?.total_estudiantes ? Number(estadoSync.metricas.total_estudiantes).toLocaleString() : "5,043"}
+              </div>
+              <div style={{ background: "var(--surface-card)", padding: "4px 10px", borderRadius: 6, border: "1px solid var(--border-color)" }}>
+                <strong><i className="fas fa-chalkboard-teacher text-muted"></i> Docentes:</strong> {estadoSync?.metricas?.total_docentes ? Number(estadoSync.metricas.total_docentes).toLocaleString() : "402"}
+              </div>
+              <div style={{ background: "var(--surface-card)", padding: "4px 10px", borderRadius: 6, border: "1px solid var(--border-color)" }}>
+                <strong><i className="fas fa-university text-muted"></i> Facultades:</strong> {estadoSync?.metricas?.total_facultades ? Number(estadoSync.metricas.total_facultades).toLocaleString() : "7"}
               </div>
               <div style={{ background: "var(--surface-card)", padding: "4px 10px", borderRadius: 6, border: "1px solid var(--border-color)" }}>
                 <strong><i className="fas fa-id-card text-muted"></i> Personas:</strong> {estadoSync?.metricas?.total_personas ? Number(estadoSync.metricas.total_personas).toLocaleString() : "5,043"}

@@ -226,6 +226,449 @@
   border: 1px solid var(--border-light);
 }
 
+.vec-activity-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 260px);
+  align-items: start;
+  gap: 0 1rem;
+}
+
+.vec-activity-search {
+  min-width: 0;
+}
+
+.vec-activity-combobox {
+  position: relative;
+}
+
+.vec-activity-search-icon {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 0.85rem;
+  color: var(--text-muted);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.vec-activity-combobox .form-control {
+  padding-left: 2.4rem;
+  padding-right: 2.5rem;
+}
+
+.vec-activity-combobox .form-control:focus {
+  border-color: var(--brand-primary);
+}
+
+.vec-activity-clear {
+  position: absolute;
+  top: 50%;
+  right: 0.55rem;
+  display: grid;
+  width: 1.75rem;
+  height: 1.75rem;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.vec-activity-clear:hover {
+  background: var(--surface-subtle);
+  color: var(--text-main);
+}
+
+.vec-activity-options {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 0.3rem);
+  right: 0;
+  left: 0;
+  max-height: 22rem;
+  overflow-y: auto;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-md);
+}
+
+.vec-activity-option {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.65rem 0.85rem;
+  cursor: pointer;
+}
+
+.vec-activity-option + .vec-activity-option {
+  border-top: 1px solid var(--border-light);
+}
+
+.vec-activity-option:hover,
+.vec-activity-option.is-active {
+  background: var(--surface-subtle);
+}
+
+.vec-activity-option-name {
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+.vec-activity-option-meta,
+.vec-activity-more,
+.vec-activity-empty,
+.vec-activity-hint {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.vec-activity-more,
+.vec-activity-empty {
+  padding: 0.65rem 0.85rem;
+}
+
+.vec-activity-more {
+  border-top: 1px solid var(--border-light);
+}
+
+.vec-activity-hint {
+  display: block;
+  margin-top: 0.35rem;
+}
+
+.vec-workflow-steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 0.6rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vec-workflow-steps li {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.vec-workflow-steps li strong {
+  color: var(--brand-primary);
+}
+
+.vec-support-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  align-items: end;
+  gap: 0 1rem;
+}
+
+.vec-support-filters > button {
+  justify-self: start;
+  margin-bottom: 1rem;
+}
+
+.vec-support-role-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  margin-top: 0.25rem;
+}
+
+.vec-support-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.vec-support-pagination > div {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.vec-participant-roles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.4rem;
+  margin: 0.5rem 0;
+  color: var(--text-muted);
+}
+
+.vec-participant-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.55rem;
+  text-align: left;
+}
+
+.vec-participant-status-icon {
+  flex: 0 0 auto;
+}
+
+.vec-participant-status-icon-success {
+  display: inline-grid;
+  width: 1rem;
+  height: 1rem;
+  place-items: center;
+  border-radius: 50%;
+  background: #111827;
+  color: #FFFFFF;
+  font-size: 0.6rem;
+}
+
+.vec-role-badge {
+  display: inline-flex;
+  align-items: center;
+  margin: 0.1rem 0.2rem 0.1rem 0;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.vec-role-estudiante {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.vec-role-colaborador {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.vec-role-egresado {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.vec-role-externo {
+  border-color: #e9d5ff;
+  background: #faf5ff;
+  color: #7e22ce;
+}
+
+.vec-multiple-roles {
+  background: #fffbeb;
+}
+
+.vec-multiple-roles:hover {
+  background: #fef3c7;
+}
+
+.vec-attendance-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  cursor: pointer;
+}
+
+.vec-batch-check .text-muted,
+.vec-attendance-summary span {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.vec-role-warning-overlay {
+  position: fixed;
+  z-index: 1100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(15 23 42 / 55%);
+}
+
+.vec-role-warning-modal {
+  width: min(100%, 32rem);
+  padding: 1.5rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-lg);
+}
+
+.vec-role-warning-icon {
+  display: grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  margin-bottom: 0.9rem;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff7ed;
+  color: #c2410c;
+  font-size: 1.2rem;
+}
+
+.vec-role-warning-modal h2 {
+  margin: 0 0 0.5rem;
+  color: var(--text-main);
+  font-size: 1.15rem;
+}
+
+.vec-role-warning-modal > p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+.vec-role-warning-details {
+  display: grid;
+  gap: 0.6rem;
+  margin: 1rem 0 1.25rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+}
+
+.vec-role-warning-details div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+}
+
+.vec-role-warning-details dt {
+  color: var(--text-muted);
+}
+
+.vec-role-warning-details dd {
+  margin: 0;
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+.vec-role-warning-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.65rem;
+}
+
+.vec-attendance-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0.5rem 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+}
+
+.vec-attendance-summary > div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.vec-attendance-tools {
+  margin: 1rem 0 1.5rem;
+  padding: 1rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+}
+
+.vec-attendance-tools > h4,
+.vec-attendance-checklist-title {
+  margin: 0 0 0.4rem;
+}
+
+.vec-attendance-tools > p {
+  margin: 0 0 1rem;
+}
+
+.vec-attendance-methods {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 0.85rem;
+}
+
+.vec-attendance-method {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+}
+
+.vec-attendance-method h5 {
+  margin: 0;
+  color: var(--text-main);
+  font-size: 0.95rem;
+}
+
+.vec-attendance-method > p {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.vec-attendance-method .form-control[type="file"] {
+  padding: 0.55rem;
+  background: var(--surface-card);
+}
+
+.vec-attendance-file {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.vec-attendance-checklist-title {
+  margin-top: 1.25rem;
+}
+
+.vec-batch-check {
+  display: grid;
+  justify-items: start;
+  gap: 0.65rem;
+  margin-bottom: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+}
+
+.vec-batch-check .form-control {
+  width: 100%;
+  font-family: var(--font-mono, monospace);
+}
+
+.vec-batch-result {
+  color: var(--risk-low-text);
+  font-weight: 600;
+}
+
+@media (max-width: 640px) {
+  .vec-activity-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* Auto-Guardado Banner */
 .autosave-banner {
   background: var(--risk-medium-bg);
@@ -239,6 +682,16 @@
   align-items: center;
   justify-content: space-between;
   margin-bottom: 1.25rem;
+}
+
+.autosave-banner.vec-participant-status,
+.auth-error.vec-participant-status {
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.vec-participant-status > span {
+  min-width: 0;
 }
 
 /* Barra de Filtros */

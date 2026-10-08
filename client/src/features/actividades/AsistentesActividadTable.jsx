@@ -1,0 +1,779 @@
+import { useEffect, useMemo, useState } from "react";
+import {
+  getSesionesActividad,
+  exportarAsistentes,
+  getActividadesDisponibles,
+  getAsistentes,
+  verificarAsistencia,
+} from "./participantesApi.js";
+import { useAuth } from "../../shared/context/AuthContext.jsx";
+
+function fechaCorta(value) {
+  if (!value) return "—";
+  return String(value).slice(0, 10);
+}
+
+function claveSesion(sesion) {
+  return `${sesion.idPeriodo}|${fechaCorta(sesion.fechaInicio)}|${fechaCorta(sesion.fechaFinalizacion)}`;
+}
+
+const ROL_LABELS = {
+  ESTUDIANTE: "Estudiante",
+  COLABORADOR: "Colaborador",
+  EGRESADO: "Egresado",
+  EXTERNO: "Externo",
+};
+const MAX_EXCEL_SIZE = 10 * 1024 * 1024;
+const MAX_EXCEL_ROWS = 50000;
+
+function encontrarColumnaDocumento(rows) {
+  const normalizar = (value) => String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("es")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+  for (let rowIndex = 0; rowIndex < Math.min(rows.length, 20); rowIndex += 1) {
+    const row = rows[rowIndex] || [];
+    const columnIndex = row.findIndex((value) => {
+      const header = normalizar(value);
+      return !/\btipo\b/.test(header) && /\b(identificacion|documento|cedula)\b/.test(header);
+    });
+    if (columnIndex >= 0) return { rowIndex, columnIndex };
+  }
+  return null;
+}
+
+function nombreArchivoActividad(value) {
+  const nombre = String(value || "actividad")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return `asistentes-${nombre || "actividad"}.xlsx`;
+}
+
+function normalizarBusqueda(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("es")
+    .trim();
+}
+
+export default function AsistentesActividadTable() {
+  const { user } = useAuth();
+  const esCoordinador = ["admin", "administrador", "coordinador"]
+    .includes(String(user?.rol || "").toLowerCase());
+  const [actividades, setActividades] = useState([]);
+  const [actividadId, setActividadId] = useState("");
+  const [periodoId, setPeriodoId] = useState("");
+  const [sesiones, setSesiones] = useState([]);
+  const [sesionId, setSesionId] = useState("");
+  const [busquedaActividad, setBusquedaActividad] = useState("");
+  const [mostrarOpciones, setMostrarOpciones] = useState(false);
+  const [opcionActiva, setOpcionActiva] = useState(0);
+  const [busquedaAsistente, setBusquedaAsistente] = useState("");
+  const [asistentes, setAsistentes] = useState([]);
+  const [entradaLote, setEntradaLote] = useState("");
+  const [archivoExcel, setArchivoExcel] = useState("");
+  const [importandoExcel, setImportandoExcel] = useState(false);
+  const [resultadoLote, setResultadoLote] = useState("");
+  const [verificandoIds, setVerificandoIds] = useState([]);
+  const [cargandoActividades, setCargandoActividades] = useState(true);
+  const [cargandoSesiones, setCargandoSesiones] = useState(false);
+  const [cargandoAsistentes, setCargandoAsistentes] = useState(false);
+  const [exportando, setExportando] = useState(false);
+  const [error, setError] = useState("");
+  const sesionSeleccionada = sesiones.find((sesion) => claveSesion(sesion) === sesionId);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    getActividadesDisponibles({ signal: controller.signal })
+      .then(setActividades)
+      .catch((requestError) => {
+        if (!controller.signal.aborted) {
+          setError(requestError.message || "No se pudo cargar el catálogo de actividades.");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setCargandoActividades(false);
+      });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    if (!actividadId || !sesionSeleccionada) {
+      setAsistentes([]);
+      setCargandoAsistentes(false);
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    setCargandoAsistentes(true);
+    setAsistentes([]);
+    setError("");
+    getAsistentes({
+      idActividad: actividadId,
+      idPeriodo: sesionSeleccionada.idPeriodo,
+      fechaInicio: fechaCorta(sesionSeleccionada.fechaInicio),
+      fechaFinalizacion: fechaCorta(sesionSeleccionada.fechaFinalizacion),
+      signal: controller.signal,
+    })
+      .then((rows) => {
+        if (!controller.signal.aborted) setAsistentes(rows);
+      })
+      .catch((requestError) => {
+        if (!controller.signal.aborted) {
+          setError(requestError.message || "No se pudieron consultar los asistentes.");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setCargandoAsistentes(false);
+      });
+    return () => controller.abort();
+  }, [
+    actividadId,
+    sesionSeleccionada?.idPeriodo,
+    sesionSeleccionada?.fechaInicio,
+    sesionSeleccionada?.fechaFinalizacion,
+  ]);
+
+  useEffect(() => {
+    setSesionId("");
+    setSesiones([]);
+    setAsistentes([]);
+    setResultadoLote("");
+    setArchivoExcel("");
+    if (!actividadId) {
+      setCargandoSesiones(false);
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    setCargandoSesiones(true);
+    getSesionesActividad({
+      idActividad: actividadId,
+      idPeriodo: periodoId || undefined,
+      signal: controller.signal,
+    })
+      .then((rows) => {
+        if (!controller.signal.aborted) setSesiones(rows);
+      })
+      .catch((requestError) => {
+        if (!controller.signal.aborted) {
+          setError(requestError.message || "No se pudieron consultar las sesiones de la actividad.");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setCargandoSesiones(false);
+      });
+    return () => controller.abort();
+  }, [actividadId, periodoId]);
+
+  const actividadSeleccionada = actividades.find((actividad) => actividad.id === actividadId);
+  const periodos = useMemo(
+    () => [...(actividadSeleccionada?.periodos || [])]
+      .sort((left, right) => left.nombre.localeCompare(right.nombre, "es")),
+    [actividadSeleccionada],
+  );
+  const actividadesFiltradas = useMemo(() => {
+    const term = normalizarBusqueda(busquedaActividad);
+    return actividades
+      .map((actividad) => {
+        const campos = [
+          actividad.actividad,
+          actividad.proyecto,
+          actividad.programa,
+          actividad.hojaOrigen,
+        ].map(normalizarBusqueda);
+        const coincide = campos.some((value) => value.includes(term));
+        const empiezaCon = campos.some((value) => value.startsWith(term));
+        return { actividad, coincide, empiezaCon };
+      })
+      .filter(({ coincide }) => !term || coincide)
+      .sort((left, right) => Number(right.empiezaCon) - Number(left.empiezaCon))
+      .map(({ actividad }) => actividad);
+  }, [actividades, busquedaActividad]);
+  const opcionesVisibles = actividadesFiltradas.slice(0, 8);
+  const asistentesFiltrados = asistentes.filter((asistente) => {
+    const term = busquedaAsistente.trim().toLocaleLowerCase("es");
+    if (!term) return true;
+    return [
+      asistente.identificacion,
+      asistente.codigo,
+      asistente.apellidosNombres,
+      asistente.correo,
+    ].some((value) => String(value || "").toLocaleLowerCase("es").includes(term));
+  });
+
+  function seleccionarActividad(actividad) {
+    setActividadId(actividad.id);
+    setBusquedaActividad(actividad.actividad);
+    setPeriodoId("");
+    setSesionId("");
+    setBusquedaAsistente("");
+    setEntradaLote("");
+    setArchivoExcel("");
+    setResultadoLote("");
+    setMostrarOpciones(false);
+    setOpcionActiva(0);
+  }
+
+  function manejarTecladoActividad(event) {
+    if (event.key === "Escape") {
+      setMostrarOpciones(false);
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      if (opcionesVisibles.length === 0) return;
+      event.preventDefault();
+      setMostrarOpciones(true);
+      setOpcionActiva((current) => (
+        mostrarOpciones ? Math.min(current + 1, opcionesVisibles.length - 1) : 0
+      ));
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      if (opcionesVisibles.length === 0) return;
+      event.preventDefault();
+      setMostrarOpciones(true);
+      setOpcionActiva((current) => (
+        mostrarOpciones ? Math.max(current - 1, 0) : opcionesVisibles.length - 1
+      ));
+      return;
+    }
+
+    if (event.key === "Enter" && mostrarOpciones && opcionesVisibles[opcionActiva]) {
+      event.preventDefault();
+      seleccionarActividad(opcionesVisibles[opcionActiva]);
+    }
+  }
+
+  async function descargarExcel() {
+    setExportando(true);
+    setError("");
+    try {
+      const blob = await exportarAsistentes({
+        idActividad: actividadId,
+        idPeriodo: sesionSeleccionada?.idPeriodo || periodoId || undefined,
+        fechaInicio: sesionSeleccionada ? fechaCorta(sesionSeleccionada.fechaInicio) : undefined,
+        fechaFinalizacion: sesionSeleccionada ? fechaCorta(sesionSeleccionada.fechaFinalizacion) : undefined,
+        busqueda: busquedaAsistente.trim() || undefined,
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = nombreArchivoActividad(actividadSeleccionada?.actividad);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (requestError) {
+      setError(requestError.message || "No se pudo generar el Excel de asistentes.");
+    } finally {
+      setExportando(false);
+    }
+  }
+
+  async function cambiarAsistencia(asistente, asistenciaVerificada) {
+    setVerificandoIds((current) => [...current, asistente.id]);
+    setError("");
+    try {
+      await verificarAsistencia({
+        idActividad: actividadId,
+        idPeriodo: sesionSeleccionada.idPeriodo,
+        fechaInicio: fechaCorta(sesionSeleccionada.fechaInicio),
+        fechaFinalizacion: fechaCorta(sesionSeleccionada.fechaFinalizacion),
+        registros: [asistente.id],
+        asistenciaVerificada,
+      });
+      setAsistentes((current) => current.map((item) => (
+        item.id === asistente.id ? { ...item, asistenciaVerificada } : item
+      )));
+    } catch (requestError) {
+      setError(requestError.message || "No se pudo actualizar la verificación de asistencia.");
+    } finally {
+      setVerificandoIds((current) => current.filter((id) => id !== asistente.id));
+    }
+  }
+
+  async function procesarDocumentos(documentos, origen) {
+    if (!sesionSeleccionada) return;
+    setError("");
+    setResultadoLote("");
+    const documentosUnicos = [...new Set(documentos.map((value) => String(value || "").trim()).filter(Boolean))];
+    if (documentosUnicos.length === 0) {
+      setResultadoLote(`${origen}: no se encontraron documentos para validar.`);
+      return;
+    }
+    if (documentosUnicos.length > 10000) {
+      setError("La lista supera el máximo de 10.000 documentos por validación.");
+      return;
+    }
+
+    const registrosPorDocumento = new Map();
+    for (const asistente of asistentes) {
+      const documento = String(asistente.identificacion || "").trim();
+      if (!documento) continue;
+      const registros = registrosPorDocumento.get(documento) || [];
+      registros.push(asistente);
+      registrosPorDocumento.set(documento, registros);
+    }
+    const noInscritos = documentosUnicos.filter((documento) => !registrosPorDocumento.has(documento));
+    const ambiguos = documentosUnicos.filter((documento) => (registrosPorDocumento.get(documento)?.length || 0) > 1);
+    const coincidencias = documentosUnicos
+      .filter((documento) => registrosPorDocumento.get(documento)?.length === 1)
+      .map((documento) => registrosPorDocumento.get(documento)[0]);
+    const sinMarcar = coincidencias.filter((asistente) => !asistente.asistenciaVerificada);
+
+    if (sinMarcar.length > 0) {
+      setVerificandoIds((current) => [...new Set([...current, ...sinMarcar.map(({ id }) => id)])]);
+      try {
+        await verificarAsistencia({
+          idActividad: actividadId,
+          idPeriodo: sesionSeleccionada.idPeriodo,
+          fechaInicio: fechaCorta(sesionSeleccionada.fechaInicio),
+          fechaFinalizacion: fechaCorta(sesionSeleccionada.fechaFinalizacion),
+          registros: sinMarcar.map(({ id }) => id),
+          asistenciaVerificada: true,
+        });
+        const idsMarcados = new Set(sinMarcar.map(({ id }) => id));
+        setAsistentes((current) => current.map((asistente) => (
+          idsMarcados.has(asistente.id) ? { ...asistente, asistenciaVerificada: true } : asistente
+        )));
+      } catch (requestError) {
+        setError(requestError.message || "No se pudo validar la lista física.");
+        return;
+      } finally {
+        setVerificandoIds((current) => current.filter((id) => !sinMarcar.some((item) => item.id === id)));
+      }
+    }
+
+    const yaMarcados = coincidencias.length - sinMarcar.length;
+    setResultadoLote(
+      `${origen}: ${sinMarcar.length} asistencias nuevas marcadas. ${noInscritos.length} documentos no estaban inscritos.`
+      + (ambiguos.length ? ` ${ambiguos.length} documentos aparecen duplicados y requieren revisión manual.` : "")
+      + (yaMarcados ? ` ${yaMarcados} ya estaban marcados.` : ""),
+    );
+  }
+
+  async function validarYMarcarLote() {
+    const documentos = entradaLote.split(/[,\s;]+/).map((value) => value.trim()).filter(Boolean);
+    await procesarDocumentos(documentos, "Lista pegada");
+  }
+
+  async function cargarExcelAsistencia(event) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    setError("");
+    setResultadoLote("");
+
+    if (!sesionSeleccionada) {
+      setError("Primero selecciona la actividad y la jornada que vas a verificar.");
+      return;
+    }
+    if (!/\.xlsx$/i.test(file.name)) {
+      setError("Selecciona un archivo Excel .xlsx.");
+      return;
+    }
+    if (file.size > MAX_EXCEL_SIZE) {
+      setError("El archivo supera el límite de 10 MB.");
+      return;
+    }
+
+    setArchivoExcel(file.name);
+    setImportandoExcel(true);
+    try {
+      const { default: readExcelFile } = await import("read-excel-file/browser");
+      const sheets = await readExcelFile(file);
+      let rowCount = 0;
+      const documentos = [];
+      let hojasConColumna = 0;
+
+      for (const sheet of sheets) {
+        rowCount += sheet.data.length;
+        if (rowCount > MAX_EXCEL_ROWS) {
+          throw new Error("El archivo supera el límite de 50.000 filas.");
+        }
+        const header = encontrarColumnaDocumento(sheet.data);
+        if (!header) continue;
+        hojasConColumna += 1;
+        for (const row of sheet.data.slice(header.rowIndex + 1)) {
+          const value = row[header.columnIndex];
+          if (typeof value === "string" || typeof value === "number") {
+            const documentNumber = String(value).trim();
+            if (documentNumber) documentos.push(documentNumber);
+          }
+        }
+      }
+
+      if (hojasConColumna === 0) {
+        throw new Error("No se encontró una columna encabezada como identificación, documento o cédula.");
+      }
+      await procesarDocumentos(documentos, `Excel «${file.name}»`);
+    } catch (requestError) {
+      setResultadoLote("");
+      setError(requestError.message || "No se pudo leer el archivo Excel.");
+    } finally {
+      setImportandoExcel(false);
+    }
+  }
+
+  return (
+    <section className="card" aria-label="Asistentes por actividad">
+      <div className="card-header">
+        <h2 className="card-title">
+          <i className="fas fa-users" aria-hidden="true"></i>
+          Buscar asistentes por actividad
+        </h2>
+      </div>
+      <p className="text-muted">
+        Selecciona una actividad para consultar sus asistentes registrados y descargar el listado
+        con el formato institucional.
+      </p>
+
+      {error && <div className="auth-error" role="alert">{error}</div>}
+
+      <div className="vec-activity-filters">
+        <div className="form-group vec-activity-search">
+          <label className="form-label" htmlFor="vec-buscar-actividad">Actividad</label>
+          <div className="vec-activity-combobox">
+            <i className="fas fa-search vec-activity-search-icon" aria-hidden="true"></i>
+            <input
+              className="form-control"
+              id="vec-buscar-actividad"
+              type="text"
+              value={busquedaActividad}
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={mostrarOpciones}
+              aria-controls="vec-activity-options"
+              aria-activedescendant={mostrarOpciones && opcionesVisibles[opcionActiva]
+                ? `vec-activity-option-${opcionActiva}`
+                : undefined}
+              autoComplete="off"
+              placeholder="Buscar actividad por nombre"
+              onFocus={() => setMostrarOpciones(true)}
+              onBlur={() => setMostrarOpciones(false)}
+              onKeyDown={manejarTecladoActividad}
+              onChange={(event) => {
+                setBusquedaActividad(event.target.value);
+                setActividadId("");
+                setPeriodoId("");
+                setSesionId("");
+                setBusquedaAsistente("");
+                setOpcionActiva(0);
+                setMostrarOpciones(true);
+              }}
+              disabled={cargandoActividades}
+            />
+            {busquedaActividad && (
+              <button
+                className="vec-activity-clear"
+                type="button"
+                aria-label="Limpiar búsqueda de actividad"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  setBusquedaActividad("");
+                  setActividadId("");
+                  setPeriodoId("");
+                  setSesionId("");
+                  setBusquedaAsistente("");
+                  setMostrarOpciones(true);
+                }}
+              >
+                <i className="fas fa-times" aria-hidden="true"></i>
+              </button>
+            )}
+            {mostrarOpciones && (
+              <div className="vec-activity-options" id="vec-activity-options" role="listbox">
+                {cargandoActividades ? (
+                  <div className="vec-activity-empty">Cargando actividades...</div>
+                ) : opcionesVisibles.length === 0 ? (
+                  <div className="vec-activity-empty">No se encontraron actividades con ese texto.</div>
+                ) : (
+                  <>
+                    {opcionesVisibles.map((actividad, index) => (
+                      <div
+                        className={`vec-activity-option${index === opcionActiva ? " is-active" : ""}`}
+                        id={`vec-activity-option-${index}`}
+                        key={actividad.id}
+                        role="option"
+                        aria-selected={actividad.id === actividadId}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onMouseEnter={() => setOpcionActiva(index)}
+                        onClick={() => seleccionarActividad(actividad)}
+                      >
+                        <span className="vec-activity-option-name">{actividad.actividad}</span>
+                        <span className="vec-activity-option-meta">
+                          {actividad.hojaOrigen} · {actividad.totalAsistentes} asistentes
+                        </span>
+                      </div>
+                    ))}
+                    {actividadesFiltradas.length > opcionesVisibles.length && (
+                      <div className="vec-activity-more">
+                        Mostrando {opcionesVisibles.length} de {actividadesFiltradas.length}; escribe para afinar la búsqueda.
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+          <span className="vec-activity-hint">
+            {cargandoActividades
+              ? "Cargando catálogo..."
+              : `${actividades.length} actividades disponibles`}
+          </span>
+        </div>
+        {actividadSeleccionada && (
+          <div className="form-group vec-period-filter">
+            <label className="form-label" htmlFor="vec-periodo-asistentes">Periodo</label>
+            <select
+              className="form-select"
+              id="vec-periodo-asistentes"
+              value={periodoId}
+              onChange={(event) => setPeriodoId(event.target.value)}
+              disabled={periodos.length === 0}
+            >
+              <option value="">Todos los periodos</option>
+              {periodos.map((periodo) => (
+                <option key={periodo.id} value={periodo.id}>{periodo.nombre}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        {actividadSeleccionada && (
+          <div className="form-group vec-period-filter">
+            <label className="form-label" htmlFor="vec-sesion-asistentes">Jornada / fechas</label>
+            <select
+              className="form-select"
+              id="vec-sesion-asistentes"
+              value={sesionId}
+              onChange={(event) => {
+                setSesionId(event.target.value);
+                setBusquedaAsistente("");
+                setResultadoLote("");
+              }}
+              disabled={cargandoSesiones || sesiones.length === 0}
+            >
+              <option value="">
+                {cargandoSesiones
+                  ? "Cargando jornadas..."
+                  : sesiones.length === 0
+                    ? "No hay jornadas registradas"
+                    : "Selecciona fechas para revisar la lista"}
+              </option>
+              {sesiones.map((sesion) => (
+                <option key={claveSesion(sesion)} value={claveSesion(sesion)}>
+                  {sesion.periodo} · {fechaCorta(sesion.fechaInicio)} – {fechaCorta(sesion.fechaFinalizacion)}
+                  {" · "}{sesion.totalInscritos} inscritos, {sesion.totalVerificados} verificados
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
+
+      {actividadSeleccionada && (
+        <>
+          <div className="card-header" style={{ padding: "0.75rem 0", marginTop: "0.5rem" }}>
+            <div>
+              <h3 className="card-title">{actividadSeleccionada.actividad}</h3>
+              <p className="text-muted" style={{ margin: "0.25rem 0 0" }}>
+                {[
+                  actividadSeleccionada.hojaOrigen,
+                  actividadSeleccionada.proyecto,
+                  actividadSeleccionada.programa,
+                ].filter(Boolean).join(" · ")}
+              </p>
+            </div>
+            <button
+              className="btn btn-primary"
+              type="button"
+              onClick={descargarExcel}
+              disabled={cargandoSesiones || (Boolean(sesionSeleccionada) && cargandoAsistentes) || exportando}
+            >
+              <i className={`fas ${exportando ? "fa-spinner fa-spin" : "fa-file-excel"}`} aria-hidden="true"></i>
+              {exportando ? "Generando reporte..." : "Descargar reporte Excel"}
+            </button>
+          </div>
+
+          {sesionSeleccionada ? (
+            <>
+              <div className="vec-attendance-summary" role="status">
+                <div>
+                  <strong>Jornada: {fechaCorta(sesionSeleccionada.fechaInicio)} – {fechaCorta(sesionSeleccionada.fechaFinalizacion)}</strong>
+                  <span>{actividadSeleccionada.actividad}</span>
+                </div>
+                <span>{asistentes.filter((item) => item.asistenciaVerificada).length} de {asistentes.length} asistencias verificadas</span>
+              </div>
+              {esCoordinador ? (
+                <section className="vec-attendance-tools" aria-labelledby="vec-attendance-tools-title">
+                  <h4 id="vec-attendance-tools-title">Verificar lista de asistencia</h4>
+                  <p className="text-muted">
+                    Puedes cargar el Excel de la lista física, pegar los documentos o revisar uno por uno.
+                    Solo se marcarán coincidencias de personas ya inscritas en esta actividad y jornada.
+                  </p>
+                  <div className="vec-attendance-methods">
+                    <div className="vec-attendance-method">
+                      <h5><i className="fas fa-file-excel" aria-hidden="true"></i> Cargar Excel</h5>
+                      <p className="text-muted">
+                        Archivo .xlsx con una columna llamada identificación, documento o cédula.
+                        Se revisa en este navegador y no se guarda en el servidor.
+                      </p>
+                      <label className="form-label" htmlFor="vec-attendance-excel">Archivo de asistencia</label>
+                      <input
+                        className="form-control"
+                        id="vec-attendance-excel"
+                        type="file"
+                        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        onChange={cargarExcelAsistencia}
+                        disabled={importandoExcel || cargandoAsistentes || verificandoIds.length > 0 || asistentes.length === 0}
+                      />
+                      {archivoExcel && <span className="vec-attendance-file">{archivoExcel}</span>}
+                      {importandoExcel && <p className="text-muted" role="status">Leyendo y validando el Excel...</p>}
+                    </div>
+                    <div className="vec-attendance-method">
+                      <h5><i className="fas fa-paste" aria-hidden="true"></i> Pegar documentos</h5>
+                      <label className="form-label" htmlFor="vec-attendance-documents">
+                        Documentos de la lista física
+                      </label>
+                      <textarea
+                        className="form-control"
+                        id="vec-attendance-documents"
+                        value={entradaLote}
+                        onChange={(event) => setEntradaLote(event.target.value)}
+                        rows={4}
+                        aria-describedby="vec-attendance-paste-help"
+                        placeholder={"Ejemplo:\n123456789\n987654321"}
+                      />
+                      <span className="text-muted" id="vec-attendance-paste-help">
+                        Separa los documentos con espacios, comas, punto y coma o saltos de línea.
+                      </span>
+                      <button
+                        className="btn btn-outline"
+                        type="button"
+                        onClick={validarYMarcarLote}
+                        disabled={importandoExcel || cargandoAsistentes || verificandoIds.length > 0 || asistentes.length === 0 || !entradaLote.trim()}
+                      >
+                        Validar documentos pegados
+                      </button>
+                    </div>
+                  </div>
+                  {resultadoLote && <p className="vec-batch-result" role="status">{resultadoLote}</p>}
+                </section>
+              ) : (
+                <p className="text-muted">La verificación física solo está disponible para coordinadores.</p>
+              )}
+
+              <h4 className="vec-attendance-checklist-title">Checklist de inscritos</h4>
+              <p className="text-muted">
+                Marca la casilla solo después de comprobar el nombre en la lista firmada. Las personas comienzan pendientes.
+              </p>
+              <div className="form-group" style={{ maxWidth: "520px" }}>
+                <label className="form-label" htmlFor="vec-buscar-asistente">
+                  Buscar asistente por nombre, identificación, código o correo
+                </label>
+                <input
+                  className="form-control"
+                  id="vec-buscar-asistente"
+                  type="search"
+                  value={busquedaAsistente}
+                  onChange={(event) => setBusquedaAsistente(event.target.value.slice(0, 100))}
+                  maxLength={100}
+                  placeholder="Escribe para filtrar los asistentes"
+                />
+              </div>
+
+              {cargandoAsistentes ? (
+                <p className="text-muted" role="status">Consultando asistentes...</p>
+              ) : asistentesFiltrados.length === 0 ? (
+                <p className="text-muted">
+                  {asistentes.length === 0
+                    ? "Esta jornada todavía no tiene participantes inscritos."
+                    : "No hay asistentes que coincidan con la búsqueda."}
+                </p>
+              ) : (
+                <div className="table-responsive">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Asistencia física</th>
+                        <th>Periodo</th>
+                        <th>Rol en esta actividad</th>
+                        <th>Otros roles</th>
+                        <th>Identificación</th>
+                        <th>Asistente</th>
+                        <th>Código</th>
+                        <th>Programa / dependencia</th>
+                        <th>Correo</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {asistentesFiltrados.map((asistente) => {
+                        const roles = asistente.roles || [asistente.rolParticipacion];
+                        const multipleRoles = roles.length > 1;
+                        return (
+                          <tr className={multipleRoles ? "vec-multiple-roles" : undefined} key={asistente.id}>
+                            <td>
+                              {esCoordinador ? (
+                                <label className="vec-attendance-checkbox">
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(asistente.asistenciaVerificada)}
+                                    onChange={(event) => cambiarAsistencia(asistente, event.target.checked)}
+                                    disabled={verificandoIds.includes(asistente.id)}
+                                    aria-label={`Asistencia confirmada: ${asistente.apellidosNombres || asistente.identificacion}`}
+                                  />
+                                  <span>{asistente.asistenciaVerificada ? "Verificada" : "Pendiente"}</span>
+                                </label>
+                              ) : (
+                                <span>{asistente.asistenciaVerificada ? "Verificada" : "Pendiente"}</span>
+                              )}
+                            </td>
+                            <td>{asistente.periodo || "—"}</td>
+                            <td>
+                              <span className={`vec-role-badge vec-role-${String(asistente.rolParticipacion).toLowerCase()}`}>
+                                {ROL_LABELS[asistente.rolParticipacion] || asistente.rolParticipacion}
+                              </span>
+                            </td>
+                            <td>
+                              {roles.filter((role) => role !== asistente.rolParticipacion).map((role) => (
+                                <span className={`vec-role-badge vec-role-${String(role).toLowerCase()}`} key={role}>
+                                  {ROL_LABELS[role] || role}
+                                </span>
+                              ))}
+                            </td>
+                            <td>{asistente.identificacion || "—"}</td>
+                            <td>{asistente.apellidosNombres || "—"}</td>
+                            <td>{asistente.codigo || "—"}</td>
+                            <td>{asistente.programaPregrado || asistente.programaPosgrado || "—"}</td>
+                            <td>{asistente.correo || "—"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          ) : cargandoSesiones ? (
+            <p className="text-muted" role="status">Consultando jornadas disponibles...</p>
+          ) : sesiones.length > 0 ? (
+            <p className="text-muted">Selecciona las fechas de la jornada que estás verificando.</p>
+          ) : (
+            <p className="text-muted">No hay jornadas registradas para esta actividad. Primero registra la actividad con su periodo y fechas.</p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}

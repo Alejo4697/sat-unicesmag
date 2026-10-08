@@ -54,7 +54,7 @@ export default function EstudianteLoginPage() {
 
   // Formatear segundos a MM:SS
   const tiempoFormateado = `${String(Math.floor(segundosRestantes / 60)).padStart(2, "0")}:${String(
-    segundosRestantes % 60
+    segundosRestantes % 60,
   ).padStart(2, "0")}`;
 
   // 1. Manejar Solicitud de OTP
@@ -64,7 +64,9 @@ export default function EstudianteLoginPage() {
     setMensajeExito("");
 
     if (!documento.trim() || !correo.trim()) {
-      setError("Por favor ingrese su número de documento y correo institucional.");
+      setError(
+        "Por favor ingrese su número de documento y correo institucional.",
+      );
       return;
     }
 
@@ -77,7 +79,7 @@ export default function EstudianteLoginPage() {
     try {
       const resp = await solicitarOtp({
         documento: documento.trim(),
-        correo: correo.trim()
+        correo: correo.trim(),
       });
 
       setCorreoOfuscado(resp.correoOfuscado || correo.trim());
@@ -87,7 +89,9 @@ export default function EstudianteLoginPage() {
       setMensajeExito(resp.mensaje || "Código de verificación enviado.");
       setTimeout(() => inputRefs.current[0]?.focus(), 100);
     } catch (err) {
-      setError(err.message || "No se pudo solicitar el código de verificación.");
+      setError(
+        err.message || "No se pudo solicitar el código de verificación.",
+      );
     } finally {
       setCargando(false);
     }
@@ -138,7 +142,9 @@ export default function EstudianteLoginPage() {
     }
 
     if (segundosRestantes <= 0) {
-      setError("El código de verificación ha expirado. Por favor solicite uno nuevo.");
+      setError(
+        "El código de verificación ha expirado. Por favor solicite uno nuevo.",
+      );
       return;
     }
 
@@ -147,7 +153,7 @@ export default function EstudianteLoginPage() {
       const resp = await verificarOtp({
         documento: documento.trim(),
         correo: correo.trim(),
-        codigo: codigoCompleto
+        codigo: codigoCompleto,
       });
 
       iniciarSesionComo(resp.usuario);
@@ -167,7 +173,7 @@ export default function EstudianteLoginPage() {
     try {
       const resp = await solicitarOtp({
         documento: documento.trim(),
-        correo: correo.trim()
+        correo: correo.trim(),
       });
       setSegundosRestantes((resp.expiraMinutos || 15) * 60);
       setOtpDigits(["", "", "", "", "", ""]);
@@ -196,12 +202,19 @@ export default function EstudianteLoginPage() {
                 className="login-escudo"
               />
             </div>
-            <div className="login-inst-badge" style={{ background: "rgba(5, 150, 105, 0.12)", color: "#059669" }}>
+            <div
+              className="login-inst-badge"
+              style={{
+                background: "rgba(5, 150, 105, 0.12)",
+                color: "#059669",
+              }}
+            >
               PORTAL ESTUDIANTIL
             </div>
             <h1 className="login-title">Caracterización Estudiantil</h1>
             <p className="login-subtitle">
-              Acceso seguro sin contraseña mediante código temporal de verificación (OTP)
+              Acceso seguro sin contraseña mediante código temporal de
+              verificación (OTP)
             </p>
           </div>
 
@@ -225,7 +238,7 @@ export default function EstudianteLoginPage() {
                 display: "flex",
                 alignItems: "center",
                 gap: "8px",
-                marginBottom: "1rem"
+                marginBottom: "1rem",
               }}
             >
               <i className="fas fa-circle-check"></i>
@@ -244,13 +257,21 @@ export default function EstudianteLoginPage() {
                 borderRadius: "8px",
                 fontSize: "0.875rem",
                 marginBottom: "1.25rem",
-                textAlign: "center"
+                textAlign: "center",
               }}
             >
               <div>
                 <i className="fas fa-key" style={{ marginRight: "6px" }}></i>
                 Código de acceso generado (provisional):{" "}
-                <strong style={{ fontSize: "1.15rem", letterSpacing: "2px", color: "#b45309" }}>{codigoDev}</strong>
+                <strong
+                  style={{
+                    fontSize: "1.15rem",
+                    letterSpacing: "2px",
+                    color: "#b45309",
+                  }}
+                >
+                  {codigoDev}
+                </strong>
               </div>
               <button
                 type="button"
@@ -266,7 +287,7 @@ export default function EstudianteLoginPage() {
                   borderRadius: "4px",
                   fontSize: "0.75rem",
                   fontWeight: "600",
-                  cursor: "pointer"
+                  cursor: "pointer",
                 }}
               >
                 <i className="fas fa-paste"></i> Autocompletar en las casillas
@@ -274,15 +295,17 @@ export default function EstudianteLoginPage() {
             </div>
           )}
 
-          {/* PASO 1: Ingreso de Cédula y Correo Institucional */}
-
+          {/* PASO 1: Ingreso de código o número de identificación y correo institucional */}
 
           {paso === "solicitud" && (
             <form onSubmit={handleSolicitar} className="login-form">
               <div className="login-form-group">
                 <label htmlFor="est-doc" className="login-label">
-                  <i className="fas fa-id-card" style={{ color: "var(--brand-primary)" }}></i>
-                  Número de Cédula o Documento de Identidad
+                  <i
+                    className="fas fa-id-card"
+                    style={{ color: "var(--brand-primary)" }}
+                  ></i>
+                  Código o Número de Identificación
                 </label>
                 <div className="login-input-wrapper">
                   <i className="fas fa-fingerprint login-input-icon"></i>
@@ -301,7 +324,10 @@ export default function EstudianteLoginPage() {
 
               <div className="login-form-group">
                 <label htmlFor="est-email" className="login-label">
-                  <i className="fas fa-envelope" style={{ color: "var(--brand-primary)" }}></i>
+                  <i
+                    className="fas fa-envelope"
+                    style={{ color: "var(--brand-primary)" }}
+                  ></i>
                   Correo Electrónico Institucional
                 </label>
                 <div className="login-input-wrapper">
@@ -316,12 +342,25 @@ export default function EstudianteLoginPage() {
                     required
                   />
                 </div>
-                <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "4px", display: "block" }}>
-                  Enviaremos un código numérico temporal de 6 dígitos a tu bandeja de correo.
+                <span
+                  style={{
+                    fontSize: "0.75rem",
+                    color: "var(--text-muted)",
+                    marginTop: "4px",
+                    display: "block",
+                  }}
+                >
+                  Enviaremos un código numérico temporal de 6 dígitos a tu
+                  bandeja de correo.
                 </span>
               </div>
 
-              <button type="submit" className="login-btn-submit" disabled={cargando} style={{ background: "#059669" }}>
+              <button
+                type="submit"
+                className="login-btn-submit"
+                disabled={cargando}
+                style={{ background: "#059669" }}
+              >
                 {cargando ? (
                   <>
                     <i className="fas fa-spinner fa-spin"></i>
@@ -341,10 +380,23 @@ export default function EstudianteLoginPage() {
           {paso === "verificacion" && (
             <form onSubmit={handleVerificar} className="login-form">
               <div style={{ textAlign: "center", marginBottom: "1.25rem" }}>
-                <p style={{ fontSize: "0.9rem", color: "var(--text-main)", margin: 0 }}>
+                <p
+                  style={{
+                    fontSize: "0.9rem",
+                    color: "var(--text-main)",
+                    margin: 0,
+                  }}
+                >
                   Ingresa el código de 6 dígitos enviado a:
                 </p>
-                <p style={{ fontSize: "0.95rem", fontWeight: "700", color: "#002855", margin: "4px 0" }}>
+                <p
+                  style={{
+                    fontSize: "0.95rem",
+                    fontWeight: "700",
+                    color: "#002855",
+                    margin: "4px 0",
+                  }}
+                >
                   {correoOfuscado}
                 </p>
                 <div
@@ -358,7 +410,7 @@ export default function EstudianteLoginPage() {
                     background: "#f1f5f9",
                     padding: "4px 10px",
                     borderRadius: "20px",
-                    marginTop: "6px"
+                    marginTop: "6px",
                   }}
                 >
                   <i className="fas fa-clock"></i>
@@ -367,7 +419,14 @@ export default function EstudianteLoginPage() {
               </div>
 
               {/* Casillas de 6 dígitos */}
-              <div style={{ display: "flex", justifyContent: "center", gap: "8px", marginBottom: "1.5rem" }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "center",
+                  gap: "8px",
+                  marginBottom: "1.5rem",
+                }}
+              >
                 {otpDigits.map((digit, idx) => (
                   <input
                     key={idx}
@@ -385,17 +444,24 @@ export default function EstudianteLoginPage() {
                       fontSize: "1.5rem",
                       fontWeight: "700",
                       borderRadius: "8px",
-                      border: digit ? "2px solid #059669" : "1.5px solid #cbd5e1",
+                      border: digit
+                        ? "2px solid #059669"
+                        : "1.5px solid #cbd5e1",
                       background: digit ? "rgba(5, 150, 105, 0.05)" : "#ffffff",
                       color: "#002855",
                       outline: "none",
-                      transition: "all 0.2s"
+                      transition: "all 0.2s",
                     }}
                   />
                 ))}
               </div>
 
-              <button type="submit" className="login-btn-submit" disabled={cargando} style={{ background: "#059669" }}>
+              <button
+                type="submit"
+                className="login-btn-submit"
+                disabled={cargando}
+                style={{ background: "#059669" }}
+              >
                 {cargando ? (
                   <>
                     <i className="fas fa-spinner fa-spin"></i>
@@ -409,7 +475,14 @@ export default function EstudianteLoginPage() {
                 )}
               </button>
 
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "1rem" }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginTop: "1rem",
+                }}
+              >
                 <button
                   type="button"
                   onClick={() => {
@@ -422,7 +495,7 @@ export default function EstudianteLoginPage() {
                     color: "var(--brand-primary)",
                     fontSize: "0.825rem",
                     cursor: "pointer",
-                    textDecoration: "underline"
+                    textDecoration: "underline",
                   }}
                 >
                   <i className="fas fa-arrow-left"></i> Cambiar documento/correo
@@ -435,10 +508,11 @@ export default function EstudianteLoginPage() {
                   style={{
                     background: "none",
                     border: "none",
-                    color: segundosRestantes > 840 ? "var(--text-muted)" : "#059669",
+                    color:
+                      segundosRestantes > 840 ? "var(--text-muted)" : "#059669",
                     fontSize: "0.825rem",
                     fontWeight: "600",
-                    cursor: segundosRestantes > 840 ? "not-allowed" : "pointer"
+                    cursor: segundosRestantes > 840 ? "not-allowed" : "pointer",
                   }}
                 >
                   <i className="fas fa-rotate-right"></i> Reenviar código
@@ -448,7 +522,14 @@ export default function EstudianteLoginPage() {
           )}
 
           {/* Enlace alternativo a login institucional */}
-          <div style={{ marginTop: "1.5rem", paddingTop: "1rem", borderTop: "1px solid #e2e8f0", textAlign: "center" }}>
+          <div
+            style={{
+              marginTop: "1.5rem",
+              paddingTop: "1rem",
+              borderTop: "1px solid #e2e8f0",
+              textAlign: "center",
+            }}
+          >
             <Link
               to="/"
               style={{
@@ -457,17 +538,22 @@ export default function EstudianteLoginPage() {
                 textDecoration: "none",
                 display: "inline-flex",
                 alignItems: "center",
-                gap: "6px"
+                gap: "6px",
               }}
             >
               <i className="fas fa-user-shield"></i>
-              <span>¿Eres docente o directivo? Ingresa por el Portal Administrativo</span>
+              <span>
+                ¿Eres docente o directivo? Ingresa por el Portal Administrativo
+              </span>
             </Link>
           </div>
 
           {/* Footer */}
           <div className="login-footer" style={{ marginTop: "1.25rem" }}>
-            <span>Universidad CESMAG • Vicerrectoría de Evangelización de las Culturas</span>
+            <span>
+              Universidad CESMAG • Vicerrectoría de Evangelización de las
+              Culturas
+            </span>
           </div>
         </div>
       </div>

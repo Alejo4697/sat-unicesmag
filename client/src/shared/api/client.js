@@ -37,3 +37,22 @@ export async function apiFetch(path, options = {}) {
 
   return res.status === 204 ? null : res.json();
 }
+
+export async function apiDownload(path, options = {}) {
+  const userId = getActiveUserId();
+  const res = await fetch(`${API_URL}${path}`, {
+    ...options,
+    headers: {
+      ...(userId ? { "x-user-id": userId } : {}),
+      ...options.headers
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined
+  });
+
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.error || `Error ${res.status} en ${path}`);
+  }
+
+  return res.blob();
+}

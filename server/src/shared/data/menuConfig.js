@@ -22,28 +22,60 @@ export const MENU_CONFIG = [
     title: "Monitoreo",
     roles: ["admin", "profesional", "directivo", "reporte_actividades"],
     items: [
-      { id: "dashboard", name: "Tablero General", icon: "fa-chart-pie", href: "dashboard" }
-    ]
+      {
+        id: "dashboard",
+        name: "Tablero General",
+        icon: "fa-chart-pie",
+        href: "dashboard",
+      },
+    ],
   },
   {
     title: "Permanencia & Casos",
     roles: ["admin", "profesional", "directivo"],
     items: [
-      { id: "ficha", name: "Ficha 360° Estudiante", icon: "fa-address-card", href: "ficha-estudiante" },
-      { id: "alertas", name: "Alertas Tempranas", icon: "fa-bell", href: "alertas" },
+      {
+        id: "ficha",
+        name: "Ficha 360° Estudiante",
+        icon: "fa-address-card",
+        href: "ficha-estudiante",
+      },
+      {
+        id: "alertas",
+        name: "Alertas Manuales",
+        icon: "fa-bell",
+        href: "alertas",
+      },
       // Fuera del sidebar (hidden): se accede a estos módulos desde los
       // botones de la Ficha 360°, ya con el estudiante en contexto. El RBAC
       // no cambia: siguen en MODULE_ROLES con los roles de esta sección.
-      { id: "intervenciones", name: "Intervenciones", icon: "fa-clipboard-check", href: "intervenciones", hidden: true },
-      { id: "remisiones", name: "Remisiones", icon: "fa-share-nodes", href: "remisiones", hidden: true }
-    ]
+      {
+        id: "intervenciones",
+        name: "Intervenciones",
+        icon: "fa-clipboard-check",
+        href: "intervenciones",
+        hidden: true,
+      },
+      {
+        id: "remisiones",
+        name: "Remisiones",
+        icon: "fa-share-nodes",
+        href: "remisiones",
+        hidden: true,
+      },
+    ],
   },
   {
     title: "Caracterización",
     roles: ["admin", "estudiante"],
     items: [
-      { id: "caracterizacion", name: "Formulario Caracterización (Instrumento)", icon: "fa-list-check", href: "caracterizacion" }
-    ]
+      {
+        id: "caracterizacion",
+        name: "Formulario Caracterización (Instrumento)",
+        icon: "fa-list-check",
+        href: "caracterizacion",
+      },
+    ],
   },
 
   {
@@ -55,23 +87,41 @@ export const MENU_CONFIG = [
     // en el mockup; conviene revisarlo con el dueño del producto.
     roles: ["admin", "profesional", "directivo", "reporte_actividades"],
     items: [
-      { id: "reportes", name: "Reportes y Exportación", icon: "fa-file-arrow-down", href: "reportes" }
-    ]
+      {
+        id: "reportes",
+        name: "Reportes y Exportación",
+        icon: "fa-file-arrow-down",
+        href: "reportes",
+      },
+    ],
   },
   {
     title: "Administración",
     roles: ["admin"],
     items: [
-      { id: "administracion", name: "Usuarios y Parámetros", icon: "fa-sliders", href: "administracion" }
-    ]
-  }
+      {
+        id: "administracion",
+        name: "Usuarios y Parámetros",
+        icon: "fa-sliders",
+        href: "administracion",
+      },
+      {
+        id: "actividades",
+        name: "Actividades",
+        icon: "fa-list-check",
+        href: "actividades",
+      },
+    ],
+  },
 ];
 
 // { dashboard: [...roles], ficha: [...roles], ... } - búsqueda O(1) por módulo.
 // Incluye TODOS los items, también los `hidden`: ocultar un módulo del
 // sidebar no cambia quién puede usarlo (RBAC).
 export const MODULE_ROLES = Object.fromEntries(
-  MENU_CONFIG.flatMap((section) => section.items.map((item) => [item.id, section.roles]))
+  MENU_CONFIG.flatMap((section) =>
+    section.items.map((item) => [item.id, section.roles]),
+  ),
 );
 
 export function rolesForModule(moduleId) {

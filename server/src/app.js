@@ -18,6 +18,7 @@ import caracterizacionRoutes from "./features/caracterizacion/caracterizacion.ro
 import reportesRoutes from "./features/reportes-snies/reportes.routes.js";
 import administracionRoutes from "./features/administracion/administracion.routes.js";
 import estudianteRoutes from "./features/estudiante/estudiante.routes.js";
+import actividadesParticipantesRoutes from "./features/actividades/participantes.routes.js";
 
 export function createApp() {
   const app = express();
@@ -39,6 +40,7 @@ export function createApp() {
   app.use("/api/caracterizacion", caracterizacionRoutes);
   app.use("/api/reportes", reportesRoutes);
   app.use("/api/administracion", administracionRoutes);
+  app.use("/api/actividades/participantes", actividadesParticipantesRoutes);
 
 
   app.use(notFoundHandler);

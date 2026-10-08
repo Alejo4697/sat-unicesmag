@@ -19,9 +19,9 @@ import RemisionesPage from "./features/remisiones/RemisionesPage.jsx";
 import CaracterizacionPage from "./features/caracterizacion/CaracterizacionPage.jsx";
 import ReportesPage from "./features/reportes-snies/ReportesPage.jsx";
 import AdministracionPage from "./features/administracion/AdministracionPage.jsx";
+import ActividadesPage from "./features/actividades/ActividadesPage.jsx";
 import EstudianteLoginPage from "./features/estudiante/EstudianteLoginPage.jsx";
 import EstudiantePortalPage from "./features/estudiante/EstudiantePortalPage.jsx";
-
 
 export default function App() {
   return (
@@ -36,7 +36,6 @@ export default function App() {
           </ProtectedRoute>
         }
       />
-
 
       <Route
         path="/dashboard"
@@ -99,6 +98,14 @@ export default function App() {
         element={
           <ProtectedRoute moduleId="administracion">
             <AdministracionPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/actividades"
+        element={
+          <ProtectedRoute moduleId="actividades">
+            <ActividadesPage />
           </ProtectedRoute>
         }
       />

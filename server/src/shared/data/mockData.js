@@ -61,7 +61,14 @@ export const MOCK_DATA = {
       promedioAcademico: 3.2, inasistenciasAcumuladas: 14, riesgoGlobal: "Alto", puntajeRiesgo: 12.4,
       puntajesCampo: { individual: "Alto", asistencial: "Medio", academico: "Alto", socioeconomico: "Alto" },
       encuestaRespondida: true,
-      acudiente: { nombre: "Carmen Bastidas", telefono: "3187654321", parentesco: "Madre" }
+      acudiente: { nombre: "Carmen Bastidas", telefono: "3187654321", parentesco: "Madre" },
+      totalAsignaturas: 4, asignaturasEvaluadas: 4,
+      asignaturas: [
+        { codigo: "101", nombre: "Algoritmos y Programación I", corte1: 2.1, corte2: null, corte3: null, notaFinal: null, notaActual: 2.1, inasistencias: 14, estado: "CURSANDO" },
+        { codigo: "102", nombre: "Cálculo Diferencial", corte1: 3.2, corte2: null, corte3: null, notaFinal: null, notaActual: 3.2, inasistencias: 0, estado: "CURSANDO" },
+        { codigo: "103", nombre: "Álgebra Lineal", corte1: 3.5, corte2: null, corte3: null, notaFinal: null, notaActual: 3.5, inasistencias: 0, estado: "CURSANDO" },
+        { codigo: "104", nombre: "Introducción a la Ingeniería", corte1: 4.0, corte2: null, corte3: null, notaFinal: null, notaActual: 4.0, inasistencias: 0, estado: "CURSANDO" }
+      ]
     },
     {
       codigo: "202410098", documento: "1085443211", nombres: "Valeria Alejandra", apellidos: "Guerrero España",
@@ -70,7 +77,14 @@ export const MOCK_DATA = {
       promedioAcademico: 4.3, inasistenciasAcumuladas: 2, riesgoGlobal: "Bajo", puntajeRiesgo: 3.1,
       puntajesCampo: { individual: "Bajo", asistencial: "Bajo", academico: "Bajo", socioeconomico: "Bajo" },
       encuestaRespondida: true,
-      acudiente: { nombre: "Roberto Guerrero", telefono: "3154321098", parentesco: "Padre" }
+      acudiente: { nombre: "Roberto Guerrero", telefono: "3154321098", parentesco: "Padre" },
+      totalAsignaturas: 4, asignaturasEvaluadas: 4,
+      asignaturas: [
+        { codigo: "201", nombre: "Psicología Cognitiva", corte1: 4.5, corte2: null, corte3: null, notaFinal: null, notaActual: 4.5, inasistencias: 0, estado: "CURSANDO" },
+        { codigo: "202", nombre: "Neuroanatomía Funcional", corte1: 4.2, corte2: null, corte3: null, notaFinal: null, notaActual: 4.2, inasistencias: 2, estado: "CURSANDO" },
+        { codigo: "203", nombre: "Psicometría y Medición", corte1: 4.1, corte2: null, corte3: null, notaFinal: null, notaActual: 4.1, inasistencias: 0, estado: "CURSANDO" },
+        { codigo: "204", nombre: "Modelos de Intervención", corte1: 4.4, corte2: null, corte3: null, notaFinal: null, notaActual: 4.4, inasistencias: 0, estado: "CURSANDO" }
+      ]
     },
     {
       codigo: "202220112", documento: "1085223344", nombres: "Mateo Fernando", apellidos: "Solarte Cabrera",
@@ -79,7 +93,14 @@ export const MOCK_DATA = {
       promedioAcademico: 3.6, inasistenciasAcumuladas: 8, riesgoGlobal: "Medio", puntajeRiesgo: 7.8,
       puntajesCampo: { individual: "Alto", asistencial: "Medio", academico: "Bajo", socioeconomico: "Medio" },
       encuestaRespondida: true,
-      acudiente: { nombre: "Elena Cabrera", telefono: "3119876543", parentesco: "Madre" }
+      acudiente: { nombre: "Elena Cabrera", telefono: "3119876543", parentesco: "Madre" },
+      totalAsignaturas: 4, asignaturasEvaluadas: 4,
+      asignaturas: [
+        { codigo: "301", nombre: "Derecho Procesal Penal", corte1: 3.2, corte2: null, corte3: null, notaFinal: null, notaActual: 3.2, inasistencias: 4, estado: "CURSANDO" },
+        { codigo: "302", nombre: "Consultorio Jurídico I", corte1: 3.8, corte2: null, corte3: null, notaFinal: null, notaActual: 3.8, inasistencias: 2, estado: "CURSANDO" },
+        { codigo: "303", nombre: "Derecho Laboral Colectivo", corte1: 3.5, corte2: null, corte3: null, notaFinal: null, notaActual: 3.5, inasistencias: 2, estado: "CURSANDO" },
+        { codigo: "304", nombre: "Filosofía del Derecho", corte1: 3.9, corte2: null, corte3: null, notaFinal: null, notaActual: 3.9, inasistencias: 0, estado: "CURSANDO" }
+      ]
     },
     {
       codigo: "202510201", documento: "1085998877", nombres: "Camila Andrea", apellidos: "Muñoz Portilla",
@@ -88,21 +109,28 @@ export const MOCK_DATA = {
       promedioAcademico: 3.9, inasistenciasAcumuladas: 5, riesgoGlobal: "Bajo", puntajeRiesgo: 2.5,
       puntajesCampo: { individual: "Bajo", asistencial: "Bajo", academico: "Medio", socioeconomico: "Bajo" },
       encuestaRespondida: false,
-      acudiente: { nombre: "Jorge Muñoz", telefono: "3167778899", parentesco: "Padre" }
+      acudiente: { nombre: "Jorge Muñoz", telefono: "3167778899", parentesco: "Padre" },
+      totalAsignaturas: 3, asignaturasEvaluadas: 3,
+      asignaturas: [
+        { codigo: "401", nombre: "Taller de Diseño I", corte1: 4.1, corte2: null, corte3: null, notaFinal: null, notaActual: 4.1, inasistencias: 3, estado: "CURSANDO" },
+        { codigo: "402", nombre: "Geometría Descriptiva", corte1: 3.6, corte2: null, corte3: null, notaFinal: null, notaActual: 3.6, inasistencias: 2, estado: "CURSANDO" },
+        { codigo: "403", nombre: "Historia del Hábitat", corte1: 4.0, corte2: null, corte3: null, notaFinal: null, notaActual: 4.0, inasistencias: 0, estado: "CURSANDO" }
+      ]
     },
     {
-      // Mismo programa que Santiago Narváez (Ingeniería de Sistemas), pero
-      // riesgoGlobal "Bajo" - para probar que directivoPuedeVerEstudiante
-      // (ver shared/security/alcanceDirectivo.js) lo excluye aunque sea del
-      // programa del Director: "propio programa" solo no basta, también
-      // debe estar en riesgo.
       codigo: "202510330", documento: "1085556622", nombres: "Juan Sebastián", apellidos: "Erazo Bravo",
       programa: "Ingeniería de Sistemas", semestre: 3, periodo: "2025 II",
       email: "juan.erazo@est.unicesmag.edu.co", telefono: "3145556622",
       promedioAcademico: 4.1, inasistenciasAcumuladas: 1, riesgoGlobal: "Bajo", puntajeRiesgo: 1.8,
       puntajesCampo: { individual: "Bajo", asistencial: "Bajo", academico: "Bajo", socioeconomico: "Bajo" },
       encuestaRespondida: true,
-      acudiente: { nombre: "Marina Bravo", telefono: "3178889911", parentesco: "Madre" }
+      acudiente: { nombre: "Marina Bravo", telefono: "3178889911", parentesco: "Madre" },
+      totalAsignaturas: 3, asignaturasEvaluadas: 3,
+      asignaturas: [
+        { codigo: "501", nombre: "Estructuras de Datos", corte1: 4.2, corte2: null, corte3: null, notaFinal: null, notaActual: 4.2, inasistencias: 0, estado: "CURSANDO" },
+        { codigo: "502", nombre: "Bases de Datos I", corte1: 4.0, corte2: null, corte3: null, notaFinal: null, notaActual: 4.0, inasistencias: 1, estado: "CURSANDO" },
+        { codigo: "503", nombre: "Cálculo Integral", corte1: 4.1, corte2: null, corte3: null, notaFinal: null, notaActual: 4.1, inasistencias: 0, estado: "CURSANDO" }
+      ]
     }
   ],
 
