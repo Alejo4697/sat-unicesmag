@@ -6,9 +6,8 @@
    el <AppLayout> (sidebar + topbar) para el acceso directo por ruta.
 
    El panel conserva: formulario de proceso de escucha, auto-guardado de
-   borrador (RQF04 / RNF04, localStorage), dropzone de evidencias PDF (máx.
-   5MB, RQF16), casilla de caso sensible VBG y el historial protegido por
-   RNF01.
+   borrador (localStorage), dropzone de evidencias PDF (máx.
+   5MB), casilla de caso sensible VBG y el historial protegido.
    ========================================================================== */
 
 import AppLayout from "../../shared/layout/AppLayout.jsx";
@@ -16,7 +15,7 @@ import IntervencionesPanel from "../../shared/panels/IntervencionesPanel.jsx";
 
 export default function IntervencionesPage() {
   return (
-    <AppLayout titulo="Registro de Intervenciones y Atención" breadcrumb="Procesos de Escucha / Auto-guardado RQF04">
+    <AppLayout titulo="Registro de Intervenciones y Atención" breadcrumb="Procesos de Escucha / Auto-guardado">
       <IntervencionesPanel />
     </AppLayout>
   );

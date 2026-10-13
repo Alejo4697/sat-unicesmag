@@ -88,7 +88,7 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Auto-guardado de borrador (RQF04 / RNF04): igual que
+  // Auto-guardado de borrador: igual que
   // debounceAutoSave() en el mockup, con 1s de espera tras el último cambio.
   useEffect(() => {
     if (!form.motivo && !form.resumenAcuerdo) return;
@@ -125,11 +125,11 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
     const nuevos = [];
     Array.from(files).forEach((file) => {
       if (file.type !== "application/pdf" && !file.name.endsWith(".pdf")) {
-        setError(`El archivo ${file.name} no es un PDF válido (Criterio RQF16).`);
+        setError(`El archivo ${file.name} no es un PDF válido.`);
         return;
       }
       if (file.size > 5 * 1024 * 1024) {
-        setError(`El archivo ${file.name} supera el límite máximo permitido de 5MB (Criterio RQF16).`);
+        setError(`El archivo ${file.name} supera el límite máximo permitido de 5MB.`);
         return;
       }
       nuevos.push({ nombre: file.name, tamano: `${(file.size / (1024 * 1024)).toFixed(1)} MB`, url: "#" });
@@ -183,7 +183,7 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
       {!borrador && autoguardadoEn && (
         <div className="autosave-banner">
           <span>
-            <i className="fas fa-save"></i> Borrador auto-guardado en este dispositivo (RQF04 / RNF04)
+            <i className="fas fa-save"></i> Borrador auto-guardado en este dispositivo
           </span>
           <small>{formatTime(autoguardadoEn)}</small>
         </div>
@@ -294,7 +294,7 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
               >
                 <i className="fas fa-file-arrow-up dropzone-icon"></i>
                 <p style={{ fontWeight: 600, color: "var(--text-main)", marginBottom: 2 }}>Haz clic o arrastra un archivo PDF</p>
-                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Formato PDF (máximo 5MB por archivo según Criterio RQF16)</p>
+                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Formato PDF (máximo 5MB por archivo)</p>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -332,7 +332,7 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
                   checked={form.esSensibleVBG}
                   onChange={(e) => setForm({ ...form, esSensibleVBG: e.target.checked })}
                 />
-                <span>Marcar como caso sensible VBG (Violencia Basada en Género - Confidencialidad RNF01)</span>
+                <span>Marcar como caso sensible VBG (Violencia Basada en Género - Confidencialidad)</span>
               </label>
               <p style={{ fontSize: "0.725rem", color: "var(--text-muted)", margin: "4px 0 0 22px" }}>
                 El detalle será restringido exclusivamente al registrador, Consultorios Jurídicos y Unidad de Servicios Psicológicos.
@@ -441,7 +441,7 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
                             <div>
                               <strong>
                                 {i.esSensibleVBG
-                                  ? "INFORMACIÓN RESTRINGIDA POR SECRETO PROFESIONAL (RNF01)"
+                                  ? "INFORMACIÓN RESTRINGIDA POR SECRETO PROFESIONAL"
                                   : "DETALLE RESTRINGIDO AL PROFESIONAL REGISTRADOR"}
                               </strong>
                               <p style={{ fontSize: "0.75rem", margin: 0 }}>

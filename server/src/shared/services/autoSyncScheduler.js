@@ -38,7 +38,7 @@ async function obtenerVistasRemotas() {
     `);
     return new Set(res.rows.map((r) => r.table_name.toLowerCase()));
   } catch (err) {
-    console.warn("⚠️ [AutoSync] No se pudo conectar temporalmente a prod18sep2 para verificar vistas:", err.message);
+    console.warn("[AutoSync] No se pudo conectar temporalmente a prod18sep2 para verificar vistas:", err.message);
     return null;
   } finally {
     await client.end().catch(() => {});
@@ -50,18 +50,18 @@ async function obtenerVistasRemotas() {
  */
 export async function sincronizarSiNoEstaActivo(motivo = "Programado") {
   if (syncEnProgreso) {
-    console.log(`⏳ [AutoSync] Sincronización omitida (${motivo}): ya hay un proceso en ejecución.`);
+    console.log(`[AutoSync] Sincronización omitida (${motivo}): ya hay un proceso en ejecución.`);
     return;
   }
 
   syncEnProgreso = true;
-  console.log(`\n🔄 [AutoSync] Disparando sincronización automática [Motivo: ${motivo}]...`);
+  console.log(`\n[AutoSync] Disparando sincronización automática [Motivo: ${motivo}]...`);
   try {
     const res = await ejecutarSincronizacion();
-    console.log(`✅ [AutoSync] Sincronización completada exitosamente (${res.duracionSegundos}s, ${res.totalProcesados} registros).`);
+    console.log(`[OK] [AutoSync] Sincronización completada exitosamente (${res.duracionSegundos}s, ${res.totalProcesados} registros).`);
     return res;
   } catch (err) {
-    console.error(`❌ [AutoSync] Error en sincronización automática:`, err.message);
+    console.error(`[ERROR] [AutoSync] Error en sincronización automática:`, err.message);
   } finally {
     syncEnProgreso = false;
   }
@@ -72,14 +72,14 @@ export async function sincronizarSiNoEstaActivo(motivo = "Programado") {
  */
 export function iniciarSincronizadorAutomatico(intervaloMinutos = 30) {
   const ms = Math.max(intervaloMinutos, 5) * 60 * 1000;
-  console.log(`🤖 [AutoSync] Servicio de sincronización automática activo cada ${intervaloMinutos} minutos.`);
+  console.log(`[AutoSync] Servicio de sincronización automática activo cada ${intervaloMinutos} minutos.`);
 
   // Verificación inicial después de 3 segundos del arranque del servidor
   setTimeout(async () => {
     const vistasActuales = await obtenerVistasRemotas();
     if (vistasActuales) {
       vistasConocidas = vistasActuales;
-      console.log(`🔍 [AutoSync] Vistas registradas inicialmente en prod18sep2:`, [...vistasConocidas].join(", "));
+      console.log(`[AutoSync] Vistas registradas inicialmente en prod18sep2:`, [...vistasConocidas].join(", "));
     }
     // Sincronizar al iniciar para garantizar que DataBasePractica esté actualizada
     await sincronizarSiNoEstaActivo("Arranque del Servidor");
@@ -94,7 +94,7 @@ export function iniciarSincronizadorAutomatico(intervaloMinutos = 30) {
     let hayNuevasVistas = false;
     for (const v of vistasActuales) {
       if (!vistasConocidas.has(v)) {
-        console.log(`📢 [AutoSync] ¡NUEVA VISTA DETECTADA EN PROD18SEP2! -> [${v}]`);
+        console.log(`[AutoSync] ¡NUEVA VISTA DETECTADA EN PROD18SEP2! -> [${v}]`);
         hayNuevasVistas = true;
       }
     }
@@ -111,7 +111,7 @@ export function iniciarSincronizadorAutomatico(intervaloMinutos = 30) {
   return {
     detener: () => {
       if (intervaloTimer) clearInterval(intervaloTimer);
-      console.log("⏹️ [AutoSync] Servicio de sincronización automática detenido.");
+      console.log("[AutoSync] Servicio de sincronización automática detenido.");
     }
   };
 }

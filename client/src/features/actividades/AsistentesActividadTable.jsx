@@ -23,28 +23,6 @@ const ROL_LABELS = {
   EGRESADO: "Egresado",
   EXTERNO: "Externo",
 };
-const MAX_EXCEL_SIZE = 10 * 1024 * 1024;
-const MAX_EXCEL_ROWS = 50000;
-
-function encontrarColumnaDocumento(rows) {
-  const normalizar = (value) => String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase("es")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-
-  for (let rowIndex = 0; rowIndex < Math.min(rows.length, 20); rowIndex += 1) {
-    const row = rows[rowIndex] || [];
-    const columnIndex = row.findIndex((value) => {
-      const header = normalizar(value);
-      return !/\btipo\b/.test(header) && /\b(identificacion|documento|cedula)\b/.test(header);
-    });
-    if (columnIndex >= 0) return { rowIndex, columnIndex };
-  }
-  return null;
-}
-
 function nombreArchivoActividad(value) {
   const nombre = String(value || "actividad")
     .normalize("NFD")
@@ -77,9 +55,7 @@ export default function AsistentesActividadTable() {
   const [opcionActiva, setOpcionActiva] = useState(0);
   const [busquedaAsistente, setBusquedaAsistente] = useState("");
   const [asistentes, setAsistentes] = useState([]);
-  const [entradaLote, setEntradaLote] = useState("");
-  const [archivoExcel, setArchivoExcel] = useState("");
-  const [importandoExcel, setImportandoExcel] = useState(false);
+  const [idsSeleccionados, setIdsSeleccionados] = useState(() => new Set());
   const [resultadoLote, setResultadoLote] = useState("");
   const [verificandoIds, setVerificandoIds] = useState([]);
   const [cargandoActividades, setCargandoActividades] = useState(true);
@@ -88,6 +64,10 @@ export default function AsistentesActividadTable() {
   const [exportando, setExportando] = useState(false);
   const [error, setError] = useState("");
   const sesionSeleccionada = sesiones.find((sesion) => claveSesion(sesion) === sesionId);
+  const asistenciasConfirmadas = asistentes.filter((item) => item.asistenciaVerificada).length;
+  const porcentajeAsistencia = asistentes.length
+    ? Math.round((asistenciasConfirmadas / asistentes.length) * 100)
+    : 0;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -145,8 +125,8 @@ export default function AsistentesActividadTable() {
     setSesionId("");
     setSesiones([]);
     setAsistentes([]);
+    setIdsSeleccionados(new Set());
     setResultadoLote("");
-    setArchivoExcel("");
     if (!actividadId) {
       setCargandoSesiones(false);
       return undefined;
@@ -208,15 +188,12 @@ export default function AsistentesActividadTable() {
       asistente.correo,
     ].some((value) => String(value || "").toLocaleLowerCase("es").includes(term));
   });
-
   function seleccionarActividad(actividad) {
     setActividadId(actividad.id);
     setBusquedaActividad(actividad.actividad);
     setPeriodoId("");
     setSesionId("");
     setBusquedaAsistente("");
-    setEntradaLote("");
-    setArchivoExcel("");
     setResultadoLote("");
     setMostrarOpciones(false);
     setOpcionActiva(0);
@@ -280,152 +257,59 @@ export default function AsistentesActividadTable() {
     }
   }
 
-  async function cambiarAsistencia(asistente, asistenciaVerificada) {
-    setVerificandoIds((current) => [...current, asistente.id]);
+  const asistentesPendientesVisibles = asistentesFiltrados.filter((item) => !item.asistenciaVerificada);
+  const seleccionadosPendientes = asistentes.filter((item) => idsSeleccionados.has(item.id) && !item.asistenciaVerificada);
+
+  function cambiarSeleccion(asistente, seleccionado) {
+    if (asistente.asistenciaVerificada) return;
+    setIdsSeleccionados((actuales) => {
+      const siguientes = new Set(actuales);
+      if (seleccionado) siguientes.add(asistente.id);
+      else siguientes.delete(asistente.id);
+      return siguientes;
+    });
+    setResultadoLote("");
+  }
+
+  function seleccionarPendientesVisibles() {
+    setIdsSeleccionados((actuales) => {
+      const siguientes = new Set(actuales);
+      asistentesPendientesVisibles.forEach((item) => siguientes.add(item.id));
+      return siguientes;
+    });
+  }
+
+  async function confirmarAsistentes() {
+    const registros = seleccionadosPendientes.map(({ id }) => id);
+    if (!sesionSeleccionada || registros.length === 0) return;
+    setVerificandoIds(registros);
     setError("");
+    setResultadoLote("");
     try {
       await verificarAsistencia({
         idActividad: actividadId,
         idPeriodo: sesionSeleccionada.idPeriodo,
         fechaInicio: fechaCorta(sesionSeleccionada.fechaInicio),
         fechaFinalizacion: fechaCorta(sesionSeleccionada.fechaFinalizacion),
-        registros: [asistente.id],
-        asistenciaVerificada,
+        registros,
+        asistenciaVerificada: true,
       });
-      setAsistentes((current) => current.map((item) => (
-        item.id === asistente.id ? { ...item, asistenciaVerificada } : item
-      )));
+      const actualizados = await getAsistentes({
+        idActividad: actividadId,
+        idPeriodo: sesionSeleccionada.idPeriodo,
+        fechaInicio: fechaCorta(sesionSeleccionada.fechaInicio),
+        fechaFinalizacion: fechaCorta(sesionSeleccionada.fechaFinalizacion),
+      });
+      setAsistentes(actualizados);
+      setIdsSeleccionados(new Set());
+      const confirmados = actualizados.filter((item) => registros.includes(item.id) && item.asistenciaVerificada).length;
+      setResultadoLote(`${confirmados} ${confirmados === 1 ? "asistente confirmado y guardado" : "asistentes confirmados y guardados"}.`);
     } catch (requestError) {
-      setError(requestError.message || "No se pudo actualizar la verificación de asistencia.");
+      setError(requestError.message || "No se pudieron confirmar las asistencias seleccionadas.");
     } finally {
-      setVerificandoIds((current) => current.filter((id) => id !== asistente.id));
+      setVerificandoIds([]);
     }
   }
-
-  async function procesarDocumentos(documentos, origen) {
-    if (!sesionSeleccionada) return;
-    setError("");
-    setResultadoLote("");
-    const documentosUnicos = [...new Set(documentos.map((value) => String(value || "").trim()).filter(Boolean))];
-    if (documentosUnicos.length === 0) {
-      setResultadoLote(`${origen}: no se encontraron documentos para validar.`);
-      return;
-    }
-    if (documentosUnicos.length > 10000) {
-      setError("La lista supera el máximo de 10.000 documentos por validación.");
-      return;
-    }
-
-    const registrosPorDocumento = new Map();
-    for (const asistente of asistentes) {
-      const documento = String(asistente.identificacion || "").trim();
-      if (!documento) continue;
-      const registros = registrosPorDocumento.get(documento) || [];
-      registros.push(asistente);
-      registrosPorDocumento.set(documento, registros);
-    }
-    const noInscritos = documentosUnicos.filter((documento) => !registrosPorDocumento.has(documento));
-    const ambiguos = documentosUnicos.filter((documento) => (registrosPorDocumento.get(documento)?.length || 0) > 1);
-    const coincidencias = documentosUnicos
-      .filter((documento) => registrosPorDocumento.get(documento)?.length === 1)
-      .map((documento) => registrosPorDocumento.get(documento)[0]);
-    const sinMarcar = coincidencias.filter((asistente) => !asistente.asistenciaVerificada);
-
-    if (sinMarcar.length > 0) {
-      setVerificandoIds((current) => [...new Set([...current, ...sinMarcar.map(({ id }) => id)])]);
-      try {
-        await verificarAsistencia({
-          idActividad: actividadId,
-          idPeriodo: sesionSeleccionada.idPeriodo,
-          fechaInicio: fechaCorta(sesionSeleccionada.fechaInicio),
-          fechaFinalizacion: fechaCorta(sesionSeleccionada.fechaFinalizacion),
-          registros: sinMarcar.map(({ id }) => id),
-          asistenciaVerificada: true,
-        });
-        const idsMarcados = new Set(sinMarcar.map(({ id }) => id));
-        setAsistentes((current) => current.map((asistente) => (
-          idsMarcados.has(asistente.id) ? { ...asistente, asistenciaVerificada: true } : asistente
-        )));
-      } catch (requestError) {
-        setError(requestError.message || "No se pudo validar la lista física.");
-        return;
-      } finally {
-        setVerificandoIds((current) => current.filter((id) => !sinMarcar.some((item) => item.id === id)));
-      }
-    }
-
-    const yaMarcados = coincidencias.length - sinMarcar.length;
-    setResultadoLote(
-      `${origen}: ${sinMarcar.length} asistencias nuevas marcadas. ${noInscritos.length} documentos no estaban inscritos.`
-      + (ambiguos.length ? ` ${ambiguos.length} documentos aparecen duplicados y requieren revisión manual.` : "")
-      + (yaMarcados ? ` ${yaMarcados} ya estaban marcados.` : ""),
-    );
-  }
-
-  async function validarYMarcarLote() {
-    const documentos = entradaLote.split(/[,\s;]+/).map((value) => value.trim()).filter(Boolean);
-    await procesarDocumentos(documentos, "Lista pegada");
-  }
-
-  async function cargarExcelAsistencia(event) {
-    const input = event.currentTarget;
-    const file = input.files?.[0];
-    input.value = "";
-    if (!file) return;
-    setError("");
-    setResultadoLote("");
-
-    if (!sesionSeleccionada) {
-      setError("Primero selecciona la actividad y la jornada que vas a verificar.");
-      return;
-    }
-    if (!/\.xlsx$/i.test(file.name)) {
-      setError("Selecciona un archivo Excel .xlsx.");
-      return;
-    }
-    if (file.size > MAX_EXCEL_SIZE) {
-      setError("El archivo supera el límite de 10 MB.");
-      return;
-    }
-
-    setArchivoExcel(file.name);
-    setImportandoExcel(true);
-    try {
-      const { default: readExcelFile } = await import("read-excel-file/browser");
-      const sheets = await readExcelFile(file);
-      let rowCount = 0;
-      const documentos = [];
-      let hojasConColumna = 0;
-
-      for (const sheet of sheets) {
-        rowCount += sheet.data.length;
-        if (rowCount > MAX_EXCEL_ROWS) {
-          throw new Error("El archivo supera el límite de 50.000 filas.");
-        }
-        const header = encontrarColumnaDocumento(sheet.data);
-        if (!header) continue;
-        hojasConColumna += 1;
-        for (const row of sheet.data.slice(header.rowIndex + 1)) {
-          const value = row[header.columnIndex];
-          if (typeof value === "string" || typeof value === "number") {
-            const documentNumber = String(value).trim();
-            if (documentNumber) documentos.push(documentNumber);
-          }
-        }
-      }
-
-      if (hojasConColumna === 0) {
-        throw new Error("No se encontró una columna encabezada como identificación, documento o cédula.");
-      }
-      await procesarDocumentos(documentos, `Excel «${file.name}»`);
-    } catch (requestError) {
-      setResultadoLote("");
-      setError(requestError.message || "No se pudo leer el archivo Excel.");
-    } finally {
-      setImportandoExcel(false);
-    }
-  }
-
   return (
     <section className="card" aria-label="Asistentes por actividad">
       <div className="card-header">
@@ -561,6 +445,7 @@ export default function AsistentesActividadTable() {
                 setSesionId(event.target.value);
                 setBusquedaAsistente("");
                 setResultadoLote("");
+                setIdsSeleccionados(new Set());
               }}
               disabled={cargandoSesiones || sesiones.length === 0}
             >
@@ -613,59 +498,22 @@ export default function AsistentesActividadTable() {
                   <strong>Jornada: {fechaCorta(sesionSeleccionada.fechaInicio)} – {fechaCorta(sesionSeleccionada.fechaFinalizacion)}</strong>
                   <span>{actividadSeleccionada.actividad}</span>
                 </div>
-                <span>{asistentes.filter((item) => item.asistenciaVerificada).length} de {asistentes.length} asistencias verificadas</span>
+                <div className="vec-attendance-progress">
+                  <strong>{asistenciasConfirmadas} de {asistentes.length} asistencias confirmadas ({porcentajeAsistencia}%)</strong>
+                  <progress value={asistenciasConfirmadas} max={Math.max(asistentes.length, 1)} aria-label="Progreso de verificación de asistencia" />
+                  <span>{Math.max(asistentes.length - asistenciasConfirmadas, 0)} pendientes</span>
+                </div>
               </div>
               {esCoordinador ? (
                 <section className="vec-attendance-tools" aria-labelledby="vec-attendance-tools-title">
-                  <h4 id="vec-attendance-tools-title">Verificar lista de asistencia</h4>
-                  <p className="text-muted">
-                    Puedes cargar el Excel de la lista física, pegar los documentos o revisar uno por uno.
-                    Solo se marcarán coincidencias de personas ya inscritas en esta actividad y jornada.
-                  </p>
-                  <div className="vec-attendance-methods">
-                    <div className="vec-attendance-method">
-                      <h5><i className="fas fa-file-excel" aria-hidden="true"></i> Cargar Excel</h5>
-                      <p className="text-muted">
-                        Archivo .xlsx con una columna llamada identificación, documento o cédula.
-                        Se revisa en este navegador y no se guarda en el servidor.
-                      </p>
-                      <label className="form-label" htmlFor="vec-attendance-excel">Archivo de asistencia</label>
-                      <input
-                        className="form-control"
-                        id="vec-attendance-excel"
-                        type="file"
-                        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        onChange={cargarExcelAsistencia}
-                        disabled={importandoExcel || cargandoAsistentes || verificandoIds.length > 0 || asistentes.length === 0}
-                      />
-                      {archivoExcel && <span className="vec-attendance-file">{archivoExcel}</span>}
-                      {importandoExcel && <p className="text-muted" role="status">Leyendo y validando el Excel...</p>}
-                    </div>
-                    <div className="vec-attendance-method">
-                      <h5><i className="fas fa-paste" aria-hidden="true"></i> Pegar documentos</h5>
-                      <label className="form-label" htmlFor="vec-attendance-documents">
-                        Documentos de la lista física
-                      </label>
-                      <textarea
-                        className="form-control"
-                        id="vec-attendance-documents"
-                        value={entradaLote}
-                        onChange={(event) => setEntradaLote(event.target.value)}
-                        rows={4}
-                        aria-describedby="vec-attendance-paste-help"
-                        placeholder={"Ejemplo:\n123456789\n987654321"}
-                      />
-                      <span className="text-muted" id="vec-attendance-paste-help">
-                        Separa los documentos con espacios, comas, punto y coma o saltos de línea.
-                      </span>
-                      <button
-                        className="btn btn-outline"
-                        type="button"
-                        onClick={validarYMarcarLote}
-                        disabled={importandoExcel || cargandoAsistentes || verificandoIds.length > 0 || asistentes.length === 0 || !entradaLote.trim()}
-                      >
-                        Validar documentos pegados
-                      </button>
+                  <h4 id="vec-attendance-tools-title">Confirmar asistentes</h4>
+                  <p className="text-muted">Marca en la lista a quienes asistieron y confirma la selección para guardar la asistencia.</p>
+                  <div className="vec-attendance-actions">
+                    <span>{seleccionadosPendientes.length} seleccionados de {asistentesPendientesVisibles.length} pendientes visibles</span>
+                    <div>
+                      <button className="btn btn-outline btn-sm" type="button" onClick={seleccionarPendientesVisibles} disabled={asistentesPendientesVisibles.length === 0 || verificandoIds.length > 0}>Seleccionar pendientes visibles</button>
+                      <button className="btn btn-outline btn-sm" type="button" onClick={() => setIdsSeleccionados(new Set())} disabled={idsSeleccionados.size === 0 || verificandoIds.length > 0}>Limpiar selección</button>
+                      <button className="btn btn-primary btn-sm" type="button" onClick={confirmarAsistentes} disabled={seleccionadosPendientes.length === 0 || verificandoIds.length > 0 || cargandoAsistentes}>{verificandoIds.length > 0 ? "Guardando confirmaciones..." : `Confirmar asistentes (${seleccionadosPendientes.length})`}</button>
                     </div>
                   </div>
                   {resultadoLote && <p className="vec-batch-result" role="status">{resultadoLote}</p>}
@@ -674,13 +522,14 @@ export default function AsistentesActividadTable() {
                 <p className="text-muted">La verificación física solo está disponible para coordinadores.</p>
               )}
 
-              <h4 className="vec-attendance-checklist-title">Checklist de inscritos</h4>
+              <h4 className="vec-attendance-checklist-title">Lista de asistentes</h4>
               <p className="text-muted">
-                Marca la casilla solo después de comprobar el nombre en la lista firmada. Las personas comienzan pendientes.
+                Selecciona las personas presentes y pulsa “Confirmar asistentes” para guardar las marcas.
               </p>
+
               <div className="form-group" style={{ maxWidth: "520px" }}>
                 <label className="form-label" htmlFor="vec-buscar-asistente">
-                  Buscar asistente por nombre, identificación, código o correo
+                  Filtrar asistentes inscritos por nombre, identificación, código o correo
                 </label>
                 <input
                   className="form-control"
@@ -706,7 +555,7 @@ export default function AsistentesActividadTable() {
                   <table className="table">
                     <thead>
                       <tr>
-                        <th>Asistencia física</th>
+                        <th>Confirmar asistencia</th>
                         <th>Periodo</th>
                         <th>Rol en esta actividad</th>
                         <th>Otros roles</th>
@@ -728,15 +577,15 @@ export default function AsistentesActividadTable() {
                                 <label className="vec-attendance-checkbox">
                                   <input
                                     type="checkbox"
-                                    checked={Boolean(asistente.asistenciaVerificada)}
-                                    onChange={(event) => cambiarAsistencia(asistente, event.target.checked)}
-                                    disabled={verificandoIds.includes(asistente.id)}
-                                    aria-label={`Asistencia confirmada: ${asistente.apellidosNombres || asistente.identificacion}`}
+                                    checked={Boolean(asistente.asistenciaVerificada || idsSeleccionados.has(asistente.id))}
+                                    onChange={(event) => cambiarSeleccion(asistente, event.target.checked)}
+                                    disabled={Boolean(asistente.asistenciaVerificada) || verificandoIds.includes(asistente.id)}
+                                    aria-label={`Confirmar asistencia de ${asistente.apellidosNombres || asistente.identificacion}`}
                                   />
-                                  <span>{asistente.asistenciaVerificada ? "Verificada" : "Pendiente"}</span>
+                                  <span>{asistente.asistenciaVerificada ? "Confirmada" : idsSeleccionados.has(asistente.id) ? "Seleccionada" : "Pendiente"}</span>
                                 </label>
                               ) : (
-                                <span>{asistente.asistenciaVerificada ? "Verificada" : "Pendiente"}</span>
+                                <span>{asistente.asistenciaVerificada ? "Confirmada" : idsSeleccionados.has(asistente.id) ? "Seleccionada" : "Pendiente"}</span>
                               )}
                             </td>
                             <td>{asistente.periodo || "—"}</td>

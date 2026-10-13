@@ -12,6 +12,7 @@
     "db:matriz": "node src/shared/db/seed.js matriz_bienestar.sql",
     "db:permisos": "node src/shared/db/seed.js permisos_modulos.sql",
     "db:matriculas-codigo": "node src/shared/db/seed.js matriculas_codigo_externo.sql",
+    "db:actividades": "node src/features/actividades/aplicarMigracion.js",
     "db:catalogo-actividades": "node src/features/actividades/importarCatalogo.mjs",
     "db:sync": "node src/shared/services/syncService.js"
   },

@@ -1,12 +1,13 @@
 import { Router } from "express";
-import { MOCK_DATA } from "../../shared/data/mockData.js";
 import { pool, query } from "../../shared/db/pool.js";
 import { identifyUser, requireModule, requireRole } from "../../shared/middleware/requireRole.js";
 import { generarExcelAsistentes } from "./excelAsistentes.js";
 
 const router = Router();
 const TIPOS = new Set(["ESTUDIANTE", "COLABORADOR", "EGRESADO", "EXTERNO"]);
+const ESTADOS_ACTIVIDAD = new Set(["PROGRAMADA", "EN_CURSO", "FINALIZADA", "CANCELADA"]);
 const MAX_IDENTIFICACION_LENGTH = 64;
+const NUMERO_TIPO_BENEFICIOS_ECONOMICOS = 1;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const ASSISTANTS_QUERY = `
@@ -19,7 +20,7 @@ const ASSISTANTS_QUERY = `
                           p.primer_nombre, p.segundo_nombre)) AS "apellidosNombres",
          pv.tipo_participante AS "rolParticipacion",
          COALESCE(roles.roles, ARRAY[pv.tipo_participante]) AS roles,
-         avp.asistencia_verificada AS "asistenciaVerificada",
+         COALESCE((to_jsonb(avp)->>'asistencia_verificada')::boolean, false) AS "asistenciaVerificada",
          COALESCE(prog.nombre, pv.programa_academico) AS "programaPregrado",
          pv.programa_posgrado_dependencia AS "programaPosgrado",
          COALESCE(m.semestre, e.semestre_actual, pv.semestre)::text AS "semestre",
@@ -29,6 +30,11 @@ const ASSISTANTS_QUERY = `
                   p.correo_institucional, p.correo_electronico) AS "correo",
          COALESCE(p.celular, p.telefono, e.telefono, e.telefono_fijo) AS "contacto",
          pv.tipo_participante AS "tipoParticipante",
+         COALESCE(pv.detalle_tipo_participante, CASE pv.tipo_participante
+           WHEN 'ESTUDIANTE' THEN 'Estudiante'
+           WHEN 'COLABORADOR' THEN 'Colaborador'
+           WHEN 'EGRESADO' THEN 'Egresado no titulado'
+           ELSE 'Externo' END) AS "detalleTipoParticipante",
          CASE WHEN COALESCE(e.fecha_nacimiento, p.fecha_nacimiento) IS NULL THEN NULL
               ELSE DATE_PART('year', AGE(CURRENT_DATE, COALESCE(e.fecha_nacimiento, p.fecha_nacimiento)))::int
          END AS "edad",
@@ -37,7 +43,7 @@ const ASSISTANTS_QUERY = `
          COALESCE(p.victima_conflicto, pv.conflicto_armado) AS "conflictoArmado",
          pv.discapacidad AS "discapacidad",
          COALESCE(cat.actividad, a.actividad) AS "actividad",
-         COALESCE(cat.descripcion, a.descripcion_actividad) AS "descripcionActividad",
+         COALESCE(a.descripcion_actividad, cat.descripcion) AS "descripcionActividad",
          COALESCE(cat.proyecto, a.proyecto) AS "proyecto",
          COALESCE(cat.tipo_actividad, a.tipo_actividad) AS "tipoActividad",
          a.tipo_actividad_otra AS "tipoActividadOtra",
@@ -47,6 +53,7 @@ const ASSISTANTS_QUERY = `
          d.nombre AS "dependencia",
          a.dependencia_otra AS "dependenciaOtra",
          a.modalidad AS "modalidad",
+         a.ubicacion AS "ubicacion",
          a.fecha_inicio AS "fechaInicio",
          a.fecha_finalizacion AS "fechaFinalizacion",
          COALESCE(cat.programa, pb.nombre) AS "programaBienestar",
@@ -55,7 +62,8 @@ const ASSISTANTS_QUERY = `
          a.estrategia_politica_bienestar AS "estrategiaBienestar",
          a.estrategia_politica_permanencia AS "estrategiaPermanencia",
          a.estrategia_politica_educacion_inclusiva AS "estrategiaInclusiva",
-         ta.nombre AS "tipoApoyo"
+         ta.nombre AS "tipoApoyo",
+         avp.id_tipos_apoyo AS "idTipoApoyo"
   FROM sat.actividades_vec a
   JOIN sat.actividades_vec_participantes avp
     ON avp.id_actividades_vec = a.id_actividades_vec
@@ -95,7 +103,8 @@ const ASSISTANTS_QUERY = `
     FROM sat.participantes_vec other_pv
     WHERE other_pv.id_personas = p.id
   ) roles ON TRUE
-  WHERE a.id_catalogo_actividades_vec = $1
+  WHERE a.estado <> 'CANCELADA'
+    AND a.id_catalogo_actividades_vec = $1
     AND ($2::uuid IS NULL OR a.id_periodos_academicos = $2)
     AND (
       $3::text IS NULL
@@ -108,7 +117,8 @@ const ASSISTANTS_QUERY = `
     )
     AND ($4::date IS NULL OR a.fecha_inicio = $4)
     AND ($5::date IS NULL OR a.fecha_finalizacion = $5)
-  ORDER BY a.fecha_inicio DESC NULLS LAST, "apellidosNombres", p.numero_identificacion`;
+  ORDER BY ta.numero NULLS LAST, LOWER(COALESCE(ta.nombre, '')),
+           "apellidosNombres", p.numero_identificacion, pv.tipo_participante`;
 
 router.use(identifyUser, requireModule("actividades"));
 
@@ -159,18 +169,52 @@ router.get("/actividades-disponibles", async (req, res, next) => {
   }
 });
 
-router.get("/apoyos/catalogo", async (_req, res, next) => {
+router.get("/eventos-proximos", async (_req, res, next) => {
   try {
     const { rows } = await query(
-      `SELECT DISTINCT
-              COALESCE(NULLIF(BTRIM(nombre_descuento), ''),
-                       NULLIF(BTRIM(concepto_descuento), ''),
-                       'Apoyo sin clasificar') AS nombre,
-              COALESCE(NULLIF(BTRIM(concepto_descuento), ''), '') AS concepto
-       FROM sat.apoyos_financieros
-       WHERE NULLIF(BTRIM(nombre_descuento), '') IS NOT NULL
-          OR NULLIF(BTRIM(concepto_descuento), '') IS NOT NULL
-       ORDER BY nombre, concepto`
+      `SELECT (ARRAY_AGG(a.id_actividades_vec ORDER BY a.creado_en, a.id_actividades_vec))[1] AS id,
+              cat.id_catalogo_actividades_vec AS "idCatalogoActividad",
+              a.id_periodos_academicos AS "idPeriodo",
+              pa.nombre AS periodo,
+              cat.actividad,
+              cat.descripcion,
+              (ARRAY_AGG(COALESCE(cat.tipo_actividad, a.tipo_actividad)
+                         ORDER BY a.creado_en, a.id_actividades_vec))[1] AS "tipoActividad",
+              COALESCE(cat.proyecto, (ARRAY_AGG(a.proyecto
+                         ORDER BY a.creado_en, a.id_actividades_vec))[1]) AS proyecto,
+              cat.programa,
+              cat.componente,
+              cat.linea_accion AS "lineaAccion",
+              cat.hoja_origen AS "hojaOrigen",
+              a.fecha_inicio AS "fechaInicio",
+              a.fecha_finalizacion AS "fechaFinalizacion",
+              (ARRAY_AGG(a.tipo_actividad_otra ORDER BY a.creado_en, a.id_actividades_vec))[1] AS "tipoActividadOtra",
+              (ARRAY_AGG(a.alianza_interinstitucional ORDER BY a.creado_en, a.id_actividades_vec))[1] AS "alianzaInterinstitucional",
+              (ARRAY_AGG(a.entidad_alianza ORDER BY a.creado_en, a.id_actividades_vec))[1] AS "entidadAlianza",
+              (ARRAY_AGG(a.articulacion_institucional ORDER BY a.creado_en, a.id_actividades_vec))[1] AS "articulacionInstitucional",
+              (ARRAY_AGG(a.id_dependencias ORDER BY a.creado_en, a.id_actividades_vec))[1] AS "idDependencia",
+              (ARRAY_AGG(a.dependencia_otra ORDER BY a.creado_en, a.id_actividades_vec))[1] AS "dependenciaOtra",
+              (ARRAY_AGG(a.modalidad ORDER BY a.creado_en, a.id_actividades_vec))[1] AS modalidad,
+              (ARRAY_AGG(a.ubicacion ORDER BY a.creado_en, a.id_actividades_vec))[1] AS ubicacion,
+              (ARRAY_AGG(a.estrategia_politica_bienestar ORDER BY a.creado_en, a.id_actividades_vec))[1] AS "estrategiaPoliticaBienestar",
+              (ARRAY_AGG(a.estrategia_politica_permanencia ORDER BY a.creado_en, a.id_actividades_vec))[1] AS "estrategiaPoliticaPermanencia",
+              (ARRAY_AGG(a.estrategia_politica_educacion_inclusiva ORDER BY a.creado_en, a.id_actividades_vec))[1] AS "estrategiaPoliticaEducacionInclusiva",
+              COUNT(DISTINCT avp.id_actividades_vec_participantes)::int AS "totalParticipantes"
+       FROM sat.actividades_vec a
+       JOIN sat.catalogo_actividades_vec cat
+         ON cat.id_catalogo_actividades_vec = a.id_catalogo_actividades_vec
+        AND cat.tipo_registro = 'ACTIVIDAD'
+       JOIN sat.periodos_academicos pa
+         ON pa.id_periodos_academicos = a.id_periodos_academicos
+       LEFT JOIN sat.actividades_vec_participantes avp
+         ON avp.id_actividades_vec = a.id_actividades_vec
+       WHERE a.estado <> 'CANCELADA'
+       GROUP BY cat.id_catalogo_actividades_vec, a.id_periodos_academicos, pa.nombre,
+                cat.actividad, cat.descripcion, cat.proyecto, cat.programa,
+                cat.componente, cat.linea_accion, cat.hoja_origen,
+                a.fecha_inicio, a.fecha_finalizacion
+       ORDER BY a.fecha_inicio, a.fecha_finalizacion, actividad
+       LIMIT 500`
     );
     res.json(rows);
   } catch (err) {
@@ -178,91 +222,273 @@ router.get("/apoyos/catalogo", async (_req, res, next) => {
   }
 });
 
-router.get("/apoyos/listado", async (req, res, next) => {
-  const nombreApoyo = String(req.query.nombreApoyo || "").trim();
-  const conceptoApoyo = String(req.query.conceptoApoyo || "").trim();
-  const idPeriodo = String(req.query.idPeriodo || "").trim() || null;
-  const busqueda = String(req.query.busqueda || "").trim() || null;
-  const pagina = Number(req.query.pagina || 0);
-  if (!nombreApoyo || nombreApoyo.length > 120 || conceptoApoyo.length > 120) {
-    return res.status(400).json({ error: "Selecciona un tipo de apoyo válido." });
+router.get("/eventos", async (req, res, next) => {
+  const estado = String(req.query.estado || "").trim().toUpperCase();
+  const busqueda = String(req.query.busqueda || "").trim();
+  if (estado && !ESTADOS_ACTIVIDAD.has(estado)) {
+    return res.status(400).json({ error: "Selecciona un estado de actividad válido." });
   }
-  if (idPeriodo && !UUID_PATTERN.test(idPeriodo)) {
-    return res.status(400).json({ error: "Selecciona un periodo válido." });
-  }
-  if (busqueda && busqueda.length > 100) {
-    return res.status(400).json({ error: "La búsqueda no puede superar 100 caracteres." });
-  }
-  if (!Number.isInteger(pagina) || pagina < 0 || pagina > 10000) {
-    return res.status(400).json({ error: "El número de página no es válido." });
-  }
-
   try {
     const { rows } = await query(
-      `WITH registros_apoyo AS (
-         SELECT e.id_estudiantes AS "idEstudiante",
-                COALESCE(per.numero_identificacion, e.numero_documento) AS identificacion,
-                BTRIM(COALESCE(
-                  NULLIF(BTRIM(CONCAT_WS(' ', per.primer_nombre, per.segundo_nombre)), ''),
-                  e.nombres
-                )) AS nombres,
-                BTRIM(COALESCE(
-                  NULLIF(BTRIM(CONCAT_WS(' ', per.primer_apellido, per.segundo_apellido)), ''),
-                  e.apellidos
-                )) AS apellidos,
-                e.codigo_externo AS codigo,
-                COALESCE(NULLIF(BTRIM(af.nombre_descuento), ''),
-                         NULLIF(BTRIM(af.concepto_descuento), ''),
-                         'Apoyo sin clasificar') AS "nombreApoyo",
-                COALESCE(NULLIF(BTRIM(af.concepto_descuento), ''), '') AS concepto,
-                pa.nombre AS periodo,
-                af.porcentaje_descuento AS porcentaje,
-                af.valor_descuento AS valor
-         FROM sat.apoyos_financieros af
-         JOIN sat.estudiantes e ON e.id_estudiantes = af.id_estudiantes
-         LEFT JOIN sat.personas per ON per.id = e.id_personas
-         LEFT JOIN sat.periodos_academicos pa
-           ON pa.id_periodos_academicos = af.id_periodos_academicos
-         WHERE COALESCE(NULLIF(BTRIM(af.nombre_descuento), ''),
-                        NULLIF(BTRIM(af.concepto_descuento), ''),
-                        'Apoyo sin clasificar') = $1
-           AND COALESCE(NULLIF(BTRIM(af.concepto_descuento), ''), '') = $2
-           AND ($3::uuid IS NULL OR af.id_periodos_academicos = $3)
-           AND (
-             $4::text IS NULL
-             OR POSITION(LOWER($4) IN LOWER(COALESCE(per.numero_identificacion, e.numero_documento, ''))) > 0
-             OR POSITION(LOWER($4) IN LOWER(BTRIM(CONCAT_WS(' ',
-                  COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', per.primer_apellido, per.segundo_apellido)), ''), e.apellidos),
-                  COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', per.primer_nombre, per.segundo_nombre)), ''), e.nombres))))) > 0
-             OR POSITION(LOWER($4) IN LOWER(COALESCE(e.codigo_externo, ''))) > 0
-           )
-       ),
-       estudiantes_apoyo AS (
-         SELECT "idEstudiante",
-                identificacion,
-                BTRIM(CONCAT_WS(' ', apellidos, nombres)) AS estudiante,
-                codigo,
-                STRING_AGG(DISTINCT periodo, ' · ' ORDER BY periodo)
-                  FILTER (WHERE periodo IS NOT NULL) AS periodos,
-                STRING_AGG(DISTINCT NULLIF(porcentaje::text, ''), ' · ' ORDER BY NULLIF(porcentaje::text, ''))
-                  FILTER (WHERE porcentaje IS NOT NULL) AS porcentajes,
-                STRING_AGG(DISTINCT NULLIF(valor::text, ''), ' · ' ORDER BY NULLIF(valor::text, ''))
-                  FILTER (WHERE valor IS NOT NULL) AS valores
-         FROM registros_apoyo
-         GROUP BY "idEstudiante", identificacion, apellidos, nombres, codigo
-       )
-       SELECT *, COUNT(*) OVER()::int AS total
-       FROM estudiantes_apoyo
-       ORDER BY estudiante, identificacion
-       LIMIT 100 OFFSET $5`,
-      [nombreApoyo, conceptoApoyo, idPeriodo, busqueda, pagina * 100]
+      `SELECT a.id_actividades_vec AS id,
+              a.id_periodos_academicos AS "idPeriodo",
+              pa.nombre AS periodo,
+              a.id_catalogo_actividades_vec AS "idCatalogoActividad",
+              COALESCE(cat.actividad, a.actividad) AS actividad,
+              COALESCE(a.descripcion_actividad, cat.descripcion) AS descripcion,
+              COALESCE(cat.proyecto, a.proyecto) AS proyecto,
+              COALESCE(cat.tipo_actividad, a.tipo_actividad) AS "tipoActividad",
+              a.modalidad,
+              a.ubicacion,
+              a.tipo_actividad_otra AS "tipoActividadOtra",
+              a.alianza_interinstitucional AS "alianzaInterinstitucional",
+              a.entidad_alianza AS "entidadAlianza",
+              a.articulacion_institucional AS "articulacionInstitucional",
+              a.id_dependencias AS "idDependencia",
+              a.dependencia_otra AS "dependenciaOtra",
+              a.estrategia_politica_bienestar AS "estrategiaPoliticaBienestar",
+              a.estrategia_politica_permanencia AS "estrategiaPoliticaPermanencia",
+              a.estrategia_politica_educacion_inclusiva AS "estrategiaPoliticaEducacionInclusiva",
+              a.fecha_inicio AS "fechaInicio",
+              a.fecha_finalizacion AS "fechaFinalizacion",
+              a.estado,
+              a.creado_en AS "creadoEn",
+              a.actualizado_en AS "actualizadoEn",
+              COUNT(DISTINCT avp.id_actividades_vec_participantes)::int AS "totalParticipantes"
+       FROM sat.actividades_vec a
+       JOIN sat.periodos_academicos pa ON pa.id_periodos_academicos = a.id_periodos_academicos
+       LEFT JOIN sat.catalogo_actividades_vec cat
+         ON cat.id_catalogo_actividades_vec = a.id_catalogo_actividades_vec
+        AND cat.tipo_registro = 'ACTIVIDAD'
+       LEFT JOIN sat.actividades_vec_participantes avp
+         ON avp.id_actividades_vec = a.id_actividades_vec
+       WHERE ($1::text = '' OR a.estado = $1)
+         AND ($2::text = '' OR COALESCE(cat.actividad, a.actividad) ILIKE '%' || $2 || '%'
+              OR COALESCE(cat.proyecto, a.proyecto) ILIKE '%' || $2 || '%'
+              OR pa.nombre ILIKE '%' || $2 || '%')
+       GROUP BY a.id_actividades_vec, pa.nombre, cat.actividad, cat.descripcion,
+                cat.proyecto, cat.tipo_actividad
+       ORDER BY a.fecha_inicio DESC, a.creado_en DESC
+       LIMIT 500`,
+      [estado, busqueda]
     );
-    res.json({
-      rows: rows.map(({ total, ...row }) => row),
-      total: rows[0]?.total || 0,
-      pagina,
-      limite: 100,
-    });
+    res.json(rows);
+  } catch (err) {
+    enviarErrorBaseDatos(err, res, next);
+  }
+});
+
+router.post("/eventos", requireRole("admin", "coordinador", "administrador"), async (req, res, next) => {
+  const activity = normalizarActividad(req.body || {});
+  const invalid = validarActividad(activity);
+  if (invalid) return res.status(400).json({ error: invalid });
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query("BEGIN");
+    const event = await crearActividadTransaccion(client, activity, req.user?.id);
+    await client.query("COMMIT");
+    res.status(201).json(event);
+  } catch (err) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    enviarErrorBaseDatos(err, res, next);
+  } finally {
+    client?.release();
+  }
+});
+
+router.put("/eventos/:id", requireRole("admin", "coordinador", "administrador"), async (req, res, next) => {
+  if (!UUID_PATTERN.test(String(req.params.id || ""))) return res.status(400).json({ error: "Identificador de actividad inválido." });
+  const activity = normalizarActividad(req.body || {});
+  const invalid = validarActividad(activity);
+  if (invalid) return res.status(400).json({ error: invalid });
+  if (activity.idEventoExistente && activity.idEventoExistente !== req.params.id) {
+    return res.status(400).json({ error: "El evento del formulario no coincide con la actividad que se desea editar." });
+  }
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query("BEGIN");
+    const { rows: catalogRows } = await client.query(
+      `SELECT id_catalogo_actividades_vec AS id, actividad, descripcion,
+              tipo_actividad AS tipo, proyecto,
+              bienestar.estrategia_politica_bienestar AS "estrategiaBienestar",
+              bienestar.estrategia_politica_permanencia AS "estrategiaPermanencia",
+              bienestar.estrategia_politica_educacion_inclusiva AS "estrategiaInclusiva",
+              (SELECT pb.id_programas_bienestar FROM sat.programas_bienestar pb
+               WHERE pb.activo = true AND LOWER(BTRIM(pb.nombre)) = LOWER(BTRIM(cat.programa))
+               ORDER BY pb.id_programas_bienestar LIMIT 1) AS "idProgramaBienestar"
+       FROM sat.catalogo_actividades_vec cat
+       LEFT JOIN sat.catalogo_bienestar_actividades bienestar
+         ON translate(LOWER(BTRIM(bienestar.programa)), 'áéíóúüñ', 'aeiouun') = translate(LOWER(BTRIM(cat.programa)), 'áéíóúüñ', 'aeiouun')
+       WHERE id_catalogo_actividades_vec = $1 AND tipo_registro = 'ACTIVIDAD'
+       FOR SHARE OF cat`,
+      [activity.idCatalogoActividad]
+    );
+    const catalog = catalogRows[0];
+    if (!catalog || !catalog.proyecto) throw Object.assign(new Error("La actividad del catálogo no existe o no tiene proyecto."), { status: 400 });
+    const { rows } = await client.query(
+      `UPDATE sat.actividades_vec SET
+         id_periodos_academicos=$2, id_catalogo_actividades_vec=$3,
+         actividad=$4, descripcion_actividad=$5, proyecto=$6, tipo_actividad=$7,
+         tipo_actividad_otra=$8, alianza_interinstitucional=$9, entidad_alianza=$10,
+         articulacion_institucional=$11, id_dependencias=$12, dependencia_otra=$13,
+         modalidad=$14, fecha_inicio=$15, fecha_finalizacion=$16,
+         id_programas_bienestar=$17, estrategia_politica_bienestar=COALESCE($18, estrategia_politica_bienestar),
+         estrategia_politica_permanencia=COALESCE($19, estrategia_politica_permanencia), estrategia_politica_educacion_inclusiva=COALESCE($20, estrategia_politica_educacion_inclusiva),
+         ubicacion=$21,
+         actualizado_en=now()
+       WHERE id_actividades_vec=$1
+       RETURNING id_actividades_vec AS id, estado`,
+      [req.params.id, activity.idPeriodo, catalog.id, catalog.actividad,
+        activity.descripcion || catalog.descripcion, catalog.proyecto, catalog.tipo, activity.tipoOtra,
+        activity.alianza, activity.entidadAlianza, activity.articulacion,
+        activity.idDependencia, activity.dependenciaOtra, activity.modalidad,
+        activity.fechaInicio, activity.fechaFinalizacion, catalog.idProgramaBienestar,
+        activity.estrategiaBienestar || catalog.estrategiaBienestar,
+        activity.estrategiaPermanencia || catalog.estrategiaPermanencia,
+        activity.estrategiaInclusiva || catalog.estrategiaInclusiva,
+        activity.ubicacion]
+    );
+    if (!rows[0]) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "No existe la actividad que se desea editar." });
+    }
+    await client.query(
+      `INSERT INTO sat.actividades_vec_auditoria (id_actividades_vec, accion, id_usuario, detalle)
+       VALUES ($1, 'EDITAR', $2, $3::jsonb)`,
+      [req.params.id, String(req.user?.id || ""), JSON.stringify(activity)]
+    );
+    await client.query("COMMIT");
+    res.json(rows[0]);
+  } catch (err) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    enviarErrorBaseDatos(err, res, next);
+  } finally {
+    client?.release();
+  }
+});
+
+router.patch("/eventos/:id/estado", requireRole("admin", "coordinador", "administrador"), async (req, res, next) => {
+  const id = String(req.params.id || "");
+  const estado = String(req.body?.estado || "").trim().toUpperCase();
+  if (!UUID_PATTERN.test(id)) return res.status(400).json({ error: "Identificador de actividad inválido." });
+  if (!ESTADOS_ACTIVIDAD.has(estado)) return res.status(400).json({ error: "Estado inválido." });
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `UPDATE sat.actividades_vec SET estado=$2, actualizado_en=now()
+       WHERE id_actividades_vec=$1 RETURNING id_actividades_vec AS id, estado`,
+      [id, estado]
+    );
+    if (!rows[0]) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "No existe la actividad indicada." });
+    }
+    await client.query(
+      `INSERT INTO sat.actividades_vec_auditoria (id_actividades_vec, accion, id_usuario, detalle)
+       VALUES ($1, 'CAMBIAR_ESTADO', $2, jsonb_build_object('estado', $3::text))`,
+      [id, String(req.user?.id || ""), estado]
+    );
+    await client.query("COMMIT");
+    res.json(rows[0]);
+  } catch (err) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    enviarErrorBaseDatos(err, res, next);
+  } finally {
+    client?.release();
+  }
+});
+
+router.get("/eventos/:id/participantes", async (req, res, next) => {
+  const id = String(req.params.id || "");
+  if (!UUID_PATTERN.test(id)) return res.status(400).json({ error: "Identificador de actividad inválido." });
+  try {
+    const attendeesQuery = ASSISTANTS_QUERY.replace("a.id_catalogo_actividades_vec = $1", "a.id_actividades_vec = $1");
+    const { rows } = await query(attendeesQuery, [id, null, null, null, null]);
+    res.json(rows);
+  } catch (err) {
+    enviarErrorBaseDatos(err, res, next);
+  }
+});
+
+router.patch("/inscripciones/:id/apoyo", requireRole("admin", "coordinador", "administrador"), async (req, res, next) => {
+  const id = String(req.params.id || "");
+  const idTipoApoyo = String(req.body?.idTipoApoyo || "").trim() || null;
+  const motivo = String(req.body?.motivo || "").trim();
+  if (!UUID_PATTERN.test(id)) return res.status(400).json({ error: "Inscripción no válida." });
+  if (idTipoApoyo && !UUID_PATTERN.test(idTipoApoyo)) return res.status(400).json({ error: "Selecciona un tipo de apoyo válido." });
+  if (motivo.length < 5 || motivo.length > 500) return res.status(400).json({ error: "Explica el motivo de la corrección (entre 5 y 500 caracteres)." });
+
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query("BEGIN");
+    if (idTipoApoyo) {
+      const { rows: supportRows } = await client.query(
+        "SELECT id_tipos_apoyo FROM sat.tipos_apoyo WHERE id_tipos_apoyo=$1 AND activo=true",
+        [idTipoApoyo]
+      );
+      if (!supportRows[0]) throw Object.assign(new Error("El tipo de apoyo no existe o está inactivo."), { status: 400 });
+    }
+    const { rows: currentRows } = await client.query(
+      `SELECT avp.id_tipos_apoyo AS anterior
+       FROM sat.actividades_vec_participantes avp
+       WHERE avp.id_actividades_vec_participantes=$1
+       FOR UPDATE`,
+      [id]
+    );
+    if (!currentRows[0]) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "No se encontró la inscripción." });
+    }
+    const anterior = currentRows[0].anterior;
+    if (String(anterior || "") === String(idTipoApoyo || "")) {
+      await client.query("COMMIT");
+      return res.json({ id, idTipoApoyo, sinCambios: true });
+    }
+    await client.query(
+      "UPDATE sat.actividades_vec_participantes SET id_tipos_apoyo=$2 WHERE id_actividades_vec_participantes=$1",
+      [id, idTipoApoyo]
+    );
+    await client.query(
+      `INSERT INTO sat.actividades_vec_participantes_auditoria
+         (id_actividades_vec_participantes, accion, id_usuario, detalle)
+       VALUES ($1, 'EDITAR_TIPO_APOYO', $2, $3::jsonb)`,
+      [id, String(req.user?.id || ""), JSON.stringify({ anterior, nuevo: idTipoApoyo, motivo })]
+    );
+    await client.query("COMMIT");
+    res.json({ id, idTipoApoyo, sinCambios: false });
+  } catch (err) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    enviarErrorBaseDatos(err, res, next);
+  } finally {
+    client?.release();
+  }
+});
+
+router.get("/inscripciones/:id/auditoria", requireRole("admin", "coordinador", "administrador"), async (req, res, next) => {
+  const id = String(req.params.id || "");
+  if (!UUID_PATTERN.test(id)) return res.status(400).json({ error: "Inscripción no válida." });
+  try {
+    const { rows } = await query(
+      `SELECT audit.id_auditoria AS id, audit.accion, audit.id_usuario AS "usuarioId",
+              audit.detalle, audit.creado_en AS "creadoEn",
+              COALESCE(anterior.nombre, 'Sin clasificar') AS "tipoAnterior",
+              COALESCE(nuevo.nombre, 'Sin clasificar') AS "tipoNuevo"
+       FROM sat.actividades_vec_participantes_auditoria audit
+       LEFT JOIN sat.tipos_apoyo anterior
+         ON anterior.id_tipos_apoyo = NULLIF(audit.detalle->>'anterior', '')::uuid
+       LEFT JOIN sat.tipos_apoyo nuevo
+         ON nuevo.id_tipos_apoyo = NULLIF(audit.detalle->>'nuevo', '')::uuid
+       WHERE audit.id_actividades_vec_participantes=$1
+       ORDER BY audit.creado_en DESC, audit.id_auditoria DESC`,
+      [id]
+    );
+    res.json(rows);
   } catch (err) {
     enviarErrorBaseDatos(err, res, next);
   }
@@ -300,13 +526,14 @@ router.get("/sesiones", async (req, res, next) => {
               a.fecha_finalizacion AS "fechaFinalizacion",
               COUNT(DISTINCT avp.id_actividades_vec_participantes)::int AS "totalInscritos",
               COUNT(DISTINCT avp.id_actividades_vec_participantes)
-                FILTER (WHERE avp.asistencia_verificada)::int AS "totalVerificados"
+                FILTER (WHERE COALESCE((to_jsonb(avp)->>'asistencia_verificada')::boolean, false))::int AS "totalVerificados"
        FROM sat.actividades_vec a
        JOIN sat.periodos_academicos pa
          ON pa.id_periodos_academicos = a.id_periodos_academicos
        LEFT JOIN sat.actividades_vec_participantes avp
          ON avp.id_actividades_vec = a.id_actividades_vec
        WHERE a.id_catalogo_actividades_vec = $1
+         AND a.estado <> 'CANCELADA'
          AND ($2::uuid IS NULL OR a.id_periodos_academicos = $2)
        GROUP BY a.id_periodos_academicos, pa.nombre, a.fecha_inicio, a.fecha_finalizacion
        ORDER BY a.fecha_inicio DESC, pa.nombre DESC, a.fecha_finalizacion DESC`,
@@ -405,7 +632,16 @@ router.get("/exportar-asistentes", async (req, res, next) => {
       assistantResult.rows,
       activity.periodo || "TODOS LOS PERIODOS",
     );
-    const filename = `asistentes-${slugArchivo(activity.actividad)}.xlsx`;
+    const scope = [
+      activity.periodo,
+      sesion.fechaInicio,
+      sesion.fechaFinalizacion,
+    ].filter(Boolean).map(slugArchivo).join("-");
+    const filename = [
+      "asistentes",
+      slugArchivo(activity.actividad),
+      scope,
+    ].filter(Boolean).join("-") + ".xlsx";
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.send(output);
@@ -417,20 +653,50 @@ router.get("/exportar-asistentes", async (req, res, next) => {
 router.get("/catalogo-maestro", async (req, res, next) => {
   try {
     const { rows } = await query(
-      `SELECT id_catalogo_actividades_vec AS id,
-              hoja_origen AS "hojaOrigen",
-              fila_origen AS "filaOrigen",
-              actividad,
-              descripcion,
-              tipo_actividad AS "tipoActividad",
-              proyecto,
-              programa,
-              componente,
-              linea_accion AS "lineaAccion"
-       FROM sat.catalogo_actividades_vec
-       WHERE tipo_registro = 'ACTIVIDAD'
-       ORDER BY linea_accion NULLS LAST, componente NULLS LAST,
-                programa NULLS LAST, proyecto NULLS LAST, actividad`,
+      `SELECT cat.id_catalogo_actividades_vec AS id,
+              cat.hoja_origen AS "hojaOrigen",
+              cat.fila_origen AS "filaOrigen",
+              cat.actividad,
+              cat.descripcion,
+              cat.tipo_actividad AS "tipoActividad",
+              cat.proyecto,
+              cat.programa,
+              cat.componente,
+              cat.linea_accion AS "lineaAccion",
+              bienestar.componente AS "componenteBienestar",
+              bienestar.linea_accion AS "lineaBienestar",
+              bienestar.estrategia_politica_bienestar AS "estrategiaPoliticaBienestar",
+              bienestar.estrategia_politica_permanencia AS "estrategiaPoliticaPermanencia",
+              bienestar.estrategia_politica_educacion_inclusiva AS "estrategiaPoliticaEducacionInclusiva",
+              COALESCE(apoyo_excel.id_tipos_apoyo, apoyo_sugerido.id_tipos_apoyo) AS "idTipoApoyoSugerido",
+              COALESCE(apoyo_excel.nombre, apoyo_sugerido.nombre) AS "rutaApoyoSugerida"
+       FROM sat.catalogo_actividades_vec cat
+       LEFT JOIN sat.catalogo_bienestar_actividades bienestar
+         ON translate(LOWER(BTRIM(bienestar.programa)), 'áéíóúüñ', 'aeiouun') = translate(LOWER(BTRIM(cat.programa)), 'áéíóúüñ', 'aeiouun')
+       LEFT JOIN LATERAL (
+         SELECT r.id_tipos_apoyo, r.nombre
+         FROM sat.rutas_remision r
+         LEFT JOIN sat.programas_bienestar pb ON pb.id_programas_bienestar = r.id_programas_bienestar
+         WHERE r.activo = true AND (
+           LOWER(BTRIM(r.nombre)) = LOWER(BTRIM(COALESCE(cat.proyecto, '')))
+           OR LOWER(BTRIM(r.nombre)) = LOWER(BTRIM(COALESCE(cat.actividad, '')))
+           OR LOWER(BTRIM(pb.nombre)) = LOWER(BTRIM(COALESCE(cat.programa, '')))
+         )
+         ORDER BY CASE WHEN LOWER(BTRIM(r.nombre)) IN (
+           LOWER(BTRIM(COALESCE(cat.proyecto, ''))), LOWER(BTRIM(COALESCE(cat.actividad, '')))
+         ) THEN 0 ELSE 1 END, r.id_rutas_remision
+         LIMIT 1
+       ) apoyo_sugerido ON true
+       LEFT JOIN LATERAL (
+         SELECT ta.id_tipos_apoyo, ta.nombre
+         FROM sat.tipos_apoyo ta
+         WHERE ta.activo = true AND ta.numero = bienestar.numero_tipo_apoyo
+         ORDER BY ta.id_tipos_apoyo
+         LIMIT 1
+       ) apoyo_excel ON true
+       WHERE cat.tipo_registro = 'ACTIVIDAD'
+       ORDER BY cat.linea_accion NULLS LAST, cat.componente NULLS LAST,
+                cat.programa NULLS LAST, cat.proyecto NULLS LAST, cat.actividad`,
       []
     );
     res.json(rows);
@@ -441,7 +707,7 @@ router.get("/catalogo-maestro", async (req, res, next) => {
 
 router.get("/catalogos-estudiante", async (req, res, next) => {
   try {
-    const [periodos, dependencias, tiposApoyo] = await Promise.all([
+    const [periodos, dependencias, tiposApoyo, generos, etnias, municipios] = await Promise.all([
       query(
         `SELECT id_periodos_academicos AS id, nombre, activo
          FROM sat.periodos_academicos
@@ -454,17 +720,396 @@ router.get("/catalogos-estudiante", async (req, res, next) => {
          ORDER BY nombre`
       ),
       query(
-        `SELECT id_tipos_apoyo AS id, nombre
+        `SELECT id_tipos_apoyo AS id, numero, nombre
          FROM sat.tipos_apoyo
          WHERE activo = true
          ORDER BY numero, nombre`
-      )
+      ),
+      query(
+        `SELECT DISTINCT BTRIM(valor) AS valor FROM (
+           SELECT genero AS valor FROM sat.personas
+           UNION ALL SELECT genero FROM sat.estudiantes
+         ) valores
+         WHERE NULLIF(BTRIM(valor), '') IS NOT NULL
+         ORDER BY valor`
+      ),
+      query(
+        `SELECT DISTINCT BTRIM(valor) AS valor FROM (
+           SELECT etnia AS valor FROM sat.participantes_vec
+           UNION ALL SELECT etnia FROM sat.estudiantes
+         ) valores
+         WHERE NULLIF(BTRIM(valor), '') IS NOT NULL
+         ORDER BY valor`
+      ),
+      query(
+        `SELECT DISTINCT BTRIM(valor) AS valor FROM (
+           SELECT municipio AS valor FROM sat.participantes_vec
+         ) valores
+         WHERE NULLIF(BTRIM(valor), '') IS NOT NULL
+         ORDER BY valor`
+      ),
     ]);
 
     res.json({
       periodos: periodos.rows,
       dependencias: dependencias.rows,
-      tiposApoyo: tiposApoyo.rows
+      tiposApoyo: tiposApoyo.rows,
+      generos: generos.rows.map((row) => row.valor),
+      etnias: etnias.rows.map((row) => row.valor),
+      municipios: municipios.rows.map((row) => row.valor)
+    });
+  } catch (err) {
+    enviarErrorBaseDatos(err, res, next);
+  }
+});
+
+router.get("/apoyos/todos", async (req, res, next) => {
+  const filtroTipo = String(req.query.tipoApoyo || "todos").trim();
+  const idTipoApoyo = filtroTipo.toLowerCase() === "todos" ? null : filtroTipo;
+  if (idTipoApoyo && !UUID_PATTERN.test(idTipoApoyo)) {
+    return res.status(400).json({ error: "Selecciona un tipo de apoyo vÃ¡lido." });
+  }
+  const requestedPage = Number.parseInt(req.query.pagina, 10);
+  const pagina = Number.isInteger(requestedPage) ? Math.max(requestedPage, 1) : 1;
+  const limite = 50;
+
+  try {
+    if (idTipoApoyo) {
+      const activeType = await query(
+        `SELECT id_tipos_apoyo FROM sat.tipos_apoyo WHERE id_tipos_apoyo = $1 AND activo = true`,
+        [idTipoApoyo]
+      );
+      if (!activeType.rows[0]) {
+        return res.status(404).json({ error: "El tipo de apoyo seleccionado no estÃ¡ activo." });
+      }
+    }
+
+    const [financieros, actividades, sinTipoApoyo] = await Promise.all([
+      query(
+        `SELECT e.id_estudiantes::text AS id,
+                e.id_personas::text AS "idPersona",
+                COALESCE(per.numero_identificacion, e.numero_documento) AS identificacion,
+                BTRIM(COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', per.primer_nombre, per.segundo_nombre)), ''), e.nombres)) AS nombres,
+                BTRIM(COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', per.primer_apellido, per.segundo_apellido)), ''), e.apellidos)) AS apellidos,
+                e.codigo_externo AS codigo,
+                ta.nombre AS "tipoApoyo",
+                STRING_AGG(DISTINCT COALESCE(NULLIF(BTRIM(af.nombre_descuento), ''), NULLIF(BTRIM(af.concepto_descuento), ''), 'Apoyo sin clasificar'), ' | '
+                  ORDER BY COALESCE(NULLIF(BTRIM(af.nombre_descuento), ''), NULLIF(BTRIM(af.concepto_descuento), ''), 'Apoyo sin clasificar')) AS apoyos,
+                STRING_AGG(DISTINCT pa.nombre, ' | ' ORDER BY pa.nombre)
+                  FILTER (WHERE pa.nombre IS NOT NULL) AS periodos,
+                STRING_AGG(DISTINCT NULLIF(af.porcentaje_descuento::text, ''), ' | '
+                  ORDER BY NULLIF(af.porcentaje_descuento::text, '')) FILTER (WHERE af.porcentaje_descuento IS NOT NULL) AS porcentajes,
+                STRING_AGG(DISTINCT NULLIF(af.valor_descuento::text, ''), ' | '
+                  ORDER BY NULLIF(af.valor_descuento::text, '')) FILTER (WHERE af.valor_descuento IS NOT NULL) AS valores,
+                COALESCE(
+                  (SELECT ARRAY_AGG(DISTINCT pv.tipo_participante ORDER BY pv.tipo_participante)
+                   FROM sat.participantes_vec pv
+                   WHERE pv.id_personas = e.id_personas),
+                  ARRAY['ESTUDIANTE']::text[]
+                ) AS roles,
+                COUNT(*)::int AS registros,
+                'Apoyo financiero'::text AS fuente,
+                'Registrado en beneficios financieros'::text AS "origenClasificacion"
+         FROM sat.apoyos_financieros af
+         JOIN sat.estudiantes e ON e.id_estudiantes = af.id_estudiantes
+         LEFT JOIN sat.personas per ON per.id = e.id_personas
+         LEFT JOIN sat.periodos_academicos pa ON pa.id_periodos_academicos = af.id_periodos_academicos
+         JOIN sat.tipos_apoyo ta ON ta.numero = $2 AND ta.activo = true
+         WHERE ($1::uuid IS NULL OR ta.id_tipos_apoyo = $1)
+         GROUP BY e.id_estudiantes, e.id_personas, per.numero_identificacion, e.numero_documento,
+                  per.primer_nombre, per.segundo_nombre, e.nombres,
+                  per.primer_apellido, per.segundo_apellido, e.apellidos, e.codigo_externo, ta.nombre`,
+        [idTipoApoyo, NUMERO_TIPO_BENEFICIOS_ECONOMICOS]
+      ),
+      query(
+        `SELECT avp.id_actividades_vec_participantes::text AS id,
+                p.id::text AS "idPersona",
+                p.numero_identificacion AS identificacion,
+                BTRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre)) AS nombres,
+                BTRIM(CONCAT_WS(' ', p.primer_apellido, p.segundo_apellido)) AS apellidos,
+                COALESCE(m.codigo_externo, e.codigo_externo, pv.codigo) AS codigo,
+                ta.nombre AS "tipoApoyo",
+                COALESCE(cat.actividad, a.actividad) AS apoyo,
+                pa.nombre AS periodo,
+                ARRAY(SELECT DISTINCT other_pv.tipo_participante
+                      FROM sat.participantes_vec other_pv
+                      WHERE other_pv.id_personas = p.id
+                      ORDER BY other_pv.tipo_participante) AS roles,
+                1::int AS registros,
+                'Actividad'::text AS fuente,
+                CASE
+                  WHEN avp.id_tipos_apoyo IS NOT NULL THEN 'Seleccionado al registrar la actividad'
+                  WHEN ruta.id_tipos_apoyo IS NOT NULL THEN 'Sugerido por coincidencia con una ruta institucional'
+                  ELSE 'Sin clasificar'
+                END AS "origenClasificacion"
+         FROM sat.actividades_vec_participantes avp
+         JOIN sat.participantes_vec pv ON pv.id_participantes_vec = avp.id_participantes_vec
+         JOIN sat.personas p ON p.id = pv.id_personas
+         JOIN sat.actividades_vec a ON a.id_actividades_vec = avp.id_actividades_vec
+         JOIN sat.periodos_academicos pa ON pa.id_periodos_academicos = a.id_periodos_academicos
+         LEFT JOIN sat.catalogo_actividades_vec cat
+           ON cat.id_catalogo_actividades_vec = a.id_catalogo_actividades_vec
+          AND cat.tipo_registro = 'ACTIVIDAD'
+         LEFT JOIN LATERAL (
+           SELECT r.id_tipos_apoyo
+           FROM sat.rutas_remision r
+           LEFT JOIN sat.programas_bienestar rp ON rp.id_programas_bienestar = r.id_programas_bienestar
+           WHERE r.activo = true AND (
+             LOWER(BTRIM(r.nombre)) = LOWER(BTRIM(COALESCE(cat.proyecto, a.proyecto, '')))
+             OR LOWER(BTRIM(r.nombre)) = LOWER(BTRIM(COALESCE(cat.actividad, a.actividad, '')))
+             OR LOWER(BTRIM(rp.nombre)) = LOWER(BTRIM(COALESCE(cat.programa, '')))
+           )
+           ORDER BY CASE WHEN LOWER(BTRIM(r.nombre)) IN (
+             LOWER(BTRIM(COALESCE(cat.proyecto, a.proyecto, ''))),
+             LOWER(BTRIM(COALESCE(cat.actividad, a.actividad, '')))
+           ) THEN 0 ELSE 1 END, r.id_rutas_remision
+           LIMIT 1
+         ) ruta ON TRUE
+         LEFT JOIN sat.tipos_apoyo ta ON ta.id_tipos_apoyo = COALESCE(avp.id_tipos_apoyo, ruta.id_tipos_apoyo)
+         LEFT JOIN LATERAL (
+           SELECT est.id_estudiantes, est.codigo_externo
+           FROM sat.estudiantes est
+           WHERE est.id_personas = p.id
+           ORDER BY est.id_estudiantes
+           LIMIT 1
+         ) e ON TRUE
+         LEFT JOIN LATERAL (
+           SELECT ma.codigo_externo
+           FROM sat.matriculas ma
+           WHERE ma.id_estudiantes = e.id_estudiantes
+           ORDER BY (UPPER(COALESCE(ma.estado, '')) = 'ACTIVA') DESC, ma.id_matriculas DESC
+           LIMIT 1
+         ) m ON TRUE
+         WHERE ($1::uuid IS NULL OR COALESCE(avp.id_tipos_apoyo, ruta.id_tipos_apoyo) = $1)
+         ORDER BY apellidos, nombres, identificacion, apoyo`,
+        [idTipoApoyo]
+      ),
+      query(
+        `SELECT COUNT(*)::int AS total
+         FROM sat.actividades_vec_participantes avp
+         WHERE avp.id_tipos_apoyo IS NULL`
+      ),
+    ]);
+
+    const rutas = idTipoApoyo
+      ? await query(
+        `SELECT r.id_rutas_remision AS id,
+                r.nombre,
+                p.nombre AS programa,
+                d.nombre AS dependencia,
+                r.profesional_responsable AS responsable,
+                r.observaciones AS observaciones
+         FROM sat.rutas_remision r
+         LEFT JOIN sat.programas_bienestar p ON p.id_programas_bienestar = r.id_programas_bienestar
+         LEFT JOIN sat.dependencias d ON d.id_dependencias = r.id_dependencias
+         WHERE r.id_tipos_apoyo = $1 AND r.activo = true
+         ORDER BY r.nombre, p.nombre`,
+        [idTipoApoyo]
+      )
+      : { rows: [] };
+
+    const personas = new Map();
+    const agregarRegistro = (registro) => {
+      const documento = String(registro.identificacion || "").toLocaleLowerCase("es").replace(/[^a-z0-9]/g, "");
+      const key = documento ? `documento:${documento}` : `persona:${registro.idPersona || registro.id}`;
+      let persona = personas.get(key);
+      if (!persona) {
+        persona = {
+          id: key,
+          identificacion: registro.identificacion,
+          nombres: registro.nombres,
+          apellidos: registro.apellidos,
+          codigo: registro.codigo,
+          tiposApoyo: new Set(),
+          roles: new Set(),
+          apoyos: new Set(),
+          periodos: new Set(),
+          fuentes: new Set(),
+          clasificaciones: new Set(),
+          porcentajes: new Set(),
+          valores: new Set(),
+          registros: 0,
+        };
+        personas.set(key, persona);
+      }
+      if (!persona.identificacion) persona.identificacion = registro.identificacion;
+      if (!persona.nombres) persona.nombres = registro.nombres;
+      if (!persona.apellidos) persona.apellidos = registro.apellidos;
+      if (!persona.codigo) persona.codigo = registro.codigo;
+      persona.tiposApoyo.add(registro.tipoApoyo || "Sin clasificar");
+      (registro.roles || []).filter(Boolean).forEach((rol) => persona.roles.add(rol));
+      [registro.apoyos, registro.apoyo].filter(Boolean).forEach((value) => {
+        String(value).split(" | ").filter(Boolean).forEach((apoyo) => persona.apoyos.add(apoyo));
+      });
+      [registro.periodos, registro.porcentajes, registro.valores].forEach((value, index) => {
+        if (!value) return;
+        String(value).split(" | ").filter(Boolean).forEach((item) => {
+          [persona.periodos, persona.porcentajes, persona.valores][index].add(item);
+        });
+      });
+      if (registro.fuente) persona.fuentes.add(registro.fuente);
+      if (registro.origenClasificacion) persona.clasificaciones.add(registro.origenClasificacion);
+      persona.registros += Number(registro.registros) || 1;
+    };
+    financieros.rows.forEach(agregarRegistro);
+    actividades.rows.forEach(agregarRegistro);
+
+    const todos = [...personas.values()]
+      .map((persona) => Object.fromEntries(Object.entries(persona).map(([key, value]) => (
+        [key, value instanceof Set ? [...value].sort((a, b) => a.localeCompare(b, "es")) : value]
+      ))))
+      .sort((a, b) => `${a.apellidos || ""} ${a.nombres || ""}`.localeCompare(`${b.apellidos || ""} ${b.nombres || ""}`, "es"));
+
+    res.json({
+      beneficiarios: todos.slice((pagina - 1) * limite, pagina * limite),
+      total: todos.length,
+      sinTipoApoyo: sinTipoApoyo.rows[0].total,
+      rutas: rutas.rows,
+      pagina,
+      limite,
+    });
+  } catch (err) {
+    enviarErrorBaseDatos(err, res, next);
+  }
+});
+
+router.get("/apoyos", async (req, res, next) => {
+  const idTipoApoyo = String(req.query.tipoApoyo || "").trim();
+  if (!UUID_PATTERN.test(idTipoApoyo)) {
+    return res.status(400).json({ error: "Selecciona un tipo de apoyo válido." });
+  }
+
+  const requestedPage = Number.parseInt(req.query.pagina, 10);
+  const pagina = Number.isInteger(requestedPage) ? Math.max(requestedPage, 1) : 1;
+  const limite = 50;
+  const offset = (pagina - 1) * limite;
+
+  try {
+    const tipoResult = await query(
+      `SELECT numero FROM sat.tipos_apoyo WHERE id_tipos_apoyo = $1 AND activo = true`,
+      [idTipoApoyo]
+    );
+    if (!tipoResult.rows[0]) {
+      return res.status(404).json({ error: "El tipo de apoyo seleccionado no está activo." });
+    }
+
+    const [beneficiarios, total, sinTipoApoyo, beneficiosEconomicos, rutas] = await Promise.all([
+      query(
+        `SELECT avp.id_actividades_vec_participantes AS id,
+                p.numero_identificacion AS identificacion,
+                BTRIM(CONCAT_WS(' ', p.primer_apellido, p.segundo_apellido,
+                                 p.primer_nombre, p.segundo_nombre)) AS "apellidosNombres",
+                pv.tipo_participante AS "rolParticipacion",
+                COALESCE(roles.roles, ARRAY[pv.tipo_participante]) AS roles,
+                COALESCE(cat.actividad, a.actividad) AS actividad,
+                COALESCE(cat.proyecto, a.proyecto) AS proyecto,
+                COALESCE(cat.programa, pb.nombre) AS "programaBienestar",
+                pa.nombre AS periodo,
+                a.fecha_inicio AS "fechaInicio",
+                a.fecha_finalizacion AS "fechaFinalizacion"
+         FROM sat.actividades_vec_participantes avp
+         JOIN sat.tipos_apoyo ta ON ta.id_tipos_apoyo = avp.id_tipos_apoyo
+         JOIN sat.participantes_vec pv ON pv.id_participantes_vec = avp.id_participantes_vec
+         JOIN sat.personas p ON p.id = pv.id_personas
+         JOIN sat.actividades_vec a ON a.id_actividades_vec = avp.id_actividades_vec
+         JOIN sat.periodos_academicos pa ON pa.id_periodos_academicos = a.id_periodos_academicos
+         LEFT JOIN sat.catalogo_actividades_vec cat
+           ON cat.id_catalogo_actividades_vec = a.id_catalogo_actividades_vec
+          AND cat.tipo_registro = 'ACTIVIDAD'
+         LEFT JOIN sat.programas_bienestar pb
+           ON pb.id_programas_bienestar = a.id_programas_bienestar
+         LEFT JOIN LATERAL (
+           SELECT ARRAY_AGG(DISTINCT other_pv.tipo_participante ORDER BY other_pv.tipo_participante) AS roles
+           FROM sat.participantes_vec other_pv
+           WHERE other_pv.id_personas = p.id
+         ) roles ON TRUE
+         WHERE avp.id_tipos_apoyo = $1
+         ORDER BY a.fecha_inicio DESC, a.fecha_finalizacion DESC,
+                  "apellidosNombres", p.numero_identificacion
+         LIMIT $2 OFFSET $3`,
+        [idTipoApoyo, limite, offset]
+      ),
+      query(
+        `SELECT COUNT(*)::int AS total
+         FROM sat.actividades_vec_participantes
+         WHERE id_tipos_apoyo = $1`,
+        [idTipoApoyo]
+      ),
+      query(
+        `SELECT COUNT(*)::int AS total
+         FROM sat.actividades_vec_participantes
+         WHERE id_tipos_apoyo IS NULL`
+      ),
+      // La tabla financiera no tiene FK a tipos_apoyo; estos registros corresponden
+      // a la categoría institucional de beneficios económicos.
+      tipoResult.rows[0].numero === NUMERO_TIPO_BENEFICIOS_ECONOMICOS
+        ? query(
+          `SELECT e.id_estudiantes AS id,
+                  COALESCE(per.numero_identificacion, e.numero_documento) AS identificacion,
+                  BTRIM(COALESCE(
+                    NULLIF(BTRIM(CONCAT_WS(' ', per.primer_apellido, per.segundo_apellido)), ''),
+                    e.apellidos
+                  )) AS apellidos,
+                  BTRIM(COALESCE(
+                    NULLIF(BTRIM(CONCAT_WS(' ', per.primer_nombre, per.segundo_nombre)), ''),
+                    e.nombres
+                  )) AS nombres,
+                  e.codigo_externo AS codigo,
+                  COUNT(*)::int AS registros,
+                  STRING_AGG(DISTINCT COALESCE(
+                    NULLIF(BTRIM(af.nombre_descuento), ''),
+                    NULLIF(BTRIM(af.concepto_descuento), ''),
+                    'Apoyo sin clasificar'
+                  ), ' · ' ORDER BY COALESCE(
+                    NULLIF(BTRIM(af.nombre_descuento), ''),
+                    NULLIF(BTRIM(af.concepto_descuento), ''),
+                    'Apoyo sin clasificar'
+                  )) AS apoyos,
+                  STRING_AGG(DISTINCT pa.nombre, ' · ' ORDER BY pa.nombre)
+                    FILTER (WHERE pa.nombre IS NOT NULL) AS periodos,
+                  STRING_AGG(DISTINCT NULLIF(af.porcentaje_descuento::text, ''), ' · '
+                    ORDER BY NULLIF(af.porcentaje_descuento::text, ''))
+                    FILTER (WHERE af.porcentaje_descuento IS NOT NULL) AS porcentajes,
+                  STRING_AGG(DISTINCT NULLIF(af.valor_descuento::text, ''), ' · '
+                    ORDER BY NULLIF(af.valor_descuento::text, ''))
+                    FILTER (WHERE af.valor_descuento IS NOT NULL) AS valores
+           FROM sat.apoyos_financieros af
+           JOIN sat.estudiantes e ON e.id_estudiantes = af.id_estudiantes
+           LEFT JOIN sat.personas per ON per.id = e.id_personas
+           LEFT JOIN sat.periodos_academicos pa
+             ON pa.id_periodos_academicos = af.id_periodos_academicos
+           GROUP BY e.id_estudiantes, per.numero_identificacion, e.numero_documento,
+                    per.primer_apellido, per.segundo_apellido, e.apellidos,
+                    per.primer_nombre, per.segundo_nombre, e.nombres, e.codigo_externo
+           ORDER BY apellidos, nombres, identificacion`
+        )
+        : Promise.resolve({ rows: [] }),
+      query(
+        `SELECT r.id_rutas_remision AS id,
+                r.nombre,
+                p.nombre AS programa,
+                d.nombre AS dependencia,
+                r.profesional_responsable AS responsable,
+                r.observaciones AS observaciones
+         FROM sat.rutas_remision r
+         LEFT JOIN sat.programas_bienestar p
+           ON p.id_programas_bienestar = r.id_programas_bienestar
+         LEFT JOIN sat.dependencias d
+           ON d.id_dependencias = r.id_dependencias
+         WHERE r.id_tipos_apoyo = $1 AND r.activo = true
+         ORDER BY r.nombre, p.nombre`,
+        [idTipoApoyo]
+      ),
+    ]);
+
+    res.json({
+      beneficiarios: beneficiarios.rows,
+      beneficiosEconomicos: beneficiosEconomicos.rows,
+      rutas: rutas.rows,
+      total: total.rows[0].total,
+      sinTipoApoyo: sinTipoApoyo.rows[0].total,
+      pagina,
+      limite,
     });
   } catch (err) {
     enviarErrorBaseDatos(err, res, next);
@@ -529,6 +1174,91 @@ router.get("/resumen", async (req, res, next) => {
   }
 });
 
+router.get("/personas/buscar", async (req, res, next) => {
+  const term = String(req.query.termino || "").trim();
+  if (term.length < 2 || term.length > 100) return res.status(400).json({ error: "Escribe al menos dos caracteres para buscar." });
+  try {
+    const { rows } = await query(
+      `SELECT p.id AS "idPersona", p.numero_identificacion AS identificacion,
+              BTRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre)) AS nombres,
+              BTRIM(CONCAT_WS(' ', p.primer_apellido, p.segundo_apellido)) AS apellidos,
+              COALESCE(e.codigo_externo, pv.codigo, d.codigo_externo) AS codigo,
+              COALESCE(roles.roles, ARRAY[]::varchar[]) AS roles
+       FROM sat.personas p
+       LEFT JOIN LATERAL (
+         SELECT e.codigo_externo FROM sat.estudiantes e
+         WHERE e.id_personas=p.id OR e.numero_documento=p.numero_identificacion
+         ORDER BY (e.id_personas=p.id) DESC NULLS LAST LIMIT 1
+       ) e ON true
+       LEFT JOIN LATERAL (
+         SELECT d.codigo_externo FROM sat.docentes d
+         WHERE d.id_personas=p.id OR d.numero_documento=p.numero_identificacion
+         ORDER BY d.activo DESC LIMIT 1
+       ) d ON true
+       LEFT JOIN LATERAL (
+         SELECT pv.codigo FROM sat.participantes_vec pv WHERE pv.id_personas=p.id ORDER BY pv.creado_en DESC LIMIT 1
+       ) pv ON true
+       LEFT JOIN LATERAL (
+         SELECT ARRAY_AGG(DISTINCT perfil.tipo_participante ORDER BY perfil.tipo_participante) AS roles
+         FROM (
+           SELECT tipo_participante FROM sat.participantes_vec WHERE id_personas=p.id
+           UNION SELECT 'ESTUDIANTE' WHERE EXISTS (SELECT 1 FROM sat.estudiantes st WHERE st.id_personas=p.id OR st.numero_documento=p.numero_identificacion)
+           UNION SELECT 'COLABORADOR' WHERE EXISTS (
+             SELECT 1 FROM sat.usuarios u LEFT JOIN sat.usuarios_roles ur ON ur.id_usuarios=u.id_usuarios
+             LEFT JOIN sat.roles r ON r.id_roles=ur.id_roles
+             WHERE (u.id_personas=p.id OR u.numero_documento=p.numero_identificacion)
+               AND u.activo=true AND u.eliminado_en IS NULL
+               AND (UPPER(BTRIM(COALESCE(r.nombre,''))) IN ('ADMIN','ADMINISTRADOR','COLABORADOR','DIRECTIVO','DOCENTE','PROFESIONAL')
+                    OR EXISTS (SELECT 1 FROM sat.docentes dt WHERE dt.id_usuarios=u.id_usuarios AND dt.activo=true))
+           )
+           UNION SELECT 'COLABORADOR' WHERE EXISTS (
+             SELECT 1 FROM sat.docentes dt WHERE (dt.id_personas=p.id OR dt.numero_documento=p.numero_identificacion) AND dt.activo=true
+           )
+         ) perfil
+       ) roles ON true
+       WHERE p.numero_identificacion ILIKE '%' || $1 || '%'
+          OR BTRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido)) ILIKE '%' || $1 || '%'
+          OR COALESCE(e.codigo_externo, pv.codigo, d.codigo_externo, '') ILIKE '%' || $1 || '%'
+       ORDER BY p.primer_apellido, p.primer_nombre
+       LIMIT 50`,
+      [term]
+    );
+    res.json(rows);
+  } catch (err) {
+    enviarErrorBaseDatos(err, res, next);
+  }
+});
+
+router.get("/historial/:identificacion", async (req, res, next) => {
+  const identification = String(req.params.identificacion || "").trim();
+  if (!identification || identification.length > MAX_IDENTIFICACION_LENGTH) return res.status(400).json({ error: "Documento inválido." });
+  try {
+    const { rows } = await query(
+      `SELECT a.id_actividades_vec AS "idActividad",
+              COALESCE(cat.actividad, a.actividad) AS actividad,
+              COALESCE(cat.proyecto, a.proyecto) AS proyecto,
+              pa.nombre AS periodo, a.fecha_inicio AS "fechaInicio",
+              a.fecha_finalizacion AS "fechaFinalizacion", a.estado,
+              pv.tipo_participante AS rol,
+              ta.nombre AS "tipoApoyo", avp.creado_en AS "fechaRegistro",
+              COALESCE((to_jsonb(avp)->>'asistencia_verificada')::boolean, false) AS "asistenciaVerificada"
+       FROM sat.personas p
+       JOIN sat.participantes_vec pv ON pv.id_personas=p.id
+       JOIN sat.actividades_vec_participantes avp ON avp.id_participantes_vec=pv.id_participantes_vec
+       JOIN sat.actividades_vec a ON a.id_actividades_vec=avp.id_actividades_vec
+       JOIN sat.periodos_academicos pa ON pa.id_periodos_academicos=a.id_periodos_academicos
+       LEFT JOIN sat.catalogo_actividades_vec cat ON cat.id_catalogo_actividades_vec=a.id_catalogo_actividades_vec
+       LEFT JOIN sat.tipos_apoyo ta ON ta.id_tipos_apoyo=avp.id_tipos_apoyo
+       WHERE p.numero_identificacion=$1
+       ORDER BY a.fecha_inicio DESC, avp.creado_en DESC`,
+      [identification]
+    );
+    res.json(rows);
+  } catch (err) {
+    enviarErrorBaseDatos(err, res, next);
+  }
+});
+
 router.get("/", async (req, res, next) => {
   const limitRequested = Number.parseInt(req.query.limite, 10);
   const limit = Number.isInteger(limitRequested) ? Math.min(Math.max(limitRequested, 1), 100) : 100;
@@ -585,8 +1315,15 @@ router.get("/buscar", async (req, res, next) => {
   }
 
   try {
-    const participante = await buscarParticipante(tipo, identificacion);
+    const participante = await buscarParticipante(tipo, identificacion)
+      || await buscarParticipanteEnPersonas(tipo, identificacion);
     if (participante) {
+      const datosComplementarios = await buscarDatosComplementariosPersona(participante.idPersona);
+      for (const [campo, valor] of Object.entries(datosComplementarios)) {
+        if (participante[campo] == null || participante[campo] === "") {
+          participante[campo] = valor;
+        }
+      }
       const { rows } = await query(
         `SELECT DISTINCT roles.rol
          FROM (
@@ -606,56 +1343,34 @@ router.get("/buscar", async (req, res, next) => {
            SELECT 'COLABORADOR'
            WHERE EXISTS (
              SELECT 1 FROM sat.usuarios u
+             JOIN sat.usuarios_roles ur ON ur.id_usuarios = u.id_usuarios
+             JOIN sat.roles rol ON rol.id_roles = ur.id_roles
              WHERE u.activo = true AND u.eliminado_en IS NULL
+               AND UPPER(BTRIM(rol.nombre)) IN (
+                 'ADMIN', 'ADMINISTRADOR', 'COLABORADOR', 'DIRECTIVO', 'DOCENTE', 'PROFESIONAL'
+               )
                AND (($1::bigint IS NOT NULL AND u.id_personas = $1::bigint)
                  OR ($2::text IS NOT NULL AND u.numero_documento = $2))
+           )
+           UNION
+           SELECT 'COLABORADOR'
+           WHERE EXISTS (
+             SELECT 1 FROM sat.docentes d
+             WHERE d.activo = true
+               AND (($1::bigint IS NOT NULL AND d.id_personas = $1::bigint)
+                 OR ($2::text IS NOT NULL AND d.numero_documento = $2))
            )
          ) roles
          ORDER BY roles.rol`,
         [participante.idPersona, identificacion]
       );
       participante.roles = rows.map((row) => row.rol);
+      participante.rolesVerificados = await obtenerRolesVerificados(
+        query,
+        participante.idPersona,
+        identificacion,
+      );
       return res.json({ encontrado: true, participante });
-    }
-
-    const estudiantePrueba = tipo === "ESTUDIANTE"
-      ? MOCK_DATA.estudiantes.find(
-        (student) => student.documento === identificacion || student.codigo === identificacion
-      )
-      : null;
-    if (estudiantePrueba) {
-      return res.json({
-        encontrado: true,
-        participante: {
-          id: null,
-          idPersona: null,
-          tipo: "ESTUDIANTE",
-          roles: ["ESTUDIANTE"],
-          identificacion: estudiantePrueba.documento,
-          tipoDocumento: "",
-          nombres: estudiantePrueba.nombres,
-          apellidos: estudiantePrueba.apellidos,
-          codigo: estudiantePrueba.codigo,
-          programaAcademico: estudiantePrueba.programa,
-          programaPosgradoDependencia: "",
-          semestre: estudiantePrueba.semestre ?? "",
-          jornada: "",
-          dependencia: "",
-          cargo: "",
-          fechaNacimiento: "",
-          fechaEgreso: "",
-          correo: estudiantePrueba.email || "",
-          contacto: estudiantePrueba.telefono || "",
-          genero: "",
-          etnia: "",
-          municipio: "",
-          discapacidad: "",
-          conflictoArmado: "",
-          yaRegistrado: false,
-          soloDemostracion: true,
-          fuente: "Datos de prueba del proyecto (MOCK_DATA)"
-        }
-      });
     }
 
     return res.json({ encontrado: false, tipo, identificacion });
@@ -669,6 +1384,163 @@ router.post("/registro-estudiante", (req, res, next) => (
 ));
 
 router.post("/registro-actividad", (req, res, next) => registrarActividad(req, res, next));
+
+export async function crearActividadTransaccion(client, activity, userId) {
+  const { rows: catalogRows } = await client.query(
+    `SELECT id_catalogo_actividades_vec AS id, actividad, descripcion,
+            tipo_actividad AS tipo, proyecto,
+            bienestar.estrategia_politica_bienestar AS "estrategiaBienestar",
+            bienestar.estrategia_politica_permanencia AS "estrategiaPermanencia",
+            bienestar.estrategia_politica_educacion_inclusiva AS "estrategiaInclusiva",
+            (SELECT pb.id_programas_bienestar FROM sat.programas_bienestar pb
+             WHERE pb.activo=true AND LOWER(BTRIM(pb.nombre))=LOWER(BTRIM(cat.programa))
+             ORDER BY pb.id_programas_bienestar LIMIT 1) AS "idProgramaBienestar"
+     FROM sat.catalogo_actividades_vec cat
+     LEFT JOIN sat.catalogo_bienestar_actividades bienestar
+       ON translate(LOWER(BTRIM(bienestar.programa)), 'áéíóúüñ', 'aeiouun') = translate(LOWER(BTRIM(cat.programa)), 'áéíóúüñ', 'aeiouun')
+     WHERE id_catalogo_actividades_vec=$1 AND tipo_registro='ACTIVIDAD'
+     FOR SHARE OF cat`,
+    [activity.idCatalogoActividad]
+  );
+  const catalog = catalogRows[0];
+  if (!catalog || !catalog.proyecto) {
+    throw Object.assign(new Error("La actividad del catálogo no existe o no tiene proyecto registrado."), { status: 400 });
+  }
+  const { rows } = await client.query(
+    `INSERT INTO sat.actividades_vec (
+       id_periodos_academicos, id_catalogo_actividades_vec, actividad,
+       descripcion_actividad, proyecto, tipo_actividad, tipo_actividad_otra,
+       alianza_interinstitucional, entidad_alianza, articulacion_institucional,
+       id_dependencias, dependencia_otra, modalidad, fecha_inicio, fecha_finalizacion,
+       id_programas_bienestar, estrategia_politica_bienestar,
+       estrategia_politica_permanencia, estrategia_politica_educacion_inclusiva, ubicacion
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+     RETURNING id_actividades_vec AS id, estado`,
+    [activity.idPeriodo, catalog.id, catalog.actividad, catalog.descripcion,
+      catalog.proyecto, catalog.tipo, activity.tipoOtra, activity.alianza,
+      activity.entidadAlianza, activity.articulacion, activity.idDependencia,
+      activity.dependenciaOtra, activity.modalidad, activity.fechaInicio,
+      activity.fechaFinalizacion, catalog.idProgramaBienestar,
+      activity.estrategiaBienestar || catalog.estrategiaBienestar,
+      activity.estrategiaPermanencia || catalog.estrategiaPermanencia,
+      activity.estrategiaInclusiva || catalog.estrategiaInclusiva,
+      activity.ubicacion]
+  );
+  await client.query(
+    `INSERT INTO sat.actividades_vec_auditoria (id_actividades_vec, accion, id_usuario, detalle)
+     VALUES ($1, 'CREAR', $2, $3::jsonb)`,
+    [rows[0].id, String(userId || ""), JSON.stringify(activity)]
+  );
+  return rows[0];
+}
+
+async function guardarPerfilDeActividad(client, participante) {
+  await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [participante.identificacion]);
+  let persona = await buscarPersonaPorIdentificacion(client, participante.identificacion);
+  if (!persona) persona = await buscarPersonaFuente(client, participante.identificacion);
+  let personaNueva = false;
+  if (!persona) {
+    const nombre = dividirNombre(participante.nombres);
+    const apellidos = dividirNombre(participante.apellidos);
+    const { rows } = await client.query(
+      `INSERT INTO sat.personas (
+         numero_identificacion, primer_nombre, segundo_nombre, primer_apellido,
+         segundo_apellido, genero, fecha_nacimiento, correo_electronico,
+         correo_institucional, celular, telefono
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       ON CONFLICT (numero_identificacion) DO NOTHING RETURNING id`,
+      [participante.identificacion, nombre.primero, nombre.segundo,
+        apellidos.primero, apellidos.segundo, participante.genero,
+        participante.fechaNacimiento, participante.correo, participante.correoInstitucional,
+        participante.celular, participante.telefono]
+    );
+    personaNueva = Boolean(rows[0]);
+    persona = rows[0] || await buscarPersonaPorIdentificacion(client, participante.identificacion);
+  }
+  if (!persona?.id) throw Object.assign(new Error("No se pudo resolver la persona en sat.personas."), { status: 409 });
+
+  await vincularFuentesExistentes(client, persona.id, participante.identificacion);
+
+  const names = dividirNombre(participante.nombres);
+  const surnames = dividirNombre(participante.apellidos);
+  await client.query(
+    `UPDATE sat.personas SET
+       primer_nombre=COALESCE(NULLIF(primer_nombre,''), $2),
+       segundo_nombre=COALESCE(NULLIF(segundo_nombre,''), $3),
+       primer_apellido=COALESCE(NULLIF(primer_apellido,''), $4),
+       segundo_apellido=COALESCE(NULLIF(segundo_apellido,''), $5),
+       genero=COALESCE(NULLIF(genero,''), $6),
+       fecha_nacimiento=COALESCE(fecha_nacimiento, $7),
+       correo_electronico=COALESCE(NULLIF(correo_electronico,''), $8),
+       correo_institucional=COALESCE(NULLIF(correo_institucional,''), $9),
+       celular=COALESCE(NULLIF(celular,''), $10),
+       telefono=COALESCE(NULLIF(telefono,''), $11)
+     WHERE id=$1`,
+    [persona.id, names.primero, names.segundo, surnames.primero, surnames.segundo,
+      participante.genero, participante.fechaNacimiento, participante.correo,
+      participante.correoInstitucional, participante.celular, participante.telefono]
+  );
+
+  const rolesVerificados = await obtenerRolesVerificados(client, persona.id, participante.identificacion);
+
+  // Reutilizar el perfil existente y completar los datos aportados sin reemplazar
+  // información institucional ya registrada.
+  const { rows: profiles } = await client.query(
+    `INSERT INTO sat.participantes_vec (
+       id_personas, tipo_participante, detalle_tipo_participante, tipo_documento, codigo, programa_academico,
+       programa_posgrado_dependencia, semestre, jornada, dependencia, cargo,
+       fecha_egreso, etnia, municipio, discapacidad, conflicto_armado
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+     ON CONFLICT (id_personas, tipo_participante) DO UPDATE SET
+       detalle_tipo_participante=COALESCE(EXCLUDED.detalle_tipo_participante, sat.participantes_vec.detalle_tipo_participante),
+       tipo_documento=COALESCE(EXCLUDED.tipo_documento, sat.participantes_vec.tipo_documento),
+       codigo=COALESCE(EXCLUDED.codigo, sat.participantes_vec.codigo),
+       programa_academico=COALESCE(EXCLUDED.programa_academico, sat.participantes_vec.programa_academico),
+       programa_posgrado_dependencia=COALESCE(EXCLUDED.programa_posgrado_dependencia, sat.participantes_vec.programa_posgrado_dependencia),
+       semestre=COALESCE(EXCLUDED.semestre, sat.participantes_vec.semestre),
+       jornada=COALESCE(EXCLUDED.jornada, sat.participantes_vec.jornada),
+       dependencia=COALESCE(EXCLUDED.dependencia, sat.participantes_vec.dependencia),
+       cargo=COALESCE(EXCLUDED.cargo, sat.participantes_vec.cargo),
+       fecha_egreso=COALESCE(EXCLUDED.fecha_egreso, sat.participantes_vec.fecha_egreso),
+       etnia=COALESCE(EXCLUDED.etnia, sat.participantes_vec.etnia),
+       municipio=COALESCE(EXCLUDED.municipio, sat.participantes_vec.municipio),
+       discapacidad=COALESCE(EXCLUDED.discapacidad, sat.participantes_vec.discapacidad),
+       conflicto_armado=COALESCE(EXCLUDED.conflicto_armado, sat.participantes_vec.conflicto_armado),
+       actualizado_en=now()
+     RETURNING id_participantes_vec AS id`,
+    [persona.id, participante.tipo, participante.detalleTipoParticipante, participante.tipoDocumento, participante.codigo,
+      participante.programaAcademico, participante.programaPosgradoDependencia,
+      participante.semestre, participante.jornada, participante.dependencia,
+      participante.cargo, participante.fechaEgreso, participante.etnia,
+      participante.municipio, participante.discapacidad, participante.conflictoArmado]
+  );
+  return { idPersona: persona.id, idParticipante: profiles[0].id, personaNueva, rolesVerificados };
+}
+
+async function vincularFuentesExistentes(client, idPersona, identificacion) {
+  await client.query(`UPDATE sat.estudiantes SET id_personas=$1 WHERE numero_documento=$2 AND id_personas IS NULL`, [idPersona, identificacion]);
+  await client.query(`UPDATE sat.usuarios SET id_personas=$1 WHERE numero_documento=$2 AND id_personas IS NULL`, [idPersona, identificacion]);
+  await client.query(`UPDATE sat.docentes SET id_personas=$1 WHERE numero_documento=$2 AND id_personas IS NULL`, [idPersona, identificacion]);
+}
+
+export async function agregarPersonaAEvento(client, idActividad, participante, idTipoApoyo) {
+  const { rows: eventRows } = await client.query(
+    `SELECT id_actividades_vec, estado FROM sat.actividades_vec
+     WHERE id_actividades_vec=$1 FOR UPDATE`,
+    [idActividad]
+  );
+  if (!eventRows[0]) throw Object.assign(new Error("La actividad seleccionada no existe."), { status: 404 });
+  if (eventRows[0].estado === "CANCELADA") throw Object.assign(new Error("No se pueden agregar personas a una actividad cancelada."), { status: 409 });
+  const profile = await guardarPerfilDeActividad(client, participante);
+  const { rows } = await client.query(
+    `INSERT INTO sat.actividades_vec_participantes (id_actividades_vec, id_participantes_vec, id_tipos_apoyo)
+     VALUES ($1,$2,$3)
+     ON CONFLICT (id_actividades_vec, id_participantes_vec) DO NOTHING
+     RETURNING id_actividades_vec_participantes AS id`,
+    [idActividad, profile.idParticipante, idTipoApoyo || null]
+  );
+  return { ...profile, idInscripcion: rows[0]?.id || null, yaInscrito: !rows[0] };
+}
 
 async function registrarActividad(req, res, next, tipoForzado = null) {
   const participante = normalizarEntrada({
@@ -687,13 +1559,24 @@ async function registrarActividad(req, res, next, tipoForzado = null) {
     client = await pool.connect();
     await client.query("BEGIN");
     const { rows: catalogoRows } = await client.query(
-      `SELECT id_catalogo_actividades_vec AS id,
-              actividad, descripcion, tipo_actividad AS tipo, proyecto,
-              programa, componente, linea_accion
-       FROM sat.catalogo_actividades_vec
-       WHERE id_catalogo_actividades_vec = $1
-         AND tipo_registro = 'ACTIVIDAD'
-       FOR SHARE`,
+    `SELECT cat.id_catalogo_actividades_vec AS id,
+              cat.actividad, cat.descripcion, cat.tipo_actividad AS tipo, cat.proyecto,
+              bienestar.estrategia_politica_bienestar AS "estrategiaBienestar",
+              bienestar.estrategia_politica_permanencia AS "estrategiaPermanencia",
+              bienestar.estrategia_politica_educacion_inclusiva AS "estrategiaInclusiva",
+              cat.programa, cat.componente, cat.linea_accion,
+              (SELECT pb.id_programas_bienestar
+               FROM sat.programas_bienestar pb
+               WHERE pb.activo = true
+                 AND LOWER(BTRIM(pb.nombre)) = LOWER(BTRIM(cat.programa))
+               ORDER BY pb.id_programas_bienestar
+               LIMIT 1) AS "idProgramaBienestar"
+       FROM sat.catalogo_actividades_vec cat
+       LEFT JOIN sat.catalogo_bienestar_actividades bienestar
+         ON translate(LOWER(BTRIM(bienestar.programa)), 'áéíóúüñ', 'aeiouun') = translate(LOWER(BTRIM(cat.programa)), 'áéíóúüñ', 'aeiouun')
+       WHERE cat.id_catalogo_actividades_vec = $1
+         AND cat.tipo_registro = 'ACTIVIDAD'
+       FOR SHARE OF cat`,
       [actividad.idCatalogoActividad]
     );
     const actividadCatalogada = catalogoRows[0];
@@ -704,6 +1587,43 @@ async function registrarActividad(req, res, next, tipoForzado = null) {
     if (!actividadCatalogada.proyecto) {
       await client.query("ROLLBACK");
       return res.status(409).json({ error: "La actividad seleccionada no tiene proyecto registrado en el catálogo." });
+    }
+    if (actividad.idEventoExistente) {
+      const { rows: eventoRows } = await client.query(
+        `SELECT id_actividades_vec
+         FROM sat.actividades_vec
+         WHERE id_actividades_vec = $1
+           AND id_catalogo_actividades_vec = $2
+           AND id_periodos_academicos = $3
+           AND fecha_inicio = $4
+           AND fecha_finalizacion = $5
+           AND estado <> 'CANCELADA'
+         FOR SHARE`,
+        [
+          actividad.idEventoExistente,
+          actividad.idCatalogoActividad,
+          actividad.idPeriodo,
+          actividad.fechaInicio,
+          actividad.fechaFinalizacion,
+        ]
+      );
+      if (!eventoRows[0]) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          error: "El evento seleccionado ya no está disponible. Actualiza la lista y selecciona una jornada próxima.",
+        });
+      }
+    } else {
+      const { rows: fechas } = await client.query(
+        "SELECT $1::date < CURRENT_DATE AS finalizada",
+        [actividad.fechaFinalizacion]
+      );
+      if (fechas[0].finalizada) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          error: "No se pueden programar nuevas jornadas con fecha de finalización pasada.",
+        });
+      }
     }
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [participante.identificacion]);
 
@@ -732,6 +1652,7 @@ async function registrarActividad(req, res, next, tipoForzado = null) {
     if (!persona?.id) {
       throw Object.assign(new Error("No se pudo resolver el estudiante en la base de datos."), { status: 409 });
     }
+    await vincularFuentesExistentes(client, persona.id, participante.identificacion);
 
     let idParticipante;
     const { rows: participantesExistentes } = await client.query(
@@ -746,6 +1667,7 @@ async function registrarActividad(req, res, next, tipoForzado = null) {
       await client.query(
         `UPDATE sat.participantes_vec
          SET tipo_documento = COALESCE(NULLIF($2, ''), NULLIF(tipo_documento, '')),
+             detalle_tipo_participante = COALESCE(NULLIF(detalle_tipo_participante, ''), $15),
              codigo = COALESCE(NULLIF(codigo, ''), $3),
              programa_academico = COALESCE(NULLIF(programa_academico, ''), $4),
              programa_posgrado_dependencia = COALESCE(NULLIF(programa_posgrado_dependencia, ''), $5),
@@ -766,19 +1688,20 @@ async function registrarActividad(req, res, next, tipoForzado = null) {
           participante.semestre, participante.jornada, participante.etnia,
           participante.municipio, participante.discapacidad, participante.conflictoArmado,
           participante.dependencia, participante.cargo, participante.fechaEgreso,
+          participante.detalleTipoParticipante,
         ]
       );
     } else {
       const { rows } = await client.query(
         `INSERT INTO sat.participantes_vec (
-           id_personas, tipo_participante, tipo_documento, codigo,
+           id_personas, tipo_participante, detalle_tipo_participante, tipo_documento, codigo,
            programa_academico, programa_posgrado_dependencia, semestre,
            jornada, etnia, municipio, discapacidad, conflicto_armado,
            dependencia, cargo, fecha_egreso
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
          RETURNING id_participantes_vec`,
         [
-          persona.id, participante.tipo, participante.tipoDocumento, participante.codigo,
+          persona.id, participante.tipo, participante.detalleTipoParticipante, participante.tipoDocumento, participante.codigo,
           participante.programaAcademico, participante.programaPosgradoDependencia,
           participante.semestre, participante.jornada, participante.etnia,
           participante.municipio, participante.discapacidad, participante.conflictoArmado,
@@ -793,19 +1716,41 @@ async function registrarActividad(req, res, next, tipoForzado = null) {
       actividad.idPeriodo,
       actividad.fechaInicio,
       actividad.fechaFinalizacion,
-      persona.id,
     ].join(":");
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [sesionLock]);
+    let idActividad = actividad.idEventoExistente;
+    if (!idActividad) {
+      const { rows: existingSessions } = await client.query(
+        `SELECT id_actividades_vec
+         FROM sat.actividades_vec
+         WHERE id_catalogo_actividades_vec = $1
+           AND id_periodos_academicos = $2
+           AND fecha_inicio = $3
+           AND fecha_finalizacion = $4
+         ORDER BY creado_en
+         LIMIT 1
+         FOR UPDATE`,
+        [
+          actividad.idCatalogoActividad,
+          actividad.idPeriodo,
+          actividad.fechaInicio,
+          actividad.fechaFinalizacion,
+        ]
+      );
+      idActividad = existingSessions[0]?.id_actividades_vec || null;
+    }
     const { rowCount: yaVinculada } = await client.query(
       `SELECT 1
        FROM sat.actividades_vec_participantes avp
-       JOIN sat.actividades_vec a ON a.id_actividades_vec = avp.id_actividades_vec
+       JOIN sat.actividades_vec a
+         ON a.id_actividades_vec = avp.id_actividades_vec
        JOIN sat.participantes_vec pv ON pv.id_participantes_vec = avp.id_participantes_vec
        WHERE pv.id_personas = $1
          AND a.id_catalogo_actividades_vec = $2
          AND a.id_periodos_academicos = $3
          AND a.fecha_inicio = $4
          AND a.fecha_finalizacion = $5
+         AND pv.tipo_participante = $6
        LIMIT 1`,
       [
         persona.id,
@@ -813,6 +1758,7 @@ async function registrarActividad(req, res, next, tipoForzado = null) {
         actividad.idPeriodo,
         actividad.fechaInicio,
         actividad.fechaFinalizacion,
+        participante.tipo,
       ]
     );
     if (yaVinculada) {
@@ -822,32 +1768,37 @@ async function registrarActividad(req, res, next, tipoForzado = null) {
       });
     }
 
-    const { rows: actividades } = await client.query(
-      `INSERT INTO sat.actividades_vec (
-         id_periodos_academicos, id_catalogo_actividades_vec,
-         actividad, descripcion_actividad, proyecto,
-         tipo_actividad, tipo_actividad_otra, alianza_interinstitucional,
-         entidad_alianza, articulacion_institucional, id_dependencias,
-         dependencia_otra, modalidad, fecha_inicio, fecha_finalizacion,
-         id_programas_bienestar, estrategia_politica_bienestar,
-         estrategia_politica_permanencia, estrategia_politica_educacion_inclusiva
-       ) VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-         $13, $14, $15, NULL, $16, $17, $18
-       )
-       RETURNING id_actividades_vec`,
-      [
-        actividad.idPeriodo, actividadCatalogada.id,
-        actividadCatalogada.actividad, actividadCatalogada.descripcion,
-        actividadCatalogada.proyecto, actividadCatalogada.tipo, actividad.tipoOtra,
-        actividad.alianza, actividad.entidadAlianza, actividad.articulacion,
-        actividad.idDependencia, actividad.dependenciaOtra, actividad.modalidad,
-        actividad.fechaInicio, actividad.fechaFinalizacion,
-        actividad.estrategiaBienestar,
-        actividad.estrategiaPermanencia, actividad.estrategiaInclusiva
-      ]
-    );
-    const idActividad = actividades[0].id_actividades_vec;
+    if (!idActividad) {
+      const { rows: actividades } = await client.query(
+        `INSERT INTO sat.actividades_vec (
+           id_periodos_academicos, id_catalogo_actividades_vec,
+           actividad, descripcion_actividad, proyecto,
+           tipo_actividad, tipo_actividad_otra, alianza_interinstitucional,
+           entidad_alianza, articulacion_institucional, id_dependencias,
+           dependencia_otra, modalidad, fecha_inicio, fecha_finalizacion,
+           id_programas_bienestar, estrategia_politica_bienestar,
+           estrategia_politica_permanencia, estrategia_politica_educacion_inclusiva,
+           ubicacion
+         ) VALUES (
+           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+           $13, $14, $15, $16, $17, $18, $19, $20
+         )
+         RETURNING id_actividades_vec`,
+        [
+          actividad.idPeriodo, actividadCatalogada.id,
+          actividadCatalogada.actividad, actividad.descripcion || actividadCatalogada.descripcion,
+          actividadCatalogada.proyecto, actividadCatalogada.tipo, actividad.tipoOtra,
+          actividad.alianza, actividad.entidadAlianza, actividad.articulacion,
+          actividad.idDependencia, actividad.dependenciaOtra, actividad.modalidad,
+          actividad.fechaInicio, actividad.fechaFinalizacion, actividadCatalogada.idProgramaBienestar,
+          actividad.estrategiaBienestar || actividadCatalogada.estrategiaBienestar,
+          actividad.estrategiaPermanencia || actividadCatalogada.estrategiaPermanencia,
+          actividad.estrategiaInclusiva || actividadCatalogada.estrategiaInclusiva,
+          actividad.ubicacion
+        ]
+      );
+      idActividad = actividades[0].id_actividades_vec;
+    }
 
     const { rows: registro } = await client.query(
       `INSERT INTO sat.actividades_vec_participantes (
@@ -916,6 +1867,7 @@ router.post("/", async (req, res, next) => {
     if (!persona?.id) {
       throw Object.assign(new Error("No se pudo resolver la persona en la base de datos."), { status: 409 });
     }
+    await vincularFuentesExistentes(client, persona.id, payload.identificacion);
 
     const { rows: existente } = await client.query(
       `SELECT id_participantes_vec
@@ -931,16 +1883,16 @@ router.post("/", async (req, res, next) => {
 
     const { rows } = await client.query(
       `INSERT INTO sat.participantes_vec (
-         id_personas, tipo_participante, tipo_documento, codigo,
+         id_personas, tipo_participante, detalle_tipo_participante, tipo_documento, codigo,
          programa_academico, programa_posgrado_dependencia, semestre,
          jornada, dependencia, cargo, fecha_egreso, etnia, municipio,
          discapacidad, conflicto_armado
        ) VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
        )
        RETURNING id_participantes_vec`,
       [
-        persona.id, payload.tipo, payload.tipoDocumento, payload.codigo,
+        persona.id, payload.tipo, payload.detalleTipoParticipante, payload.tipoDocumento, payload.codigo,
         payload.programaAcademico, payload.programaPosgradoDependencia,
         payload.semestre, payload.jornada, payload.dependencia, payload.cargo,
         payload.fechaEgreso, payload.etnia, payload.municipio,
@@ -995,10 +1947,11 @@ async function buscarParticipante(tipo, identificacion) {
          periodo.nombre AS periodo,
          pv.dependencia,
          COALESCE(per.cargo, pv.cargo) AS cargo,
-         per.genero,
-         per.fecha_nacimiento AS "fechaNacimiento",
+         COALESCE(e.genero, per.genero) AS genero,
+         COALESCE(e.fecha_nacimiento, per.fecha_nacimiento) AS "fechaNacimiento",
          COALESCE(e.correo_institucional, e.correo_personal,
-                  per.correo_institucional, per.correo_electronico) AS correo,
+                  per.correo_institucional, per.correo_electronico,
+                  per.correo_electronico_opcional) AS correo,
          COALESCE(per.celular, per.telefono, e.telefono, e.telefono_fijo) AS contacto,
          COALESCE(e.etnia, pv.etnia) AS etnia,
          pv.municipio,
@@ -1006,6 +1959,7 @@ async function buscarParticipante(tipo, identificacion) {
          pv.discapacidad,
          pv.fecha_egreso AS "fechaEgreso",
          pv.tipo_participante AS "tipoRegistrado",
+         pv.detalle_tipo_participante AS "detalleTipoParticipante",
          (pv.id_participantes_vec IS NOT NULL) AS "yaRegistrado"
        FROM sat.estudiantes e
        LEFT JOIN LATERAL (
@@ -1061,7 +2015,8 @@ async function buscarParticipante(tipo, identificacion) {
          COALESCE(per.cargo, pv.cargo) AS cargo,
          per.genero,
          per.fecha_nacimiento AS "fechaNacimiento",
-         COALESCE(per.correo_institucional, u.correo_institucional, per.correo_electronico) AS correo,
+         COALESCE(per.correo_institucional, u.correo_institucional,
+                  per.correo_electronico, per.correo_electronico_opcional) AS correo,
          COALESCE(per.celular, per.telefono) AS contacto,
          pv.etnia,
          pv.municipio,
@@ -1069,6 +2024,7 @@ async function buscarParticipante(tipo, identificacion) {
          pv.conflicto_armado AS "conflictoArmado",
          pv.fecha_egreso AS "fechaEgreso",
          pv.tipo_participante AS "tipoRegistrado",
+         pv.detalle_tipo_participante AS "detalleTipoParticipante",
          (pv.id_participantes_vec IS NOT NULL) AS "yaRegistrado"
        FROM sat.usuarios u
        LEFT JOIN LATERAL (
@@ -1085,6 +2041,21 @@ async function buscarParticipante(tipo, identificacion) {
         AND pv.tipo_participante = 'COLABORADOR'
        WHERE u.numero_documento = $1
          AND u.activo = true AND u.eliminado_en IS NULL
+         AND (
+           EXISTS (
+             SELECT 1
+             FROM sat.usuarios_roles ur
+             JOIN sat.roles rol ON rol.id_roles = ur.id_roles
+             WHERE ur.id_usuarios = u.id_usuarios
+               AND UPPER(BTRIM(rol.nombre)) IN (
+                 'ADMIN', 'ADMINISTRADOR', 'COLABORADOR', 'DIRECTIVO', 'DOCENTE', 'PROFESIONAL'
+               )
+           )
+           OR EXISTS (
+             SELECT 1 FROM sat.docentes d
+             WHERE d.id_usuarios = u.id_usuarios AND d.activo = true
+           )
+         )
        LIMIT 1`,
       [identificacion]
     );
@@ -1101,23 +2072,264 @@ async function buscarParticipante(tipo, identificacion) {
               pv.programa_posgrado_dependencia AS "programaPosgradoDependencia",
               pv.semestre, pv.jornada, pv.dependencia, pv.cargo,
               p.genero, p.fecha_nacimiento AS "fechaNacimiento",
-              COALESCE(p.correo_institucional, p.correo_electronico) AS correo,
+              COALESCE(p.correo_institucional, p.correo_electronico,
+                       p.correo_electronico_opcional) AS correo,
               COALESCE(p.celular, p.telefono) AS contacto,
               pv.etnia, pv.municipio, pv.discapacidad,
               pv.conflicto_armado AS "conflictoArmado", pv.fecha_egreso AS "fechaEgreso",
               pv.tipo_participante AS "tipoRegistrado",
+              pv.detalle_tipo_participante AS "detalleTipoParticipante",
               (pv.id_participantes_vec IS NOT NULL) AS "yaRegistrado"
        FROM sat.personas p
-       JOIN sat.participantes_vec pv
+       LEFT JOIN sat.participantes_vec pv
          ON pv.id_personas = p.id
         AND pv.tipo_participante = $2
        WHERE p.numero_identificacion = $1
+         AND pv.id_participantes_vec IS NOT NULL
        LIMIT 1`,
       [identificacion, tipo]
     );
     if (rows[0]) return mapearParticipante(rows[0], "sat.personas");
   }
   return null;
+}
+
+/** Roles institucionales comprobados directamente en las fuentes del SAT. */
+async function obtenerRolesVerificados(db, idPersona, identificacion) {
+  const ejecutarQuery = typeof db === "function" ? db : db.query.bind(db);
+  const { rows } = await ejecutarQuery(
+    `SELECT 'ESTUDIANTE' AS rol
+     WHERE EXISTS (
+       SELECT 1
+       FROM sat.estudiantes e
+       WHERE ($1::bigint IS NOT NULL AND e.id_personas = $1::bigint)
+          OR e.numero_documento = $2
+          OR e.codigo_externo = $2
+          OR EXISTS (
+            SELECT 1 FROM sat.matriculas m
+            WHERE m.id_estudiantes = e.id_estudiantes
+              AND m.codigo_externo = $2
+          )
+     )
+     UNION
+     SELECT 'COLABORADOR' AS rol
+     WHERE EXISTS (
+       SELECT 1
+       FROM sat.usuarios u
+       WHERE (($1::bigint IS NOT NULL AND u.id_personas = $1::bigint)
+              OR u.numero_documento = $2)
+         AND u.activo = true
+         AND u.eliminado_en IS NULL
+         AND (
+           EXISTS (
+             SELECT 1
+             FROM sat.usuarios_roles ur
+             JOIN sat.roles r ON r.id_roles = ur.id_roles
+             WHERE ur.id_usuarios = u.id_usuarios
+               AND r.activo = true
+               AND UPPER(BTRIM(r.nombre)) IN (
+                 'ADMIN', 'ADMINISTRADOR', 'COLABORADOR', 'DIRECTIVO', 'DOCENTE', 'PROFESIONAL'
+               )
+           )
+           OR EXISTS (
+             SELECT 1 FROM sat.docentes d
+             WHERE d.id_usuarios = u.id_usuarios AND d.activo = true
+           )
+         )
+     )
+     OR EXISTS (
+       SELECT 1
+       FROM sat.docentes d
+       WHERE d.activo = true
+         AND (($1::bigint IS NOT NULL AND d.id_personas = $1::bigint)
+              OR d.numero_documento = $2)
+     )
+     ORDER BY rol`,
+    [idPersona || null, identificacion],
+  );
+  return rows.map((row) => row.rol);
+}
+
+async function buscarParticipanteEnPersonas(tipo, identificacion) {
+  const { rows } = await query(
+    `SELECT
+       p.id AS "idPersona",
+       $2::text AS tipo,
+       p.numero_identificacion AS identificacion,
+       COALESCE(e.tipo_documento, u.tipo_documento, pv.tipo_documento) AS "tipoDocumento",
+       COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre)), ''), u.nombres) AS nombres,
+       COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', p.primer_apellido, p.segundo_apellido)), ''), u.apellidos) AS apellidos,
+       COALESCE(e.codigo_externo, m.codigo_externo, pv.codigo, d.codigo_externo) AS codigo,
+       COALESCE(prog.nombre, pv.programa_academico) AS "programaAcademico",
+       pv.programa_posgrado_dependencia AS "programaPosgradoDependencia",
+       COALESCE(m.semestre, e.semestre_actual, pv.semestre) AS semestre,
+       COALESCE(m.jornada, pv.jornada) AS jornada,
+       periodo.nombre AS periodo,
+       pv.dependencia,
+       COALESCE(p.cargo, pv.cargo) AS cargo,
+       COALESCE(e.genero, p.genero) AS genero,
+       COALESCE(e.fecha_nacimiento, p.fecha_nacimiento) AS "fechaNacimiento",
+       COALESCE(e.correo_institucional, e.correo_personal,
+                p.correo_institucional, p.correo_electronico,
+                p.correo_electronico_opcional, u.correo_institucional) AS correo,
+       COALESCE(p.celular, p.telefono, e.telefono, e.telefono_fijo, u.telefono) AS contacto,
+       COALESCE(e.etnia, pv.etnia) AS etnia,
+       pv.municipio,
+       COALESCE(p.victima_conflicto::text, pv.conflicto_armado) AS "conflictoArmado",
+       pv.discapacidad,
+       pv.fecha_egreso AS "fechaEgreso",
+       pv.tipo_participante AS "tipoRegistrado",
+       pv.detalle_tipo_participante AS "detalleTipoParticipante",
+       (pv.tipo_participante = $2) AS "yaRegistrado"
+     FROM sat.personas p
+     LEFT JOIN LATERAL (
+       SELECT e.*
+       FROM sat.estudiantes e
+       WHERE e.id_personas = p.id OR e.numero_documento = p.numero_identificacion
+       ORDER BY (e.id_personas = p.id) DESC NULLS LAST, e.id_estudiantes
+       LIMIT 1
+     ) e ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT m.*
+       FROM sat.matriculas m
+       WHERE m.id_estudiantes = e.id_estudiantes
+       ORDER BY (UPPER(COALESCE(m.estado, '')) = 'ACTIVA') DESC, m.id_matriculas DESC
+       LIMIT 1
+     ) m ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT pv.*
+       FROM sat.participantes_vec pv
+       WHERE pv.id_personas = p.id
+       ORDER BY (pv.tipo_participante = $2) DESC,
+                (pv.tipo_participante = 'ESTUDIANTE') DESC,
+                pv.creado_en DESC
+       LIMIT 1
+     ) pv ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT u.*
+       FROM sat.usuarios u
+       WHERE (u.id_personas = p.id OR u.numero_documento = p.numero_identificacion)
+         AND u.activo = true AND u.eliminado_en IS NULL
+       ORDER BY u.id_usuarios
+       LIMIT 1
+     ) u ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT d.*
+       FROM sat.docentes d
+       WHERE d.id_usuarios = u.id_usuarios
+          OR d.id_personas = p.id
+          OR d.numero_documento = p.numero_identificacion
+       ORDER BY d.activo DESC, d.id_docentes
+       LIMIT 1
+     ) d ON TRUE
+     LEFT JOIN sat.programas_academicos prog
+       ON prog.id_programas_academicos = COALESCE(
+         m.id_programas_academicos, e.id_programas_academicos, d.id_programas_academicos
+       )
+     LEFT JOIN sat.periodos_academicos periodo
+       ON periodo.id_periodos_academicos = m.id_periodos_academicos
+     WHERE p.numero_identificacion = $1
+       AND (
+         pv.id_participantes_vec IS NOT NULL
+         OR e.id_estudiantes IS NOT NULL
+         OR EXISTS (
+           SELECT 1
+           FROM sat.usuarios u
+           JOIN sat.usuarios_roles ur ON ur.id_usuarios = u.id_usuarios
+           JOIN sat.roles rol ON rol.id_roles = ur.id_roles
+           WHERE (u.id_personas = p.id OR u.numero_documento = p.numero_identificacion)
+             AND u.activo = true AND u.eliminado_en IS NULL
+             AND UPPER(BTRIM(rol.nombre)) IN (
+               'ADMIN', 'ADMINISTRADOR', 'COLABORADOR', 'DIRECTIVO', 'DOCENTE', 'PROFESIONAL'
+             )
+         )
+         OR EXISTS (
+           SELECT 1
+           FROM sat.docentes d
+           WHERE d.activo = true
+             AND (d.id_personas = p.id OR d.numero_documento = p.numero_identificacion)
+         )
+       )
+     LIMIT 1`,
+    [identificacion, tipo]
+  );
+  return rows[0] ? mapearParticipante(rows[0], "sat.personas") : null;
+}
+
+async function buscarDatosComplementariosPersona(idPersona) {
+  if (!idPersona) return {};
+  const { rows } = await query(
+    `SELECT
+       COALESCE(e.tipo_documento, pv.tipo_documento) AS "tipoDocumento",
+       COALESCE(e.codigo_externo, m.codigo_externo, pv.codigo, d.codigo_externo) AS codigo,
+       COALESCE(prog.nombre, pv.programa_academico) AS "programaAcademico",
+       pv.programa_posgrado_dependencia AS "programaPosgradoDependencia",
+       COALESCE(m.semestre, e.semestre_actual, pv.semestre) AS semestre,
+       COALESCE(m.jornada, pv.jornada) AS jornada,
+       periodo.nombre AS periodo,
+       pv.dependencia,
+       COALESCE(p.cargo, pv.cargo) AS cargo,
+       COALESCE(e.genero, p.genero) AS genero,
+       COALESCE(e.fecha_nacimiento, p.fecha_nacimiento) AS "fechaNacimiento",
+       COALESCE(e.correo_institucional, e.correo_personal,
+                p.correo_institucional, p.correo_electronico,
+                p.correo_electronico_opcional, u.correo_institucional) AS correo,
+       COALESCE(p.celular, p.telefono, e.telefono, e.telefono_fijo) AS contacto,
+       COALESCE(e.etnia, pv.etnia) AS etnia,
+       pv.municipio,
+       COALESCE(p.victima_conflicto::text, pv.conflicto_armado) AS "conflictoArmado",
+       pv.discapacidad,
+       pv.fecha_egreso AS "fechaEgreso"
+     FROM sat.personas p
+     LEFT JOIN LATERAL (
+       SELECT e.*
+       FROM sat.estudiantes e
+       WHERE e.id_personas = p.id OR e.numero_documento = p.numero_identificacion
+       ORDER BY (e.id_personas = p.id) DESC NULLS LAST, e.id_estudiantes
+       LIMIT 1
+     ) e ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT m.*
+       FROM sat.matriculas m
+       WHERE m.id_estudiantes = e.id_estudiantes
+       ORDER BY (UPPER(COALESCE(m.estado, '')) = 'ACTIVA') DESC,
+                m.id_matriculas DESC
+       LIMIT 1
+     ) m ON TRUE
+     LEFT JOIN sat.programas_academicos prog
+       ON prog.id_programas_academicos = COALESCE(m.id_programas_academicos, e.id_programas_academicos)
+     LEFT JOIN sat.periodos_academicos periodo
+       ON periodo.id_periodos_academicos = m.id_periodos_academicos
+     LEFT JOIN LATERAL (
+       SELECT pv.*
+       FROM sat.participantes_vec pv
+       WHERE pv.id_personas = p.id
+       ORDER BY (pv.tipo_participante = 'ESTUDIANTE') DESC, pv.creado_en DESC
+       LIMIT 1
+     ) pv ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT u.*
+       FROM sat.usuarios u
+       WHERE (u.id_personas = p.id OR u.numero_documento = p.numero_identificacion)
+         AND u.activo = true
+         AND u.eliminado_en IS NULL
+       ORDER BY u.id_usuarios
+       LIMIT 1
+     ) u ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT d.*
+       FROM sat.docentes d
+       WHERE d.id_usuarios = u.id_usuarios
+          OR d.id_personas = p.id
+          OR d.numero_documento = p.numero_identificacion
+       ORDER BY d.activo DESC, d.id_docentes
+       LIMIT 1
+     ) d ON TRUE
+     WHERE p.id = $1
+     LIMIT 1`,
+    [idPersona]
+  );
+  return rows[0] || {};
 }
 
 async function buscarPersonaPorIdentificacion(client, identificacion) {
@@ -1181,13 +2393,30 @@ async function buscarPersonaFuente(client, identificacion) {
       perfil.telefono || null
     ]
   );
-  return rows[0] ? { id: rows[0].id, identificacion } : null;
+  if (!rows[0]) return null;
+  await client.query(
+    `UPDATE sat.estudiantes SET id_personas=$1
+     WHERE numero_documento=$2 AND id_personas IS NULL`,
+    [rows[0].id, identificacion]
+  );
+  await client.query(
+    `UPDATE sat.usuarios SET id_personas=$1
+     WHERE numero_documento=$2 AND id_personas IS NULL`,
+    [rows[0].id, identificacion]
+  );
+  await client.query(
+    `UPDATE sat.docentes SET id_personas=$1
+     WHERE numero_documento=$2 AND id_personas IS NULL`,
+    [rows[0].id, identificacion]
+  );
+  return { id: rows[0].id, identificacion };
 }
 
 function normalizarEntrada(body = {}) {
   const clean = (value) => value == null ? null : String(value).trim() || null;
   return {
     tipo: clean(body.tipo)?.toUpperCase(),
+    detalleTipoParticipante: clean(body.detalleTipoParticipante),
     identificacion: clean(body.identificacion),
     tipoDocumento: clean(body.tipoDocumento),
     nombres: clean(body.nombres),
@@ -1217,8 +2446,10 @@ function normalizarActividad(body = {}) {
   const clean = (value) => value == null ? null : String(value).trim() || null;
   const alianza = body.alianzaInterinstitucional;
   return {
+    idEventoExistente: clean(body.idEventoExistente),
     idPeriodo: clean(body.idPeriodo),
     idCatalogoActividad: clean(body.idCatalogoActividad),
+    descripcion: clean(body.descripcion),
     tipoOtra: clean(body.tipoActividadOtra),
     alianza: alianza === true || alianza === "true"
       ? true
@@ -1228,6 +2459,7 @@ function normalizarActividad(body = {}) {
     idDependencia: clean(body.idDependencia),
     dependenciaOtra: clean(body.dependenciaOtra),
     modalidad: clean(body.modalidad),
+    ubicacion: clean(body.ubicacion),
     fechaInicio: clean(body.fechaInicio),
     fechaFinalizacion: clean(body.fechaFinalizacion),
     idTipoApoyo: clean(body.idTipoApoyo),
@@ -1246,6 +2478,9 @@ function validarActividad(actividad) {
   };
   if (!actividad.idPeriodo || !uuidPattern.test(actividad.idPeriodo)) return "Selecciona un periodo académico válido.";
   if (!actividad.idCatalogoActividad || !uuidPattern.test(actividad.idCatalogoActividad)) return "Selecciona una actividad del catálogo institucional.";
+  if (actividad.idEventoExistente && !uuidPattern.test(actividad.idEventoExistente)) {
+    return "Selecciona un evento próximo válido.";
+  }
   if (!esFechaValida(actividad.fechaInicio)) {
     return "Ingresa una fecha de inicio válida.";
   }
@@ -1270,6 +2505,20 @@ function validarEntrada(payload) {
     return "La identificación es obligatoria y debe tener máximo 64 caracteres.";
   }
   if (!payload.nombres || !payload.apellidos) return "Nombres y apellidos son obligatorios.";
+  const detallesPorTipo = {
+    ESTUDIANTE: ["Estudiante"],
+    COLABORADOR: ["Docente", "Administrativo", "Directivo", "Profesional"],
+    EGRESADO: ["Titulado", "En proceso de grado", "Egresado no titulado"],
+    EXTERNO: ["Externo", "Madre de estudiante", "Padre de estudiante", "Acudiente de estudiante", "Acudiente de colaborador", "Familiar de estudiante", "Familiar de colaborador", "Hijo de estudiante", "Hijo de colaborador", "Pareja de estudiante", "Pareja de colaborador", "Otro familiar de estudiante", "Otro familiar de colaborador"],
+  };
+  const detalleColaboradorOtro = payload.tipo === "COLABORADOR"
+    && /^Otro:\s*\S.{0,113}$/i.test(payload.detalleTipoParticipante || "")
+    && payload.detalleTipoParticipante.length <= 120;
+  if (payload.detalleTipoParticipante
+    && !detallesPorTipo[payload.tipo].includes(payload.detalleTipoParticipante)
+    && !detalleColaboradorOtro) {
+    return "Selecciona una clasificación válida para el tipo de participante.";
+  }
   if (payload.correo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.correo)) {
     return "Ingresa un correo electrónico válido.";
   }
@@ -1297,6 +2546,7 @@ function mapearParticipante(row, fuente) {
     id: row.id || null,
     idPersona: row.idPersona || null,
     tipo: row.tipo,
+    detalleTipoParticipante: row.detalleTipoParticipante || (row.tipo === "ESTUDIANTE" ? "Estudiante" : ""),
     identificacion: row.identificacion || "",
     tipoDocumento: row.tipoDocumento || "",
     nombres: row.nombres || "",
@@ -1372,13 +2622,13 @@ function slugArchivo(value) {
 
 function enviarErrorBaseDatos(err, res, next) {
   if (err.code === "42P01") {
-    if (err.message?.includes("apoyos_financieros")) {
-      return res.status(503).json({
-        error: "La tabla sat.apoyos_financieros no está disponible. Verifica que la sincronización financiera institucional esté configurada."
-      });
-    }
     return res.status(503).json({
       error: "Faltan aplicar las migraciones del módulo Actividades en server/src/features/actividades/ antes de continuar."
+    });
+  }
+  if (err.code === "42703" && /asistencia_verificada/.test(err.message)) {
+    return res.status(503).json({
+      error: "Para guardar la verificación de asistencia, aplica server/src/features/actividades/verificacion_elegibilidad.sql sobre la base SAT."
     });
   }
   next(err);

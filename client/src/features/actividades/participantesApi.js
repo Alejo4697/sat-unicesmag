@@ -21,16 +21,71 @@ export function getParticipantes({ limite = 100 } = {}) {
   return apiFetch(`/actividades/participantes?${params.toString()}`);
 }
 
-export function getCatalogosEstudiante() {
-  return apiFetch("/actividades/participantes/catalogos-estudiante");
+export function getCatalogosEstudiante({ signal } = {}) {
+  return apiFetch("/actividades/participantes/catalogos-estudiante", { signal });
 }
 
-export function getCatalogoApoyosFinancieros({ signal } = {}) {
-  return apiFetch("/actividades/participantes/apoyos/catalogo", { signal });
+export function getBeneficiariosApoyo({ tipoApoyo, pagina = 1, signal }) {
+  const params = new URLSearchParams({ pagina: String(pagina) });
+  if (tipoApoyo && tipoApoyo !== "todos") params.set("tipoApoyo", tipoApoyo);
+  return apiFetch(`/actividades/participantes/apoyos/todos?${params.toString()}`, { signal });
 }
 
 export function getCatalogoMaestroActividades() {
   return apiFetch("/actividades/participantes/catalogo-maestro");
+}
+
+export function getEventosProximos({ signal } = {}) {
+  return apiFetch("/actividades/participantes/eventos-proximos", { signal });
+}
+
+export function getActividades({ busqueda = "", estado = "" } = {}) {
+  const params = new URLSearchParams();
+  if (busqueda) params.set("busqueda", busqueda);
+  if (estado) params.set("estado", estado);
+  return apiFetch(`/actividades/participantes/eventos?${params.toString()}`);
+}
+
+export function crearActividad(actividad) {
+  return apiFetch("/actividades/participantes/eventos", { method: "POST", body: actividad });
+}
+
+export function actualizarActividad(id, actividad) {
+  return apiFetch(`/actividades/participantes/eventos/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: actividad,
+  });
+}
+
+export function cambiarEstadoActividad(id, estado) {
+  return apiFetch(`/actividades/participantes/eventos/${encodeURIComponent(id)}/estado`, {
+    method: "PATCH",
+    body: { estado },
+  });
+}
+
+export function getParticipantesActividad(id) {
+  return apiFetch(`/actividades/participantes/eventos/${encodeURIComponent(id)}/participantes`);
+}
+
+export function corregirTipoApoyoInscripcion(id, { idTipoApoyo, motivo }) {
+  return apiFetch(`/actividades/participantes/inscripciones/${encodeURIComponent(id)}/apoyo`, {
+    method: "PATCH",
+    body: { idTipoApoyo, motivo },
+  });
+}
+
+export function getAuditoriaInscripcion(id) {
+  return apiFetch(`/actividades/participantes/inscripciones/${encodeURIComponent(id)}/auditoria`);
+}
+
+export function buscarPersonasActividades(termino) {
+  const params = new URLSearchParams({ termino });
+  return apiFetch(`/actividades/participantes/personas/buscar?${params.toString()}`);
+}
+
+export function getHistorialParticipacion(identificacion) {
+  return apiFetch(`/actividades/participantes/historial/${encodeURIComponent(identificacion)}`);
 }
 
 export function registrarActividadEstudiante({ participante, actividad }) {
@@ -54,17 +109,6 @@ export function getRegistrosEstudiante({ limite = 50 } = {}) {
 
 export function getActividadesDisponibles({ signal } = {}) {
   return apiFetch("/actividades/participantes/actividades-disponibles", { signal });
-}
-
-export function getListadoApoyos({ nombreApoyo, conceptoApoyo = "", idPeriodo, busqueda, pagina = 0, signal }) {
-  const params = new URLSearchParams({
-    nombreApoyo,
-    conceptoApoyo,
-    pagina: String(pagina),
-  });
-  if (idPeriodo) params.set("idPeriodo", idPeriodo);
-  if (busqueda) params.set("busqueda", busqueda);
-  return apiFetch(`/actividades/participantes/apoyos/listado?${params.toString()}`, { signal });
 }
 
 export function getSesionesActividad({ idActividad, idPeriodo, signal }) {

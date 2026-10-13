@@ -1,229 +1,200 @@
 import { useEffect, useState } from "react";
-import {
-  getCatalogoApoyosFinancieros,
-  getCatalogosEstudiante,
-  getListadoApoyos,
-} from "./participantesApi.js";
+import { getBeneficiariosApoyo, getCatalogosEstudiante } from "./participantesApi.js";
 
-const EMPTY_RESULT = { rows: [], total: 0 };
+const ETIQUETAS_ROL = {
+  ESTUDIANTE: "Estudiante",
+  COLABORADOR: "Colaborador",
+  EGRESADO: "Egresado",
+  EXTERNO: "Externo",
+};
 
 export default function ApoyosView() {
-  const [catalogos, setCatalogos] = useState({ periodos: [], apoyos: [] });
-  const [apoyoSeleccionado, setApoyoSeleccionado] = useState("");
-  const [idPeriodo, setIdPeriodo] = useState("");
-  const [busqueda, setBusqueda] = useState("");
-  const [pagina, setPagina] = useState(0);
-  const [resultado, setResultado] = useState(EMPTY_RESULT);
-  const [cargandoCatalogos, setCargandoCatalogos] = useState(true);
-  const [buscando, setBuscando] = useState(false);
+  const [tiposApoyo, setTiposApoyo] = useState([]);
+  const [tipoApoyoId, setTipoApoyoId] = useState("todos");
+  const [pagina, setPagina] = useState(1);
+  const [resultado, setResultado] = useState(null);
+  const [cargandoTipos, setCargandoTipos] = useState(true);
+  const [cargandoBeneficiarios, setCargandoBeneficiarios] = useState(true);
   const [error, setError] = useState("");
-  const [consultaRealizada, setConsultaRealizada] = useState(false);
+  const totalPaginas = resultado ? Math.max(1, Math.ceil(resultado.total / resultado.limite)) : 1;
 
   useEffect(() => {
-    let activa = true;
-    Promise.all([getCatalogosEstudiante(), getCatalogoApoyosFinancieros()])
-      .then(([data, apoyos]) => {
-        if (!activa) return;
-        setCatalogos({ periodos: data.periodos || [], apoyos: apoyos || [] });
-      })
+    const controller = new AbortController();
+    getCatalogosEstudiante({ signal: controller.signal })
+      .then((catalogos) => setTiposApoyo(catalogos.tiposApoyo || []))
       .catch((requestError) => {
-        if (activa) setError(requestError.message || "No se pudieron cargar los apoyos institucionales.");
+        if (!controller.signal.aborted) {
+          setError(requestError.message || "No se pudieron cargar los tipos de apoyo.");
+        }
       })
       .finally(() => {
-        if (activa) setCargandoCatalogos(false);
+        if (!controller.signal.aborted) setCargandoTipos(false);
       });
-    return () => { activa = false; };
+    return () => controller.abort();
   }, []);
 
-  const apoyoActual = catalogos.apoyos.find((apoyo) => (
-    JSON.stringify([apoyo.nombre, apoyo.concepto]) === apoyoSeleccionado
-  ));
-
-  async function buscar(event, paginaSolicitada = 0) {
-    event?.preventDefault();
-    if (!apoyoActual) {
-      setError("Selecciona un apoyo financiero para consultar.");
-      return;
-    }
+  useEffect(() => {
+    const controller = new AbortController();
+    setCargandoBeneficiarios(true);
     setError("");
-    setBuscando(true);
-    try {
-      const data = await getListadoApoyos({
-        nombreApoyo: apoyoActual.nombre,
-        conceptoApoyo: apoyoActual.concepto,
-        idPeriodo: idPeriodo || undefined,
-        busqueda: busqueda.trim() || undefined,
-        pagina: paginaSolicitada,
+    getBeneficiariosApoyo({ tipoApoyo: tipoApoyoId, pagina, signal: controller.signal })
+      .then((data) => {
+        if (!controller.signal.aborted) setResultado(data);
+      })
+      .catch((requestError) => {
+        if (!controller.signal.aborted) {
+          setResultado(null);
+          setError(requestError.message || "No se pudieron consultar los beneficiarios.");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setCargandoBeneficiarios(false);
       });
-      setResultado(data);
-      setPagina(paginaSolicitada);
-      setConsultaRealizada(true);
-    } catch (requestError) {
-      setError(requestError.message || "No se pudo consultar el listado de beneficiarios.");
-    } finally {
-      setBuscando(false);
-    }
-  }
-
-  const totalPaginas = Math.ceil(resultado.total / 100);
+    return () => controller.abort();
+  }, [tipoApoyoId, pagina]);
 
   return (
-    <>
-      <section className="card" aria-labelledby="vec-apoyos-title">
-        <div className="card-header">
-          <h2 className="card-title" id="vec-apoyos-title">
-            <i className="fas fa-hand-holding-heart" aria-hidden="true"></i>
-            Consultar estudiantes con apoyo financiero
-          </h2>
-        </div>
-        <p className="text-muted">
-          Consulta los apoyos registrados en la base institucional y vinculados con estudiantes.
-          El resultado cuenta cada estudiante una sola vez, aunque tenga registros repetidos.
-        </p>
-        {error && <div className="auth-error" role="alert">{error}</div>}
-        <form className="vec-support-filters" onSubmit={buscar}>
-          <div className="form-group">
-            <label className="form-label" htmlFor="vec-apoyo-tipo">Apoyo financiero</label>
-            <select
-              className="form-select"
-              id="vec-apoyo-tipo"
-              value={apoyoSeleccionado}
-              onChange={(event) => {
-                setApoyoSeleccionado(event.target.value);
-                setResultado(EMPTY_RESULT);
-                setConsultaRealizada(false);
-              }}
-              disabled={cargandoCatalogos}
-              required
-            >
-              <option value="">
-                {cargandoCatalogos ? "Cargando apoyos..." : "Selecciona un apoyo"}
-              </option>
-              {catalogos.apoyos.map((apoyo) => {
-                const value = JSON.stringify([apoyo.nombre, apoyo.concepto]);
-                return (
-                  <option key={value} value={value}>
-                    {apoyo.concepto && apoyo.concepto !== apoyo.nombre
-                      ? `${apoyo.nombre} (${apoyo.concepto})`
-                      : apoyo.nombre}
-                  </option>
-                );
-              })}
-            </select>
-            {!cargandoCatalogos && catalogos.apoyos.length === 0 && (
-              <small className="text-muted">No hay apoyos financieros sincronizados para consultar.</small>
-            )}
-          </div>
-          <div className="form-group">
-            <label className="form-label" htmlFor="vec-apoyo-periodo">Periodo (opcional)</label>
-            <select
-              className="form-select"
-              id="vec-apoyo-periodo"
-              value={idPeriodo}
-              onChange={(event) => setIdPeriodo(event.target.value)}
-              disabled={cargandoCatalogos}
-            >
-              <option value="">Todos los periodos</option>
-              {catalogos.periodos.map((periodo) => (
-                <option key={periodo.id} value={periodo.id}>{periodo.nombre}</option>
-              ))}
-            </select>
-          </div>
-          <div className="form-group">
-            <label className="form-label" htmlFor="vec-apoyo-busqueda">Estudiante (opcional)</label>
-            <input
-              className="form-control"
-              id="vec-apoyo-busqueda"
-              type="search"
-              value={busqueda}
-              onChange={(event) => setBusqueda(event.target.value.slice(0, 100))}
-              maxLength={100}
-              placeholder="Nombre, identificación o código"
-            />
-          </div>
-          <button
-            className="btn btn-primary"
-            type="submit"
-            disabled={cargandoCatalogos || buscando || !apoyoActual}
+    <section className="card" aria-labelledby="vec-apoyos-title">
+      <div className="card-header">
+        <h2 className="card-title" id="vec-apoyos-title">
+          <i className="fas fa-hand-holding-heart" aria-hidden="true"></i>
+          Consultar personas por tipo de apoyo
+        </h2>
+      </div>
+      <p className="text-muted">
+        Consulta todas las personas que tienen apoyos o beneficios registrados. Cada persona aparece una sola vez, con sus apoyos reunidos.
+      </p>
+      {error && <div className="auth-error" role="alert">{error}</div>}
+      <div className="vec-support-filters">
+        <div className="form-group">
+          <label className="form-label" htmlFor="vec-apoyo-tipo">Tipo de apoyo</label>
+          <select
+            className="form-select"
+            id="vec-apoyo-tipo"
+            value={tipoApoyoId}
+            onChange={(event) => {
+              setTipoApoyoId(event.target.value);
+              setPagina(1);
+              setResultado(null);
+            }}
+            disabled={cargandoTipos || tiposApoyo.length === 0}
           >
-            <i className={`fas ${buscando ? "fa-spinner fa-spin" : "fa-magnifying-glass"}`} aria-hidden="true"></i>
-            {buscando ? "Consultando..." : "Consultar estudiantes"}
-          </button>
-        </form>
-      </section>
-
-      {consultaRealizada && (
-        <section className="card" aria-labelledby="vec-apoyos-resultados">
-          <div className="card-header">
-            <div>
-              <h3 className="card-title" id="vec-apoyos-resultados">
-                Estudiantes con {apoyoActual?.nombre || "este apoyo"}
-              </h3>
-              <p className="text-muted" style={{ margin: "0.25rem 0 0" }}>
-                {resultado.total} estudiante{resultado.total === 1 ? "" : "s"} único{resultado.total === 1 ? "" : "s"}
-                {" "}encontrado{resultado.total === 1 ? "" : "s"}
-              </p>
-            </div>
+            <option value="todos">Todos los tipos de apoyo</option>
+            {tiposApoyo.map((tipo, index) => (
+              <option key={tipo.id} value={tipo.id}>
+                {tipo.numero ?? index + 1}. {tipo.nombre}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      {cargandoBeneficiarios ? (
+        <p className="text-muted" role="status">Consultando personas y apoyos registrados...</p>
+      ) : resultado && resultado.beneficiarios.length === 0 ? (
+        <p className="text-muted" role="status">No hay personas beneficiarias registradas para este filtro.</p>
+      ) : resultado ? (
+        <div className="vec-support-local-notice" role="region" aria-live="polite">
+          <strong>{resultado.total} {resultado.total === 1 ? "persona beneficiaria" : "personas beneficiarias"}</strong>
+          <div className="table-responsive" style={{ marginTop: "0.75rem" }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Persona</th>
+                  <th>Identificación</th>
+                  <th>Rol</th>
+                  <th>Tipo(s) de apoyo</th>
+                  <th>Clasificación</th>
+                  <th>Apoyo(s) o beneficio(s)</th>
+                  <th>Periodo(s)</th>
+                  <th>Porcentaje / valor</th>
+                  <th>Origen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {resultado.beneficiarios.map((persona) => (
+                  <tr key={persona.id}>
+                    <td>
+                      <strong>{[persona.apellidos, persona.nombres].filter(Boolean).join(" ") || "—"}</strong>
+                      {persona.codigo && <div className="text-muted">Código: {persona.codigo}</div>}
+                    </td>
+                    <td>{persona.identificacion || "—"}</td>
+                    <td>
+                      {(persona.roles || []).length > 0
+                        ? persona.roles.map((rol) => ETIQUETAS_ROL[rol] || rol).join(" · ")
+                        : "—"}
+                    </td>
+                    <td>{(persona.tiposApoyo || []).join(" · ") || "Sin clasificar"}</td>
+                    <td>{(persona.clasificaciones || []).join(" · ") || "Sin dato"}</td>
+                    <td>{(persona.apoyos || []).join(" · ") || "—"}</td>
+                    <td>{(persona.periodos || []).join(" · ") || "—"}</td>
+                    <td>
+                      {persona.porcentajes?.length > 0 && <div>{persona.porcentajes.join(" · ")}%</div>}
+                      {persona.valores?.length > 0 && <div>{persona.valores.join(" · ")}</div>}
+                      {!persona.porcentajes?.length && !persona.valores?.length && "—"}
+                    </td>
+                    <td>{(persona.fuentes || []).join(" · ")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          {buscando ? (
-            <p className="text-muted" role="status">Cargando resultados...</p>
-          ) : resultado.rows.length === 0 ? (
-            <p className="text-muted">No se encontraron estudiantes con los filtros seleccionados.</p>
-          ) : (
-            <>
-              <div className="table-responsive">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Estudiante</th>
-                      <th>Identificación</th>
-                      <th>Código</th>
-                      <th>Periodos</th>
-                      <th>Porcentaje de descuento</th>
-                      <th>Valor de descuento</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {resultado.rows.map((row) => (
-                      <tr key={row.idEstudiante}>
-                        <td><strong>{row.estudiante || "—"}</strong></td>
-                        <td>{row.identificacion || "—"}</td>
-                        <td>{row.codigo || "—"}</td>
-                        <td>{row.periodos || "—"}</td>
-                        <td>{row.porcentajes || "—"}</td>
-                        <td>{row.valores || "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+          {totalPaginas > 1 && (
+            <div className="vec-support-pagination">
+              <span>Página {resultado.pagina} de {totalPaginas}</span>
+              <div>
+                <button
+                  className="btn btn-outline"
+                  type="button"
+                  onClick={() => setPagina((current) => Math.max(1, current - 1))}
+                  disabled={pagina <= 1 || cargandoBeneficiarios}
+                >Anterior</button>
+                <button
+                  className="btn btn-outline"
+                  type="button"
+                  onClick={() => setPagina((current) => Math.min(totalPaginas, current + 1))}
+                  disabled={pagina >= totalPaginas || cargandoBeneficiarios}
+                >Siguiente</button>
               </div>
-              {totalPaginas > 1 && (
-                <div className="vec-support-pagination">
-                  <span className="text-muted">Página {pagina + 1} de {totalPaginas}</span>
-                  <div>
-                    <button
-                      className="btn btn-outline btn-sm"
-                      type="button"
-                      onClick={() => buscar(null, pagina - 1)}
-                      disabled={pagina === 0 || buscando}
-                    >
-                      Anterior
-                    </button>
-                    <button
-                      className="btn btn-outline btn-sm"
-                      type="button"
-                      onClick={() => buscar(null, pagina + 1)}
-                      disabled={pagina + 1 >= totalPaginas || buscando}
-                    >
-                      Siguiente
-                    </button>
-                  </div>
-                </div>
-              )}
-            </>
+            </div>
           )}
-        </section>
+          {resultado.sinTipoApoyo > 0 && (
+            <p className="text-muted" style={{ margin: "0.75rem 0 0" }}>
+              Hay {resultado.sinTipoApoyo} {resultado.sinTipoApoyo === 1 ? "registro de actividad sin tipo de apoyo explícito" : "registros de actividad sin tipo de apoyo explícito"}. Cuando hay una ruta activa que coincide, se muestra su categoría; los demás quedan como sin clasificar.
+            </p>
+          )}
+        </div>
+      ) : null}
+      {resultado && resultado.rutas?.length > 0 && (
+        <div className="vec-support-local-notice" style={{ marginTop: "1rem" }}>
+          <h3 className="card-title">Apoyos y servicios disponibles</h3>
+          <p className="text-muted">Rutas institucionales asociadas a este tipo de apoyo.</p>
+          <div className="table-responsive">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Apoyo / servicio</th>
+                  <th>Programa</th>
+                  <th>Dependencia</th>
+                  <th>Responsable</th>
+                </tr>
+              </thead>
+              <tbody>
+                {resultado.rutas.map((ruta) => (
+                  <tr key={ruta.id}>
+                    <td>
+                      <strong>{ruta.nombre}</strong>
+                      {ruta.observaciones && <div className="text-muted">{ruta.observaciones}</div>}
+                    </td>
+                    <td>{ruta.programa || "—"}</td>
+                    <td>{ruta.dependencia || "—"}</td>
+                    <td>{ruta.responsable || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
-    </>
+    </section>
   );
 }

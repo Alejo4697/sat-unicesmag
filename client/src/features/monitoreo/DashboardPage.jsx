@@ -85,9 +85,9 @@ export default function DashboardPage() {
     return {
       labels: dims.map((d) => DIM_LABELS[d]),
       datasets: [
-        { label: "Riesgo Alto 🔴", data: dims.map((d) => riesgoDim.dimensiones[d].Alto), backgroundColor: "#DC2626" },
-        { label: "Riesgo Medio 🟠", data: dims.map((d) => riesgoDim.dimensiones[d].Medio), backgroundColor: "#D97706" },
-        { label: "Riesgo Bajo 🟢", data: dims.map((d) => riesgoDim.dimensiones[d].Bajo), backgroundColor: "#059669" }
+        { label: "Riesgo Alto", data: dims.map((d) => riesgoDim.dimensiones[d].Alto), backgroundColor: "#DC2626" },
+        { label: "Riesgo Medio", data: dims.map((d) => riesgoDim.dimensiones[d].Medio), backgroundColor: "#D97706" },
+        { label: "Riesgo Bajo", data: dims.map((d) => riesgoDim.dimensiones[d].Bajo), backgroundColor: "#059669" }
       ]
     };
   }, [riesgoDim]);
@@ -171,7 +171,7 @@ export default function DashboardPage() {
 
         <div>
           <Link to="/reportes" className="btn btn-primary" style={{ height: 36, display: "inline-flex", alignItems: "center" }}>
-            <i className="fas fa-file-arrow-down"></i>&nbsp;Exportar Datos (RQF21)
+            <i className="fas fa-file-arrow-down"></i>&nbsp;Exportar Datos
           </Link>
         </div>
       </div>
@@ -426,7 +426,7 @@ export default function DashboardPage() {
         <div className="dashboard-grid">
           <div className="card chart-card">
             <div className="card-header">
-              <h3 className="card-title">Semaforización por Campos de Riesgo (RQF10)</h3>
+              <h3 className="card-title">Semaforización por Campos de Riesgo</h3>
               <span className="badge badge-risk-high">
                 {vista === "programa" ? `Programa: ${stats.programa}` : "Periodo 2025 II"}
               </span>

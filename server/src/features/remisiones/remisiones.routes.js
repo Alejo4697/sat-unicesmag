@@ -1,11 +1,11 @@
 /* ==========================================================================
-   Feature: Remisiones (RQF09/RQF10 - incluye escalado 48h - RQF17/RQF18)
+   Feature: Remisiones (incluye escalado 48h)
    GET   /api/remisiones          -> lista
    GET   /api/remisiones/areas    -> catálogo de áreas de destino ACTIVAS
    GET   /api/remisiones/estados  -> catálogo de estados de remisión ACTIVOS
    GET   /api/remisiones/rutas    -> Matriz de Bienestar: rutas ACTIVAS
-   POST  /api/remisiones          -> crear remisión (RQF17)
-   PATCH /api/remisiones/:id      -> actualizar estado / recomendaciones (RQF18)
+   POST  /api/remisiones          -> crear remisión
+   PATCH /api/remisiones/:id      -> actualizar estado / recomendaciones
    ==========================================================================
    Las remisiones en sí siguen en MOCK_DATA (no migradas). Lo único que se
    consulta contra PostgreSQL (schema `sat`, vía shared/db/pool.js) son los

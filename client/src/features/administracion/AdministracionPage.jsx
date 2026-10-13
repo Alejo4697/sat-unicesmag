@@ -1,8 +1,8 @@
 /* ==========================================================================
    Feature: Administración
    Migración real de administracion.html + assets/js/administracion.js:
-   banner de sincronización académica (RQF08), alta de usuarios (RQF05),
-   listado con baja de usuarios, umbrales de riesgo (RQF11), más la matriz
+   banner de sincronización académica, alta de usuarios,
+   listado con baja de usuarios, umbrales de riesgo, más la matriz
    de roles y permisos que ya se había diseñado como mockup y ahora se sirve
    real desde GET /api/administracion/matriz-permisos.
 
@@ -35,7 +35,7 @@ import { useAuth } from "../../shared/context/AuthContext.jsx";
 // extra de cada uno además de "nombre"/"activo":
 //   { key, label, tipo: "text" | "check", enForm?, enTabla?, badgeSi? }
 const CAMPOS_AREA_REMISION = [
-  { key: "esConfidencialidad", label: "Confidencialidad VBG (RNF01)", tipo: "check", badgeSi: "VBG" }
+  { key: "esConfidencialidad", label: "Confidencialidad VBG", tipo: "check", badgeSi: "VBG" }
 ];
 const CAMPOS_ESTADO_REMISION = [
   { key: "esFinal", label: "Estado final", tipo: "check", badgeSi: "Final" },
@@ -177,14 +177,14 @@ export default function AdministracionPage() {
     try {
       const actualizados = await actualizarUmbralesRiesgo(umbrales);
       setUmbrales(actualizados);
-      avisar(`Parámetros de semaforización actualizados (Alto >= ${actualizados.alto}, Medio >= ${actualizados.medio}). (RQF11)`);
+      avisar(`Parámetros de semaforización actualizados (Alto >= ${actualizados.alto}, Medio >= ${actualizados.medio}).`);
     } catch (err) {
       setError(err.message);
     }
   }
 
   return (
-    <AppLayout titulo="Administración y Parámetros del Sistema" breadcrumb="Usuarios, Permisos y Sincronización RQF05 RQF06">
+    <AppLayout titulo="Administración y Parámetros del Sistema" breadcrumb="Usuarios, Permisos y Sincronización">
       {error && <div className="auth-error">{error}</div>}
       {mensaje && (
         <div className="autosave-banner">
@@ -199,7 +199,7 @@ export default function AdministracionPage() {
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <h3 className="card-title" style={{ fontSize: "1rem", margin: 0 }}>
-                <i className="fas fa-database" style={{ color: "var(--brand-primary)" }}></i> Sincronización Institucional prod18sep2 (RQF08)
+                <i className="fas fa-database" style={{ color: "var(--brand-primary)" }}></i> Sincronización Institucional prod18sep2
               </h3>
               <span className="badge badge-risk-low" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.75rem" }}>
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#10b981", display: "inline-block" }}></span>
@@ -269,7 +269,7 @@ export default function AdministracionPage() {
       <div className="dashboard-grid">
         <div className="card" style={{ gridColumn: "span 4" }}>
           <div className="card-header">
-            <h3 className="card-title">Crear Usuario (RQF05)</h3>
+            <h3 className="card-title">Crear Usuario</h3>
           </div>
 
           <form onSubmit={handleCrearUsuario}>
@@ -398,7 +398,7 @@ export default function AdministracionPage() {
                     </td>
                     <td>{u.programa}</td>
                     <td>
-                      <button className="btn btn-outline btn-sm" onClick={() => avisar(`Cargando ficha de permisos y accesos para el usuario ${u.id} (RQF06).`)}>
+                      <button className="btn btn-outline btn-sm" onClick={() => avisar(`Cargando ficha de permisos y accesos para el usuario ${u.id}.`)}>
                         <i className="fas fa-edit"></i>
                       </button>{" "}
                       <button className="btn btn-danger btn-sm" onClick={() => handleDesactivar(u)}>
@@ -415,12 +415,12 @@ export default function AdministracionPage() {
 
       <div className="card">
         <div className="card-header">
-          <h3 className="card-title">Configuración de Umbrales de Riesgo (RQF11)</h3>
+          <h3 className="card-title">Configuración de Umbrales de Riesgo</h3>
         </div>
 
         <form onSubmit={handleUmbrales} style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "1.5rem", alignItems: "flex-end" }}>
           <div>
-            <label className="form-label">Puntaje Mínimo Riesgo Alto 🔴</label>
+            <label className="form-label">Puntaje Mínimo Riesgo Alto</label>
             <input
               type="number"
               className="form-control"
@@ -431,7 +431,7 @@ export default function AdministracionPage() {
             />
           </div>
           <div>
-            <label className="form-label">Puntaje Mínimo Riesgo Medio 🟠</label>
+            <label className="form-label">Puntaje Mínimo Riesgo Medio</label>
             <input
               type="number"
               className="form-control"
@@ -453,7 +453,7 @@ export default function AdministracionPage() {
           Inhabilitar un ítem lo saca de los formularios de creación, sin afectar
           los registros históricos que ya lo usaban. */}
       <CatalogoAdmin
-        titulo="Áreas de Remisión (RQF17)"
+        titulo="Áreas de Remisión"
         icono="fa-share-nodes"
         api={areasRemisionApi}
         campos={CAMPOS_AREA_REMISION}
@@ -461,7 +461,7 @@ export default function AdministracionPage() {
         onError={setError}
       />
       <CatalogoAdmin
-        titulo="Estados de Remisión (RQF18)"
+        titulo="Estados de Remisión"
         icono="fa-list-check"
         api={estadosRemisionApi}
         campos={CAMPOS_ESTADO_REMISION}
@@ -469,7 +469,7 @@ export default function AdministracionPage() {
         onError={setError}
       />
       <CatalogoAdmin
-        titulo="Tipos de Intervención (RQF04)"
+        titulo="Tipos de Intervención"
         icono="fa-clipboard-check"
         api={tiposIntervencionApi}
         campos={CAMPOS_TIPO_INTERVENCION}

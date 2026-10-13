@@ -1,6 +1,6 @@
 /* ==========================================================================
-   Feature: Intervenciones (RQF04, RQF16, RQF19)
-   GET  /api/intervenciones        -> lista (aplica RNF01 sobre casos VBG)
+   Feature: Intervenciones
+   GET  /api/intervenciones        -> lista (aplica confidencialidad sobre casos VBG)
    GET  /api/intervenciones/tipos  -> catálogo de tipos de intervención ACTIVOS
    POST /api/intervenciones        -> registrar intervención
    ==========================================================================

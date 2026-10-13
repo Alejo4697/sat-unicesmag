@@ -5,7 +5,7 @@
      - Semaforización por Dimensiones del Instrumento de Caracterización
        (Individual, Institucional, Académico, Socioeconómico, Gestión Programa).
      - Botón y modal de consulta interactiva de respuestas por sesión/dimensión.
-     - Historial de intervenciones y remisiones con secreto profesional (RNF01).
+     - Historial de intervenciones y remisiones con secreto profesional.
    ========================================================================== */
 
 import { useEffect, useMemo, useState } from "react";
@@ -238,7 +238,7 @@ export default function FichaEstudiantePage() {
   }, [sesionActiva, estudiante]);
 
   return (
-    <AppLayout titulo="Ficha 360° del Estudiante" breadcrumb="Consulta Integral / Confidencialidad RNF01">
+    <AppLayout titulo="Ficha 360° del Estudiante" breadcrumb="Consulta Integral / Confidencialidad">
       {/* Buscador de estudiantes */}
       <div className="card" style={{ padding: "1rem 1.25rem" }}>
         <form onSubmit={buscar} style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -989,7 +989,7 @@ export default function FichaEstudiantePage() {
                       }}
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-                        <span style={{ color: "var(--text-muted)" }}>🎓 Pregrado ({estudiante.programaPregrado?.codigo}):</span>
+                        <span style={{ color: "var(--text-muted)" }}>Pregrado ({estudiante.programaPregrado?.codigo}):</span>
                         <strong style={{ color: "var(--brand-primary)" }}>
                           {estudiante.programaPregrado?.promedioAcademico !== null && estudiante.programaPregrado?.promedioAcademico !== undefined
                             ? Number(estudiante.programaPregrado.promedioAcademico).toFixed(2)
@@ -997,7 +997,7 @@ export default function FichaEstudiantePage() {
                         </strong>
                       </div>
                       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-                        <span style={{ color: "var(--text-muted)" }}>🎖️ Posgrado ({estudiante.programaPosgrado?.codigo}):</span>
+                        <span style={{ color: "var(--text-muted)" }}>Posgrado ({estudiante.programaPosgrado?.codigo}):</span>
                         <strong style={{ color: "#7c3aed" }}>
                           {estudiante.programaPosgrado?.promedioAcademico !== null && estudiante.programaPosgrado?.promedioAcademico !== undefined
                             ? Number(estudiante.programaPosgrado.promedioAcademico).toFixed(2)
@@ -1173,7 +1173,7 @@ export default function FichaEstudiantePage() {
                             {info.label}
                           </span>
                           <p style={{ fontWeight: 700, margin: "4px 0 0", fontSize: "0.85rem" }}>
-                            {nivel} {nivel === "Alto" ? "🔴" : nivel === "Medio" ? "🟠" : "🟢"}
+                            {nivel}
                           </p>
                           {caracterizaciones.length > 0 && (
                             <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", display: "block", marginTop: "2px" }}>

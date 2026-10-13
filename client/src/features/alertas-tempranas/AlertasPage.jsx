@@ -1,6 +1,6 @@
 /* ==========================================================================
    Feature: Alertas Tempranas
-   Formulario de alerta manual (RQF15) con búsqueda directa por
+   Formulario de alerta manual con búsqueda directa por
    Cédula o Código Institucional (sin selector dropdown) y registro activo.
    ========================================================================== */
 
@@ -15,7 +15,7 @@ const TIPOS = [
   "Emocional / Psicológica",
   "Convivencia y Relaciones",
   "Salud y Enfermedad",
-  "Violencia Basada en Género (VBG - RNF01)",
+  "Violencia Basada en Género (VBG)",
   "Socioeconómica y Transporte",
   "Consumo de Sustancias (SPA)",
   "Académica / Asistencia",
@@ -159,7 +159,7 @@ export default function AlertasPage() {
   return (
     <AppLayout
       titulo="Gestión de Alertas Manuales"
-      breadcrumb="Alertas Automáticas y Manuales RQF14 RQF15"
+      breadcrumb="Alertas Automáticas y Manuales"
     >
       {error && <div className="auth-error">{error}</div>}
       {mensaje && (
@@ -174,7 +174,7 @@ export default function AlertasPage() {
         {/* Formulario de Creación de Alerta Manual */}
         <div className="card" style={{ gridColumn: "span 12" }}>
           <div className="card-header">
-            <h3 className="card-title">Crear Alerta Manual (RQF15)</h3>
+            <h3 className="card-title">Crear Alerta Manual</h3>
           </div>
 
           <form onSubmit={handleSubmit}>
@@ -394,9 +394,9 @@ export default function AlertasPage() {
                   setForm({ ...form, nivelRiesgo: e.target.value })
                 }
               >
-                <option value="Alto">Alto 🔴</option>
-                <option value="Medio">Medio 🟠</option>
-                <option value="Bajo">Bajo 🟢</option>
+                <option value="Alto">Alto</option>
+                <option value="Medio">Medio</option>
+                <option value="Bajo">Bajo</option>
               </select>
             </div>
 

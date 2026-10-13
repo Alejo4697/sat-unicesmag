@@ -1,12 +1,12 @@
 /* ==========================================================================
    Feature: Administración - Usuarios y Parámetros (solo admin)
    GET    /api/administracion/usuarios          -> lista completa de usuarios
-   POST   /api/administracion/usuarios          -> crear usuario (RQF05)
+   POST   /api/administracion/usuarios          -> crear usuario 
    DELETE /api/administracion/usuarios/:id      -> desactivar/quitar usuario
-   GET    /api/administracion/umbrales-riesgo   -> umbrales actuales (RQF11)
-   PUT    /api/administracion/umbrales-riesgo   -> actualizar umbrales (RQF11)
+   GET    /api/administracion/umbrales-riesgo   -> umbrales actuales 
+   PUT    /api/administracion/umbrales-riesgo   -> actualizar umbrales 
    POST   /api/administracion/sincronizar       -> simula la sincronización
-                                                     académica institucional (RQF08)
+                                                     académica institucional 
    GET    /api/administracion/matriz-permisos   -> módulos x roles (editable)
                                                      + roles[].permisos
    PUT    /api/administracion/matriz-permisos   -> { modulo, rol, permitido }
@@ -146,7 +146,7 @@ router.post("/usuarios", async (req, res, next) => {
 
     // Credenciales placeholder: el alta desde Administración no captura
     // documento ni contraseña. Se marca debe_cambiar_password para forzar
-    // el cambio cuando exista autenticación real (RQF01).
+    // el cambio cuando exista autenticación real .
     const { rows: creado } = await client.query(
       `INSERT INTO sat.usuarios
          (correo_institucional, password_hash, numero_documento, nombres, apellidos, debe_cambiar_password)
@@ -240,7 +240,7 @@ router.delete("/usuarios/:id", async (req, res, next) => {
   }
 });
 
-// Umbrales de semaforización (RQF11): las filas "Alto" y "Medio" de
+// Umbrales de semaforización : las filas "Alto" y "Medio" de
 // sat.rangos_riesgo. `alto`/`medio` = puntaje_min de cada rango.
 router.get("/umbrales-riesgo", async (req, res, next) => {
   try {

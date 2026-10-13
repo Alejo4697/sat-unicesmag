@@ -172,7 +172,7 @@ export default function ReportesPage() {
   const columnasPrevia = REPORTES[reporteActivo].columnas;
 
   return (
-    <AppLayout titulo="Informes Institucionales & SNIES" breadcrumb="Generación y Descarga de Archivos RQF21">
+    <AppLayout titulo="Informes Institucionales & SNIES" breadcrumb="Generación y Descarga de Archivos">
       {error && <div className="auth-error">{error}</div>}
       {mensaje && (
         <div className="autosave-banner">
@@ -205,7 +205,7 @@ export default function ReportesPage() {
         </div>
       )}
 
-      {/* ---------------- Filtros (RQF13) ---------------- */}
+      {/* ---------------- Filtros ---------------- */}
       <div className="card">
         <div className="card-header">
           <h3 className="card-title">Filtros de Extracción</h3>

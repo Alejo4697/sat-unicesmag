@@ -41,7 +41,7 @@ sat-unicesmag/
 │       │   ├── context/        # AuthContext — usuario activo + cambio de rol
 │       │   ├── routing/        # ProtectedRoute — bloquea una ruta si el rol no tiene acceso
 │       │   ├── api/            # client.js — wrapper fetch con la URL base y el header de sesión
-│       │   ├── config/         # menuConfig.js — qué módulos ve cada rol (RQF03)
+│       │   ├── config/         # menuConfig.js — qué módulos ve cada rol
 │       │   ├── panels/         # paneles de UI de negocio reutilizados por 2+ features (IntervencionesPanel, RemisionesPanel)
 │       │   └── styles/         # variables.css, main.css, components.css (tal cual tu mockup)
 │       │
@@ -104,7 +104,7 @@ mismo formulario, tabla y lógica del mockup original, ahora contra la API
 real (nada vive ya solo en `localStorage` salvo lo que es legítimamente
 por-dispositivo, como el borrador de intervenciones):
 
-- **Autenticación**: login por selección de rol (RQF03), igual UX que
+- **Autenticación**: login por selección de rol, igual UX que
   `index.html`.
 - **Monitoreo**: KPIs, barra de filtros y las dos gráficas Chart.js de
   `dashboard.html`. La de "Semaforización por Campos de Riesgo" ya no usa
@@ -115,15 +115,15 @@ por-dispositivo, como el borrador de intervenciones):
   perfil, semaforización por dimensiones (calculada de `puntajesCampo`,
   no "quemada" como en el mockup) y la línea de tiempo de intervenciones
   con la confidencialidad VBG ya resuelta por el backend.
-- **Alertas Tempranas**: formulario de alerta manual (RQF15) + registro
+- **Alertas Tempranas**: formulario de alerta manual + registro
   activo, con acción directa "Iniciar Atención" hacia Intervenciones.
 - **Intervenciones**: formulario de proceso de escucha con auto-guardado
-  de borrador (RQF04/RNF04, en `localStorage` — legítimo: es conveniencia
+  de borrador (en `localStorage` — legítimo: es conveniencia
   por-dispositivo), dropzone de evidencias PDF (clic o arrastrar, máx.
-  5MB, RQF16) y casilla de caso VBG.
-- **Remisiones**: formulario de canalización (RQF17) y bandeja con modal
+  5MB) y casilla de caso VBG.
+- **Remisiones**: formulario de canalización y bandeja con modal
   "Gestionar Estado" para el flujo Generada → Recibida/Asignada → En
-  Atención → Atendida (RQF18).
+  Atención → Atendida.
 - **Caracterización**: el instrumento oficial completo — 34 ítems en 5
   dimensiones, barra de progreso en vivo y el motor de riesgo, que en el
   mockup corría solo en el navegador y nunca se guardaba; acá corre en el
@@ -131,38 +131,62 @@ por-dispositivo, como el borrador de intervenciones):
   verdad) y cada envío se persiste.
 - **Actividades VEC**: catálogo institucional, registros vinculados a
   participantes, filtro por actividad/periodo y búsqueda de asistentes.
+  La administración consulta jornadas en PostgreSQL, permite crear/editar y
+  cambiar su estado con auditoria. La creacion pide periodo, actividad, fechas,
+  modalidad, ubicacion y descripcion. La busqueda de personas e historial
+  reutilizan las identidades y participaciones institucionales. La migracion
+  `server/src/features/actividades/administracion_actividades.sql` extiende
+  `sat.actividades_vec` y crea su auditoría; se aplica con
+  `npm --prefix server run db:actividades`.
   La exportación genera un libro `.xlsx` de consulta con únicamente las hojas
   de colaboradores, estudiantes, egresados y externos; excluye las bases,
   hojas de apoyo, validaciones de captura y macros de la plantilla.
-  La verificación de listas físicas requiere aplicar
-  `server/src/features/actividades/verificacion_elegibilidad.sql` sobre la base
-  SAT. El cambio añade marcas de asistencia desactivadas por defecto; la
+  La verificacion de listas fisicas usa
+  `server/src/features/actividades/verificacion_elegibilidad.sql`, aplicada a
+  la base conectada; anade marcas de asistencia desactivadas por defecto. La
   restricción única actividad-participante evita inscripciones repetidas en una
-  misma sesión. Al registrar una persona con varios roles, el formulario muestra
-  una advertencia para confirmar el rol y el tipo de apoyo antes de guardar.
+  misma sesión. Si se elige para una persona un rol que no aparece entre sus
+  roles registrados, el formulario advierte cuáles constan antes de continuar.
   La verificación se encuentra en «Asistencia y reportes»: se selecciona la
   actividad, periodo y jornada; luego se puede comparar un Excel `.xlsx` con
   documentos pegados o confirmar cada asistente en el checklist. El archivo se
   procesa localmente y solo se verifican personas ya inscritas en esa jornada.
-  «Consultar apoyos» consulta los apoyos financieros sincronizados en
-  `sat.apoyos_financieros`, vinculados con `sat.estudiantes`, `sat.personas` y
-  `sat.periodos_academicos`. Permite filtrar por nombre/concepto del apoyo,
-  periodo e identificación, nombre o código, y agrupa por estudiante para
-  contar beneficiarios únicos. Esta fuente es independiente de los tipos de
-  apoyo que pueden seleccionarse al registrar participantes de una actividad.
+  «Consultar apoyos» consulta los beneficiarios registrados en las tablas
+  institucionales y conserva el catálogo de tipos de apoyo.
+  En «Registrar participante», el formulario permite escoger una jornada futura
+  ya registrada y precarga su actividad, periodo y fechas. Si todavía no hay
+  jornadas futuras, se puede programar la primera desde el catálogo institucional;
+  los registros posteriores con la misma actividad, periodo y fechas se vinculan
+  a esa misma jornada. La consulta por identificación reutiliza los datos
+  personales y académicos disponibles en `sat.personas`, `sat.estudiantes`,
+  `sat.matriculas`, `sat.usuarios` y `sat.participantes_vec`, completando los
+  campos vacíos desde esas fuentes independientemente del rol elegido. Una misma
+  persona puede tener varios roles; el formulario avisa si se selecciona uno que
+  no está entre sus roles registrados. Egresados y externos también
+  se pueden encontrar aunque todavía no tengan un registro previo en
+  `participantes_vec`. Los campos sin dato muestran «No aplica»; se mantienen los
+  campos de la plantilla Excel y se omiten los datos de perfil no relacionados
+  con ese registro.
+  El reporte Excel de asistentes respeta las cuatro hojas y columnas de la
+  plantilla institucional, prioriza el orden de los tipos de apoyo (1 a 5) y
+  muestra «No aplica» cuando un campo del reporte no tiene dato. El periodo se
+  presenta en el encabezado del libro, no en la columna «Tipo actividad».
+  La base conectada ya tiene aplicada la migracion de asistencia; para una
+  nueva instalacion ejecuta `server/src/features/actividades/verificacion_elegibilidad.sql`.
+
 - **Reportes y SNIES**: las 3 exportaciones CSV reales (SNIES/MEN,
   Intervenciones, Remisiones) descargadas desde datos reales del backend,
   más el generador de informes filtrado.
-- **Administración**: banner de sincronización académica (RQF08), alta y
-  baja de usuarios (RQF05), umbrales de riesgo editables (RQF11) y la
+- **Administración**: banner de sincronización académica, alta y
+  baja de usuarios, umbrales de riesgo editables y la
   matriz de roles y permisos servida real.
 - **Layout general** (`shared/layout`): extraído para no repetir el HTML
   del sidebar/topbar en cada página, como pasaba en cada `.html`.
-- **Control de acceso por rol (RQF03)**: `shared/config/menuConfig.js` en
+- **Control de acceso por rol**: `shared/config/menuConfig.js` en
   el cliente y `shared/data/menuConfig.js` en el servidor (deben
   reflejarse exactamente igual entre sí), más `shared/middleware/requireRole.js`
   que protege cada endpoint de cada feature.
-- **Confidencialidad VBG (RNF01)**: `shared/security/vbg.js` sanea el
+- **Confidencialidad VBG**: `shared/security/vbg.js` sanea el
   detalle sensible en el propio backend si el rol activo no está
   autorizado — la usan `alertas-tempranas`, `intervenciones` y la línea de
   tiempo de `seguimiento-estudiantil` (una sola regla, un solo lugar).
@@ -172,14 +196,19 @@ por-dispositivo, como el borrador de intervenciones):
 
 ## Qué queda pendiente
 
-Nada crítico está sin migrar, pero quedan puntos abiertos, marcados con
-`// TODO` en el código:
+Además de los puntos abiertos marcados con `// TODO`, Actividades VEC tiene
+estos pendientes de conexión/datos:
+
+- Dos actividades importadas del Excel no tienen proyecto. El formulario las
+  informa y no permite registrarlas porque el esquema exige ese campo; se debe
+  completar el proyecto correcto desde la fuente institucional.
+
+Otros puntos abiertos del proyecto:
 
 - Los **filtros de "Reportes"** (periodo/programa/semestre/riesgo) son
   visuales — el botón "Generar Informe Filtrado" no recorta todavía el
   CSV exportado (igual que en el mockup original).
-- **"Editar usuario"** en Administración es un botón de marcador
-  (`RQF06`) — falta la pantalla de edición de permisos.
+- **"Editar usuario"** en Administración es un botón de marcador — falta la pantalla de edición de permisos.
 - No hay **autenticación real** (contraseñas/JWT): el login sigue siendo
   "de mockup" por selección de rol, documentado como tal en
   `server/src/shared/middleware/requireRole.js`.

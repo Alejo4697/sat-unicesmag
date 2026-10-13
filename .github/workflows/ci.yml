@@ -1,0 +1,35 @@
+name: CI SAT-UNICESMAG
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    name: Build & Check
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [20.x]
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+
+      - name: Instalar dependencias (Workspaces)
+        run: npm install
+
+      - name: Compilar Frontend (React + Vite)
+        run: npm run build
+
+      - name: Validar sintaxis del Backend (Express)
+        run: node --check server/src/server.js

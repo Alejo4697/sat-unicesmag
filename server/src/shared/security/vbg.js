@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Regla de Secreto Profesional & Confidencialidad (RNF01)
+   Regla de Secreto Profesional & Confidencialidad
    Vive en shared/ (no en una sola feature) porque la usan varias:
    alertas-tempranas, intervenciones y seguimiento-estudiantil (la línea de
    tiempo de la Ficha 360° reutiliza exactamente la misma sanitización que
@@ -27,7 +27,7 @@ export function sanitizarAlerta(alerta, user) {
 
 // Regla de autoría: motivo/resumenAcuerdo/adjuntos solo son visibles para
 // quien registró la intervención (comparando id de usuario), salvo en casos
-// VBG donde además se conserva la vía de acceso por rol/cargo (RNF01) para
+// VBG donde además se conserva la vía de acceso por rol/cargo para
 // que Consultorios Jurídicos, USP y Administración puedan supervisar casos
 // que no registraron ellos mismos.
 export function sanitizarIntervencion(intervencion, user) {
@@ -35,7 +35,7 @@ export function sanitizarIntervencion(intervencion, user) {
 
   if (!intervencion.esSensibleVBG) {
     // TODO: acceso total de admin a intervenciones no-VBG ajenas es temporal,
-    // pendiente de confirmar en reunión de equipo (no está en la política RNF01).
+    // pendiente de confirmar en reunión de equipo .
     if (esAutor || user?.rol === "admin") return { ...intervencion, detalleVisible: true };
     return {
       ...intervencion,

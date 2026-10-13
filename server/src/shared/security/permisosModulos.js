@@ -1,5 +1,5 @@
 /* ==========================================================================
-   SAT-UNICESMAG - Permisos de acceso por módulo (RQF03 / RBAC editable)
+   SAT-UNICESMAG - Permisos de acceso por módulo (RBAC editable)
    ==========================================================================
    Antes "qué rol ve qué módulo" estaba fijo en shared/data/menuConfig.js.
    Ahora vive en PostgreSQL y se edita desde Administración → Matriz de

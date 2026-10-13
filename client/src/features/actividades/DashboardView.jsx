@@ -4,7 +4,7 @@ import ParticipantesTable from "./ParticipantesTable.jsx";
 
 const CARDS = [
   { label: "Total de participantes", key: "total_participantes", icon: "fa-users", color: "icon-blue" },
-  { label: "Total de actividades", key: "total_actividades", icon: "fa-calendar-check", color: "icon-green" },
+  { label: "Jornadas programadas", key: "total_actividades", icon: "fa-calendar-check", color: "icon-green" },
   { label: "Estudiantes", key: "estudiantes", icon: "fa-user-graduate", color: "icon-blue" },
   { label: "Colaboradores", key: "colaboradores", icon: "fa-user-tie", color: "icon-orange" },
   { label: "Egresados", key: "egresados", icon: "fa-user-check", color: "icon-green" },
@@ -44,7 +44,7 @@ export default function DashboardView() {
               </span>
               <span className="text-muted" style={{ fontSize: "0.72rem", marginTop: "0.4rem" }}>
                 {card.key === "total_actividades"
-                  ? "Actividades VEC registradas"
+                  ? "Jornadas de actividades VEC"
                   : cargando ? "Consultando base de datos" : "Según participantes registrados"}
               </span>
             </div>

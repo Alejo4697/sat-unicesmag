@@ -20,9 +20,9 @@ const sqlPath = join(dirname(fileURLToPath(import.meta.url)), archivo);
 try {
   const sql = await readFile(sqlPath, "utf8");
   await pool.query(sql);
-  console.log(`✅ Seed aplicado: ${sqlPath}`);
+  console.log(`[OK] Seed aplicado: ${sqlPath}`);
 } catch (err) {
-  console.error("❌ Falló el seed:", err.message);
+  console.error("[ERROR] Falló el seed:", err.message);
   process.exitCode = 1;
 } finally {
   await pool.end();

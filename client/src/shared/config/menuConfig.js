@@ -1,5 +1,5 @@
 /* ==========================================================================
-   SAT-UNICESMAG - Menú Dinámico por Rol (RQF03) - espejo del cliente
+   SAT-UNICESMAG - Menú Dinámico por Rol - espejo del cliente
    Debe reflejar server/src/shared/data/menuConfig.js (mismos ids, orden y
    flags `hidden`).
 

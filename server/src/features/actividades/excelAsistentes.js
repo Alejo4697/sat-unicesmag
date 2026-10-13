@@ -16,7 +16,7 @@ const OUTPUT_SHEET_NAMES = ["COLABORADORES", "ESTUDIANTES", "EGRESADOS", "EXTERN
 const COLUMNS = [
   "periodo", "identificacion", "tipoDocumento", "codigo", "apellidosNombres",
   "programaPregrado", "programaPosgrado", "semestre", "genero", "jornada",
-  "correo", "contacto", "tipoParticipante", "edad", "etnia", "municipio",
+  "correo", "contacto", "detalleTipoParticipante", "edad", "etnia", "municipio",
   "conflictoArmado", "discapacidad", "actividad", "descripcionActividad",
   "proyecto", "tipoActividad", "tipoActividadOtra", "alianzaInterinstitucional",
   "entidadAlianza", "articulacionInstitucional", "dependencia", "dependenciaOtra",
@@ -25,6 +25,7 @@ const COLUMNS = [
   "estrategiaInclusiva", "tipoApoyo",
 ];
 const DATE_COLUMNS = new Set([30, 31]);
+const UNAVAILABLE = "No aplica";
 
 function replaceWorksheetData(xml, transformRows) {
   const match = xml.match(/(<sheetData\b[^>]*>)([\s\S]*?)(<\/sheetData>)/);
@@ -341,19 +342,25 @@ function createDataRow(templateRow, assistant, rowNumber) {
     if (reference && style) styles.set(reference, style);
   }
 
-  const values = COLUMNS.map((column) => assistant[column] ?? "");
+  const values = COLUMNS.map((column) => {
+    const value = assistant[column];
+    return value == null || value === "" ? UNAVAILABLE : value;
+  });
   const cells = values.map((value, index) => {
     const columnNumber = index + 1;
     const reference = `${columnName(columnNumber)}${rowNumber}`;
     const style = styles.get(columnName(columnNumber));
     const styleAttribute = style ? ` s="${style}"` : "";
-    if (DATE_COLUMNS.has(columnNumber) && value) {
+    if (DATE_COLUMNS.has(columnNumber) && value !== UNAVAILABLE) {
       const serial = excelDate(value);
       if (serial !== "") return `<c r="${reference}"${styleAttribute}><v>${serial}</v></c>`;
-      return style ? `<c r="${reference}"${styleAttribute}/>` : "";
+      if (!value) return style ? `<c r="${reference}"${styleAttribute}/>` : "";
     }
     if (columnNumber === 14 && value !== "") {
-      return `<c r="${reference}"${styleAttribute}><v>${Number(value)}</v></c>`;
+      const numericValue = Number(value);
+      if (Number.isFinite(numericValue)) {
+        return `<c r="${reference}"${styleAttribute}><v>${numericValue}</v></c>`;
+      }
     }
     if (columnNumber === 24 && typeof value === "boolean") {
       return `<c r="${reference}"${styleAttribute} t="inlineStr"><is><t>${value ? "Sí" : "No"}</t></is></c>`;

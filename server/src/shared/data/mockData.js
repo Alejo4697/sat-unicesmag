@@ -252,7 +252,7 @@ export const MOCK_DATA = {
     }
   ],
 
-  // Umbrales de semaforización de riesgo (RQF11) - editables desde
+  // Umbrales de semaforización de riesgo - editables desde
   // Administración. En el mockup el botón "Actualizar Umbrales" solo
   // mostraba un toast; acá sí se guarda el valor.
   umbralesRiesgo: { alto: 10, medio: 6 },
@@ -271,7 +271,7 @@ export const MOCK_DATA = {
   }
 };
 
-// Regla de Secreto Profesional & Confidencialidad (RNF01) - portada de state.js
+// Regla de Secreto Profesional & Confidencialidad - portada de state.js
 export function puedeVerDetalleVBG(userRole, userCargo = "") {
   if (userRole === "admin") return true;
   if (userCargo.includes("Consultorios Jurídicos") || userCargo.includes("USP") || userCargo.includes("Servicios Psicológicos")) {

@@ -19,7 +19,6 @@ function getActiveUserId() {
 
 export async function apiFetch(path, options = {}) {
   const userId = getActiveUserId();
-
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
     headers: {

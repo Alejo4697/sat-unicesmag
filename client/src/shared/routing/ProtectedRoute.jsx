@@ -23,7 +23,25 @@ function primeraRutaPermitida(puedeAcceder) {
 export default function ProtectedRoute({ moduleId, children }) {
   const { user, cargando, puedeAcceder, cerrarSesion } = useAuth();
 
-  if (cargando) return null;
+  if (cargando) {
+    return (
+      <main
+        role="status"
+        aria-live="polite"
+        style={{
+          minHeight: "100vh",
+          display: "grid",
+          placeContent: "center",
+          gap: "0.75rem",
+          textAlign: "center",
+          color: "var(--text-muted)",
+        }}
+      >
+        <i className="fas fa-spinner fa-spin" aria-hidden="true" style={{ fontSize: "1.5rem" }}></i>
+        <span>Verificando sesión y permisos…</span>
+      </main>
+    );
+  }
   if (!user) return <Navigate to="/" replace />;
 
   // Aislamiento estricto del Rol Estudiante

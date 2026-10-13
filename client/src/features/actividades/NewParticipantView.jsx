@@ -3,6 +3,7 @@ import {
   buscarParticipante,
   getCatalogoMaestroActividades,
   getCatalogosEstudiante,
+  getEventosProximos,
   registrarActividad,
 } from "./participantesApi.js";
 
@@ -12,6 +13,17 @@ const TIPOS = [
   { value: "EGRESADO", label: "Egresado" },
   { value: "EXTERNO", label: "Externo" },
 ];
+const DETALLES_POR_TIPO = {
+  ESTUDIANTE: [{ value: "Estudiante", label: "Estudiante" }],
+  COLABORADOR: ["Docente", "Administrativo", "Directivo", "Profesional", "Otro"].map((value) => ({ value, label: value })),
+  EGRESADO: ["Titulado", "En proceso de grado", "Egresado no titulado"].map((value) => ({ value, label: value })),
+  EXTERNO: [
+    "Externo", "Madre de estudiante", "Padre de estudiante", "Acudiente de estudiante",
+    "Acudiente de colaborador", "Familiar de estudiante", "Familiar de colaborador",
+    "Hijo de estudiante", "Hijo de colaborador", "Pareja de estudiante", "Pareja de colaborador",
+    "Otro familiar de estudiante", "Otro familiar de colaborador",
+  ].map((value) => ({ value, label: value })),
+};
 
 const TIPOS_DOCUMENTO = [
   { value: "CC", label: "Cédula de ciudadanía" },
@@ -26,6 +38,12 @@ const TIPOS_DOCUMENTO = [
   { value: "SC", label: "Salvoconducto" },
   { value: "NUIP", label: "Número Único de Identificación Personal (NUIP)" },
   { value: "OTRO", label: "Otro documento" },
+];
+
+const MODALIDADES = [
+  { value: "Virtual", label: "Virtual" },
+  { value: "Presencial", label: "Presencial" },
+  { value: "Híbrida", label: "Híbrida" },
 ];
 
 const ALIAS_TIPOS_DOCUMENTO = new Map([
@@ -58,6 +76,8 @@ function normalizarTipoDocumento(value) {
 }
 
 const EMPTY_FORM = {
+  detalleTipoParticipante: "",
+  detalleTipoParticipanteOtro: "",
   tipoDocumento: "",
   identificacion: "",
   nombres: "",
@@ -83,8 +103,11 @@ const EMPTY_FORM = {
 };
 
 const EMPTY_ACTIVIDAD = {
+  idEventoExistente: "",
   idPeriodo: "",
   idCatalogoActividad: "",
+  descripcion: "",
+  tipoActividadOtra: "",
   lineaAccion: "",
   componente: "",
   programa: "",
@@ -96,6 +119,7 @@ const EMPTY_ACTIVIDAD = {
   idDependencia: "",
   dependenciaOtra: "",
   modalidad: "",
+  ubicacion: "",
   fechaInicio: "",
   fechaFinalizacion: "",
   idTipoApoyo: "",
@@ -104,11 +128,39 @@ const EMPTY_ACTIVIDAD = {
   estrategiaPoliticaEducacionInclusiva: "",
 };
 
+const EMPTY_COMPLEMENTOS = {
+  tipoActividadOtra: "",
+  alianzaInterinstitucional: "",
+  entidadAlianza: "",
+  articulacionInstitucional: "",
+  idDependencia: "",
+  dependenciaOtra: "",
+  estrategiaPoliticaBienestar: "",
+  estrategiaPoliticaPermanencia: "",
+  estrategiaPoliticaEducacionInclusiva: "",
+  idTipoApoyo: "",
+};
+
 const EMPTY_CATALOGOS = {
   periodos: [],
   dependencias: [],
   tiposApoyo: [],
+  generos: [],
+  etnias: [],
+  municipios: [],
 };
+
+const OPCIONES_GENERO = ["Mujer", "Hombre", "No binario", "Prefiere no responder", "Otro"];
+const OPCIONES_ETNIA = ["Indígena", "Negra", "Afrocolombiana", "Raizal", "Palenquera", "Rrom", "Ninguna", "Prefiere no responder", "Otra"];
+
+function opcionesConValorActual(base, valor) {
+  const opciones = [...new Set([...(base || []), ...(valor ? [valor] : [])])]
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, "es"));
+  return opciones.map((item) => typeof item === "string"
+    ? { value: item, label: item }
+    : item);
+}
 
 function autoCompletarRamasUnicas(next, catalogoActividades, startAt) {
   const hierarchy = [
@@ -132,8 +184,9 @@ function autoCompletarRamasUnicas(next, catalogoActividades, startAt) {
   return next;
 }
 
-const UNAVAILABLE = "No registrado";
+const UNAVAILABLE = "No aplica";
 const NULL_CATALOG_VALUE = "__SIN_VALOR_EN_EXCEL__";
+const OTRA_DEPENDENCIA_VALUE = "__OTRA_DEPENDENCIA__";
 
 function filterCatalogo(rows, filters) {
   return rows.filter((row) => Object.entries(filters).every(([key, value]) => {
@@ -166,33 +219,15 @@ function calculateAge(dateString) {
   return age >= 0 ? String(age) : "";
 }
 
-function SectionCard({ title, icon, children, defaultOpen = false }) {
-  const [open, setOpen] = useState(defaultOpen);
+function SectionCard({ title, icon, children }) {
   return (
-    <details
-      className="card"
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-      style={{ padding: 0, overflow: "hidden" }}
-    >
-      <summary
-        style={{
-          alignItems: "center",
-          cursor: "pointer",
-          display: "flex",
-          justifyContent: "space-between",
-          listStyle: "none",
-          padding: "1rem 1.25rem",
-        }}
-      >
-        <span className="card-title">
-          <i className={`fas ${icon}`} aria-hidden="true"></i>
-          {title}
-        </span>
-        <i className={`fas ${open ? "fa-chevron-up" : "fa-chevron-down"}`} aria-hidden="true"></i>
-      </summary>
-      <div style={{ padding: "0 1.25rem 1.25rem" }}>{children}</div>
-    </details>
+    <section className="card">
+      <h3 className="card-title">
+        <i className={`fas ${icon}`} aria-hidden="true"></i>
+        {title}
+      </h3>
+      {children}
+    </section>
   );
 }
 
@@ -206,6 +241,7 @@ function Field({
   required = false,
   placeholder,
   options,
+  maxLength,
 }) {
   const id = `vec-${name}`;
   const displayValue = value == null ? "" : String(value);
@@ -221,7 +257,7 @@ function Field({
           required={required}
           disabled={readOnly}
         >
-          <option value="">{placeholder || "Selecciona una opción"}</option>
+          <option value="">{placeholder || (required ? "Selecciona una opción" : "No aplica")}</option>
           {options.map((option) => (
             <option key={option.value} value={option.value}>{option.label}</option>
           ))}
@@ -234,7 +270,8 @@ function Field({
           onChange={(event) => onChange(name, event.target.value)}
           readOnly={readOnly}
           required={required}
-          placeholder={placeholder || (readOnly && !displayValue ? UNAVAILABLE : "")}
+          maxLength={maxLength}
+          placeholder={placeholder || (!displayValue && (!required || readOnly) ? UNAVAILABLE : "")}
           rows={3}
         />
       ) : (
@@ -246,8 +283,12 @@ function Field({
           onChange={(event) => onChange(name, event.target.value)}
           readOnly={readOnly}
           required={required}
-          placeholder={placeholder || (readOnly && !displayValue ? UNAVAILABLE : "")}
+          maxLength={maxLength}
+          placeholder={placeholder || (!displayValue && (!required || readOnly) ? UNAVAILABLE : "")}
         />
+      )}
+      {type === "date" && !required && !displayValue && (
+        <span className="text-muted" style={{ display: "block", marginTop: "0.25rem" }}>No aplica si no corresponde.</span>
       )}
     </div>
   );
@@ -259,8 +300,7 @@ function FormGrid({ children }) {
       display: "grid",
       gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
       gap: "0 1rem",
-    }}
-    >
+    }}>
       {children}
     </div>
   );
@@ -274,11 +314,12 @@ export default function NewParticipantView({ onCancel }) {
   const [actividad, setActividad] = useState(EMPTY_ACTIVIDAD);
   const [catalogos, setCatalogos] = useState(EMPTY_CATALOGOS);
   const [catalogoActividades, setCatalogoActividades] = useState([]);
+  const [eventosProximos, setEventosProximos] = useState([]);
   const [catalogosStatus, setCatalogosStatus] = useState("idle");
   const [error, setError] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [confirmacion, setConfirmacion] = useState("");
-  const [confirmarMultirole, setConfirmarMultirole] = useState(false);
+  const [confirmacionRolApoyo, setConfirmacionRolApoyo] = useState(false);
   const [intentoBusqueda, setIntentoBusqueda] = useState(0);
   const [intentoCatalogos, setIntentoCatalogos] = useState(0);
 
@@ -286,8 +327,10 @@ export default function NewParticipantView({ onCancel }) {
   const encontrada = busqueda.status === "found";
   const duplicada = busqueda.status === "duplicate";
   const personaEncontrada = encontrada || duplicada;
-  const soloDemostracion = Boolean(busqueda.participante?.soloDemostracion);
-  const editable = busqueda.status === "not-found";
+  const rolesRegistrados = busqueda.participante?.roles || [];
+  const rolesVerificados = busqueda.participante?.rolesVerificados || [];
+  const tieneRolesMultiples = rolesRegistrados.length > 1;
+  const esRolNuevoParaPersona = personaEncontrada && !rolesRegistrados.includes(tipo);
   const esperandoResultado = ["waiting", "loading"].includes(busqueda.status);
   const esEstudiante = tipo === "ESTUDIANTE";
   const filasLinea = filterCatalogo(catalogoActividades, { lineaAccion: actividad.lineaAccion });
@@ -298,8 +341,41 @@ export default function NewParticipantView({ onCancel }) {
     !actividad.actividadBusqueda
     || row.actividad.toLocaleLowerCase("es").includes(actividad.actividadBusqueda.toLocaleLowerCase("es"))
   ));
+  const actividadesSinProyecto = filasProyecto.filter((row) => (
+    !row.proyecto?.trim()
+    && (!actividad.actividadBusqueda
+      || row.actividad.toLocaleLowerCase("es").includes(actividad.actividadBusqueda.toLocaleLowerCase("es")))
+  ));
   const actividadSeleccionada = catalogoActividades
     .find((row) => row.id === actividad.idCatalogoActividad);
+  const apoyoSugerido = catalogos.tiposApoyo.find((item) => (
+    String(item.id) === String(actividadSeleccionada?.idTipoApoyoSugerido || "")
+  ));
+  const tipoCatalogado = String(actividadSeleccionada?.tipoActividad || "").trim();
+  const requiereEspecificarOtra = /\botr[oa]s?\b/i.test(tipoCatalogado);
+  const dependenciaSeleccionada = catalogos.dependencias
+    .find((dependencia) => dependencia.id === actividad.idDependencia);
+  const dependenciaEsOtra = actividad.idDependencia === OTRA_DEPENDENCIA_VALUE
+    || /\botr[oa]s?\b/i.test(String(dependenciaSeleccionada?.nombre || ""));
+  const alianzaActiva = actividad.alianzaInterinstitucional === "true";
+  const conservarDatosAlianza = Boolean(
+    actividad.idEventoExistente && (actividad.entidadAlianza || actividad.articulacionInstitucional)
+  );
+  const mostrarDatosAlianza = alianzaActiva || conservarDatosAlianza;
+  const mostrarOtraDependencia = dependenciaEsOtra
+    || Boolean(actividad.idEventoExistente && actividad.dependenciaOtra);
+  const mostrarEspecificacionOtra = requiereEspecificarOtra
+    || Boolean(actividad.idEventoExistente && actividad.tipoActividadOtra);
+  const programaBienestarActual = actividadSeleccionada?.programa || actividad.programa || "";
+  const bienestarAplica = Boolean(programaBienestarActual.trim())
+    && programaBienestarActual !== NULL_CATALOG_VALUE;
+  const bienestarTieneInfoExistente = Boolean(
+    actividad.idEventoExistente && (
+      actividad.estrategiaPoliticaBienestar
+      || actividad.estrategiaPoliticaPermanencia
+      || actividad.estrategiaPoliticaEducacionInclusiva
+    )
+  );
   const opcionesLinea = catalogOptions(catalogoActividades, "lineaAccion", "Sin línea en el Excel");
   const opcionesComponente = catalogOptions(filasLinea, "componente", "Sin componente en el Excel");
   const opcionesPrograma = catalogOptions(filasComponente, "programa", "Sin programa en el Excel");
@@ -332,9 +408,28 @@ export default function NewParticipantView({ onCancel }) {
         if (controller.signal.aborted) return;
         if (result.encontrado) {
           const participante = result.participante;
+          const esRolNuevo = !(participante.roles || []).includes(tipo);
+          const datosParticipante = esRolNuevo ? {
+            ...participante,
+            codigo: "",
+            programaAcademico: "",
+            programaPosgradoDependencia: "",
+            semestre: "",
+            jornada: "",
+            dependencia: "",
+            cargo: "",
+            fechaEgreso: "",
+            detalleTipoParticipante: "",
+          } : participante;
+          const detalleColaborador = tipo === "COLABORADOR"
+            ? String(datosParticipante.detalleTipoParticipante || "")
+            : "";
+          const detalleOtro = detalleColaborador.match(/^Otro:\s*(.*)$/i);
           setForm({
             ...EMPTY_FORM,
-            ...participante,
+            ...datosParticipante,
+            detalleTipoParticipante: detalleOtro ? "Otro" : datosParticipante.detalleTipoParticipante,
+            detalleTipoParticipanteOtro: detalleOtro?.[1] || "",
             celular: participante.contacto || "",
             contacto: participante.contacto || "",
             fechaNacimiento: participante.fechaNacimiento
@@ -347,9 +442,9 @@ export default function NewParticipantView({ onCancel }) {
             participante,
             mensaje: participante.yaRegistrado
               ? `Persona encontrada y asociada al rol ${participante.tipoRegistrado || tipo}. Puedes registrarla en otra actividad con este rol.`
-              : participante.soloDemostracion
-                ? "Encontrado en datos de prueba del proyecto; no está en la base académica."
-                : "Persona encontrada en la fuente disponible. Sus datos existentes se precargaron.",
+              : esRolNuevo
+                ? `Persona encontrada con otros roles. Se creará su perfil adicional como ${TIPOS.find((item) => item.value === tipo)?.label || tipo}.`
+                : "Persona encontrada en los registros institucionales. Sus datos disponibles se precargaron.",
           });
         } else {
           setForm({ ...EMPTY_FORM, identificacion: identificacion.trim() });
@@ -383,12 +478,13 @@ export default function NewParticipantView({ onCancel }) {
 
     let activa = true;
     setCatalogosStatus("loading");
-    Promise.all([getCatalogosEstudiante(), getCatalogoMaestroActividades()])
-      .then(([data, masterCatalog]) => {
+    Promise.all([getCatalogosEstudiante(), getCatalogoMaestroActividades(), getEventosProximos()])
+      .then(([data, masterCatalog, upcomingEvents]) => {
         if (!activa) return;
         const available = { ...EMPTY_CATALOGOS, ...data };
         setCatalogos(available);
         setCatalogoActividades(masterCatalog);
+        setEventosProximos(upcomingEvents);
         setActividad((current) => ({
           ...current,
           idPeriodo: current.idPeriodo
@@ -411,6 +507,49 @@ export default function NewParticipantView({ onCancel }) {
 
   function actualizarActividad(name, value) {
     setActividad((current) => ({ ...current, [name]: value }));
+  }
+
+  function seleccionarEvento(value) {
+    if (value === "NUEVA") {
+      setActividad((current) => ({
+        ...EMPTY_ACTIVIDAD,
+        idPeriodo: current.idPeriodo
+          || catalogos.periodos.find((periodo) => periodo.activo)?.id
+          || "",
+      }));
+      return;
+    }
+    const evento = eventosProximos.find((item) => item.id === value);
+    if (!evento) return;
+    const catalogoEvento = catalogoActividades.find((item) => item.id === evento.idCatalogoActividad);
+    setActividad({
+      ...EMPTY_ACTIVIDAD,
+      idEventoExistente: evento.id,
+      idPeriodo: evento.idPeriodo,
+      idCatalogoActividad: evento.idCatalogoActividad,
+      descripcion: evento.descripcion || "",
+      tipoActividadOtra: evento.tipoActividadOtra || "",
+      lineaAccion: evento.lineaAccion || NULL_CATALOG_VALUE,
+      componente: evento.componente || NULL_CATALOG_VALUE,
+      programa: evento.programa || NULL_CATALOG_VALUE,
+      proyecto: evento.proyecto || NULL_CATALOG_VALUE,
+      actividadBusqueda: evento.actividad,
+      alianzaInterinstitucional: evento.alianzaInterinstitucional == null
+        ? ""
+        : String(evento.alianzaInterinstitucional),
+      entidadAlianza: evento.entidadAlianza || "",
+      articulacionInstitucional: evento.articulacionInstitucional || "",
+      idDependencia: evento.idDependencia || "",
+      dependenciaOtra: evento.dependenciaOtra || "",
+      modalidad: evento.modalidad || "",
+      ubicacion: evento.ubicacion || "",
+      fechaInicio: String(evento.fechaInicio).slice(0, 10),
+      fechaFinalizacion: String(evento.fechaFinalizacion).slice(0, 10),
+      idTipoApoyo: catalogoEvento?.idTipoApoyoSugerido || "",
+      estrategiaPoliticaBienestar: evento.estrategiaPoliticaBienestar || catalogoEvento?.estrategiaPoliticaBienestar || "",
+      estrategiaPoliticaPermanencia: evento.estrategiaPoliticaPermanencia || catalogoEvento?.estrategiaPoliticaPermanencia || "",
+      estrategiaPoliticaEducacionInclusiva: evento.estrategiaPoliticaEducacionInclusiva || catalogoEvento?.estrategiaPoliticaEducacionInclusiva || "",
+    });
   }
 
   function actualizarFiltroCatalogo(name, value) {
@@ -450,7 +589,7 @@ export default function NewParticipantView({ onCancel }) {
     setIdentificacion("");
     setForm(EMPTY_FORM);
     setActividad(EMPTY_ACTIVIDAD);
-    setConfirmarMultirole(false);
+    setConfirmacionRolApoyo(false);
     setError("");
     setConfirmacion("");
   }
@@ -476,10 +615,6 @@ export default function NewParticipantView({ onCancel }) {
       setError("Espera a que termine la búsqueda por identificación.");
       return;
     }
-    if (soloDemostracion) {
-      setError("Este registro pertenece a datos de prueba del proyecto y no se puede guardar como real.");
-      return;
-    }
     if (!form.nombres?.trim() || !form.apellidos?.trim()) {
       setError("Completa nombres y apellidos.");
       return;
@@ -488,14 +623,30 @@ export default function NewParticipantView({ onCancel }) {
       setError("Selecciona el tipo de documento de identificación.");
       return;
     }
+    if (tipo !== "ESTUDIANTE" && !form.detalleTipoParticipante) {
+      setError("Selecciona la clasificación del participante que corresponde al registro VEC.");
+      return;
+    }
+    if (tipo === "COLABORADOR" && form.detalleTipoParticipante === "Otro" && !form.detalleTipoParticipanteOtro.trim()) {
+      setError("Especifica el tipo de colaborador.");
+      return;
+    }
     if (!actividad.idCatalogoActividad) {
       setError("Selecciona una actividad del catálogo institucional.");
+      return;
+    }
+    if (tieneRolesMultiples && actividad.idTipoApoyo && !confirmacionRolApoyo) {
+      setError("Confirma el rol bajo el cual se registra el tipo de apoyo para esta persona.");
       return;
     }
 
     const participante = {
       ...form,
       tipo,
+      detalleTipoParticipante: tipo === "ESTUDIANTE" ? "Estudiante"
+        : tipo === "COLABORADOR" && form.detalleTipoParticipante === "Otro"
+          ? `Otro: ${form.detalleTipoParticipanteOtro.trim()}`
+          : form.detalleTipoParticipante,
       identificacion: form.identificacion || identificacion.trim(),
       celular: form.celular || form.contacto || null,
       semestre: form.semestre === "" ? null : Number(form.semestre),
@@ -503,24 +654,23 @@ export default function NewParticipantView({ onCancel }) {
       fechaNacimiento: form.fechaNacimiento || null,
       fechaEgreso: form.fechaEgreso || null,
     };
-
     if (catalogosStatus !== "loaded") {
       setError("Espera a que terminen de cargar los catálogos de actividad.");
       return;
     }
-    if ((busqueda.participante?.roles?.length || 0) > 1 && !confirmarMultirole) {
-      setConfirmarMultirole(true);
-      return;
-    }
-
-    await guardarRegistro(participante);
+    await guardarRegistro(participante, actividad);
   }
 
-  async function guardarRegistro(participante) {
+  async function guardarRegistro(participante, actividadParaGuardar) {
     setGuardando(true);
     try {
-      await registrarActividad({ participante, actividad });
-      setConfirmarMultirole(false);
+      await registrarActividad({ participante, actividad: actividadParaGuardar });
+      let errorActualizacionEventos = "";
+      try {
+        setEventosProximos(await getEventosProximos());
+      } catch (refreshError) {
+        errorActualizacionEventos = refreshError.message || "No se pudo actualizar la lista de eventos.";
+      }
       setBusqueda((current) => ({
         ...current,
         status: "duplicate",
@@ -530,9 +680,16 @@ export default function NewParticipantView({ onCancel }) {
           yaRegistrado: true,
           roles: [...new Set([...(current.participante?.roles || []), tipo])],
         },
-        mensaje: `Actividad guardada con el rol ${tipo}. Puedes vincular a esta persona a otra jornada.`,
+        mensaje: actividad.idEventoExistente
+          ? `Participante vinculado al evento con el rol ${tipo}.`
+          : `Participante registrado y jornada programada con el rol ${tipo}.`,
       }));
-      setConfirmacion(`Actividad guardada correctamente con el rol ${tipo}.`);
+      setConfirmacion(actividad.idEventoExistente
+        ? "Participante vinculado correctamente al evento."
+        : "Participante registrado y nueva jornada programada correctamente.");
+      if (errorActualizacionEventos) {
+        setError(`El registro se guardó, pero no se pudo actualizar la lista de eventos: ${errorActualizacionEventos}`);
+      }
     } catch (requestError) {
       setError(requestError.message || "No se pudo guardar el registro.");
     } finally {
@@ -541,7 +698,7 @@ export default function NewParticipantView({ onCancel }) {
   }
 
   const mostrarPerfil = ["found", "not-found", "duplicate"].includes(busqueda.status);
-  const perfilSoloLectura = personaEncontrada || !editable;
+  const perfilSoloLectura = personaEncontrada && !esRolNuevoParaPersona;
   const datoAutocompletadoSoloLectura = (name) => perfilSoloLectura && Boolean(form[name]);
   const contactoActual = form.contacto || form.celular || form.telefono;
 
@@ -560,6 +717,9 @@ export default function NewParticipantView({ onCancel }) {
             <option value="">Selecciona el tipo</option>
             {TIPOS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
           </select>
+          <p className="text-muted">
+            La búsqueda completa los datos disponibles. Si la persona no aparece en los registros institucionales, se creará su ficha en Actividades con el rol seleccionado; esto no modifica los directorios académicos o de personal.
+          </p>
         </div>
         <div className="form-group">
           <label className="form-label" htmlFor="participant-identification" style={{ fontSize: "0.95rem" }}>
@@ -579,6 +739,7 @@ export default function NewParticipantView({ onCancel }) {
               setForm(EMPTY_FORM);
               setError("");
               setConfirmacion("");
+              setConfirmacionRolApoyo(false);
             }}
             autoComplete="off"
             disabled={!tipo}
@@ -613,12 +774,28 @@ export default function NewParticipantView({ onCancel }) {
         )}
         {(busqueda.participante?.roles?.length || 0) > 0 && (
           <div className="vec-participant-roles" aria-label="Roles institucionales detectados">
-            <span>Roles detectados:</span>
+            <span>Roles en Actividades:</span>
             {busqueda.participante.roles.map((role) => (
               <span className={`vec-role-badge vec-role-${role.toLowerCase()}`} key={role}>
                 {TIPOS.find((item) => item.value === role)?.label || role}
               </span>
             ))}
+          </div>
+        )}
+        {(busqueda.participante?.rolesVerificados?.length || 0) > 0 && (
+          <div className="vec-participant-roles" aria-label="Roles institucionales verificados">
+            <span>Roles institucionales verificados:</span>
+            {busqueda.participante.rolesVerificados.map((role) => (
+              <span className={`vec-role-badge vec-role-${role.toLowerCase()}`} key={role}>
+                {TIPOS.find((item) => item.value === role)?.label || role}
+              </span>
+            ))}
+          </div>
+        )}
+        {mostrarPerfil && ["ESTUDIANTE", "COLABORADOR"].includes(tipo)
+          && !rolesVerificados.includes(tipo) && (
+          <div className="text-muted vec-participant-status" role="status">
+            Este rol se guardará en el registro de Actividades aunque no exista en el directorio institucional.
           </div>
         )}
         {busqueda.status === "error" && (
@@ -634,7 +811,12 @@ export default function NewParticipantView({ onCancel }) {
 
       {mostrarPerfil && (
         <>
-          <SectionCard title="Datos de identificación y básicos" icon="fa-address-card" defaultOpen>
+          <SectionCard
+            title="Datos básicos"
+            icon="fa-address-card"
+            defaultOpen
+            description="Los datos encontrados en la fuente institucional se completan automáticamente."
+          >
             <FormGrid>
               <Field name="identificacion" label="Identificación" value={form.identificacion || identificacion} onChange={() => {}} readOnly />
               <Field
@@ -649,42 +831,62 @@ export default function NewParticipantView({ onCancel }) {
               <Field name="codigo" label="Código" value={form.codigo} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("codigo")} />
               <Field name="nombres" label="Nombres" value={form.nombres} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("nombres")} required />
               <Field name="apellidos" label="Apellidos" value={form.apellidos} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("apellidos")} required />
-              <Field name="tipoUsuario" label="Tipo usuario (participante)" value={tipo} onChange={() => {}} readOnly />
             </FormGrid>
           </SectionCard>
 
-          {(esEstudiante || tipo === "EGRESADO" || tipo === "COLABORADOR") && (
-            <SectionCard title="Información académica del estudiante" icon="fa-graduation-cap">
-              <FormGrid>
-                {esEstudiante && (
-                  <Field name="periodoFuente" label="Periodo académico (fuente)" value={form.periodo} onChange={() => {}} readOnly />
-                )}
-                <Field name="programaAcademico" label="Programa académico pregrado" value={form.programaAcademico} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("programaAcademico")} />
-                {esEstudiante && (
-                  <Field name="programaPosgradoDependencia" label="Programa académico posgrado" value={form.programaPosgradoDependencia} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("programaPosgradoDependencia")} />
-                )}
-                <Field name="semestre" label="Semestre" value={form.semestre} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("semestre")} />
-                {esEstudiante && <Field name="jornada" label="Jornada" value={form.jornada} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("jornada")} />}
-                {tipo === "COLABORADOR" && <Field name="dependencia" label="Dependencia" value={form.dependencia} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("dependencia")} />}
-                {tipo === "COLABORADOR" && <Field name="cargo" label="Cargo" value={form.cargo} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("cargo")} />}
-                {tipo === "EGRESADO" && <Field name="fechaEgreso" label="Fecha de egreso" value={form.fechaEgreso} onChange={actualizarCampo} type="date" readOnly={datoAutocompletadoSoloLectura("fechaEgreso")} />}
-              </FormGrid>
-            </SectionCard>
-          )}
-
-          <SectionCard title="Perfil sociodemográfico y bienestar" icon="fa-people-group">
+          <SectionCard
+            title="Información académica e institucional"
+            icon="fa-graduation-cap"
+            summary={form.programaAcademico || form.dependencia || "Opcional"}
+          >
             <FormGrid>
-              <Field name="genero" label="Género" value={form.genero} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("genero")} />
+              <Field
+                name="detalleTipoParticipante"
+                label="Clasificación en el registro VEC"
+                value={form.detalleTipoParticipante || (tipo === "ESTUDIANTE" ? "Estudiante" : "")}
+                onChange={actualizarCampo}
+                required
+                readOnly={tipo === "ESTUDIANTE" || datoAutocompletadoSoloLectura("detalleTipoParticipante")}
+                options={DETALLES_POR_TIPO[tipo] || []}
+              />
+              {tipo === "COLABORADOR" && form.detalleTipoParticipante === "Otro" && (
+                <Field
+                  name="detalleTipoParticipanteOtro"
+                  label="Especifica el tipo de colaborador"
+                  value={form.detalleTipoParticipanteOtro}
+                  onChange={actualizarCampo}
+                  placeholder="Ej.: contratista, practicante, auxiliar"
+                  required
+                  maxLength={114}
+                  readOnly={datoAutocompletadoSoloLectura("detalleTipoParticipanteOtro")}
+                />
+              )}
+              {esEstudiante && (
+                <Field name="periodoFuente" label="Periodo académico (fuente)" value={form.periodo} onChange={() => {}} readOnly />
+              )}
+              <Field name="programaAcademico" label="Programa académico pregrado" value={form.programaAcademico} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("programaAcademico")} />
+              <Field name="programaPosgradoDependencia" label="Programa académico posgrado / dependencia" value={form.programaPosgradoDependencia} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("programaPosgradoDependencia")} />
+              <Field name="semestre" label="Semestre" value={form.semestre} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("semestre")} />
+              <Field name="jornada" label="Jornada" value={form.jornada} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("jornada")} />
+              <Field name="dependencia" label="Dependencia de la persona" value={form.dependencia} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("dependencia")} />
+              <Field name="cargo" label="Cargo" value={form.cargo} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("cargo")} />
+              <Field name="fechaEgreso" label="Fecha de egreso" value={form.fechaEgreso} onChange={actualizarCampo} type="date" readOnly={datoAutocompletadoSoloLectura("fechaEgreso")} />
+            </FormGrid>
+          </SectionCard>
+
+          <SectionCard title="Perfil sociodemográfico" icon="fa-people-group" summary="Opcional">
+            <FormGrid>
+              <Field name="genero" label="Género" value={form.genero} onChange={actualizarCampo} options={opcionesConValorActual([...OPCIONES_GENERO, ...catalogos.generos], form.genero)} readOnly={datoAutocompletadoSoloLectura("genero")} />
               <Field name="fechaNacimiento" label="Fecha de nacimiento" value={form.fechaNacimiento} onChange={actualizarCampo} type="date" readOnly={datoAutocompletadoSoloLectura("fechaNacimiento")} />
-              <Field name="edad" label="Edad" value={calculateAge(form.fechaNacimiento)} onChange={() => {}} readOnly />
-              <Field name="etnia" label="Etnia" value={form.etnia} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("etnia")} />
-              <Field name="municipio" label="Municipio" value={form.municipio} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("municipio")} />
+              {form.fechaNacimiento && <Field name="edad" label="Edad" value={calculateAge(form.fechaNacimiento)} onChange={() => {}} readOnly />}
+              <Field name="etnia" label="Etnia" value={form.etnia} onChange={actualizarCampo} options={opcionesConValorActual([...OPCIONES_ETNIA, ...catalogos.etnias], form.etnia)} readOnly={datoAutocompletadoSoloLectura("etnia")} />
+              <Field name="municipio" label="Municipio" value={form.municipio} onChange={actualizarCampo} options={opcionesConValorActual(catalogos.municipios, form.municipio)} readOnly={datoAutocompletadoSoloLectura("municipio")} />
               <Field name="conflictoArmado" label="Conflicto armado" value={form.conflictoArmado} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("conflictoArmado")} />
               <Field name="discapacidad" label="Discapacidad" value={form.discapacidad} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("discapacidad")} />
             </FormGrid>
           </SectionCard>
 
-          <SectionCard title="Contacto" icon="fa-envelope">
+          <SectionCard title="Contacto" icon="fa-envelope" summary={contactoActual || form.correo || "Opcional"}>
             <FormGrid>
               <Field name="correo" label="Correo" value={form.correo} onChange={actualizarCampo} type="email" readOnly={datoAutocompletadoSoloLectura("correo")} />
               <Field name="contacto" label="Contacto" value={contactoActual} onChange={(name, value) => {
@@ -695,7 +897,12 @@ export default function NewParticipantView({ onCancel }) {
 
           {tipo && (
             <>
-              <SectionCard title={`Actividad y participación como ${TIPOS.find((item) => item.value === tipo)?.label || tipo}`} icon="fa-calendar-check" defaultOpen>
+              <SectionCard
+                title={`Actividad · ${TIPOS.find((item) => item.value === tipo)?.label || tipo}`}
+                icon="fa-calendar-check"
+                defaultOpen
+                description="Vincula a una jornada existente o registra una nueva. Los datos del catálogo se completan automáticamente."
+              >
               {catalogosStatus === "loading" && <p className="text-muted" role="status">Cargando catálogos...</p>}
               {catalogosStatus === "error" && (
                 <div className="auth-error" role="alert">
@@ -710,58 +917,135 @@ export default function NewParticipantView({ onCancel }) {
                   </button>
                 </div>
               )}
-              <FormGrid>
-                <Field
-                  name="idPeriodo"
-                  label="Periodo"
-                  value={actividad.idPeriodo}
-                  onChange={actualizarActividad}
-                  required
-                  options={catalogos.periodos.map((periodo) => ({ value: periodo.id, label: periodo.nombre }))}
-                />
+                {tieneRolesMultiples && (
+                  <div className="vec-role-warning-details" role="status" style={{ margin: "0 0 1rem" }}>
+                    <strong>Esta persona tiene varios roles registrados en Actividades.</strong>
+                    <div className="vec-participant-roles" aria-label="Roles registrados para el apoyo">
+                      {rolesRegistrados.map((role) => (
+                        <span className={`vec-role-badge vec-role-${role.toLowerCase()}`} key={role}>
+                          {TIPOS.find((item) => item.value === role)?.label || role}
+                        </span>
+                      ))}
+                    </div>
+                    <p style={{ marginBottom: 0 }}>
+                      Este registro de actividad y el tipo de apoyo seleccionado quedarán asociados al rol
+                      {" "}<strong>{TIPOS.find((item) => item.value === tipo)?.label || tipo}</strong>.
+                      Verifica que ese sea el rol con el que recibe el apoyo.
+                    </p>
+                  </div>
+                )}
+                <SectionCard
+                  title="Información básica de la jornada"
+                  icon="fa-calendar-days"
+                  defaultOpen
+                  summary={actividad.idEventoExistente ? "Evento existente" : "Nueva jornada"}
+                >
+                  <FormGrid>
+                    <Field
+                      name="eventoDisponible"
+                      label="Actividad creada"
+                      value={actividad.idEventoExistente || "NUEVA"}
+                      onChange={(_name, value) => seleccionarEvento(value)}
+                      options={[
+                        { value: "NUEVA", label: "Programar una nueva jornada del catálogo" },
+                        ...eventosProximos.map((evento) => ({
+                          value: evento.id,
+                          label: `${evento.actividad} · ${evento.periodo} · ${String(evento.fechaInicio).slice(0, 10)} · ${evento.totalParticipantes} inscritos`,
+                        })),
+                      ]}
+                    />
+                    <Field
+                      name="idPeriodo"
+                      label="Periodo"
+                      value={actividad.idPeriodo}
+                      onChange={actualizarActividad}
+                      required
+                      readOnly={Boolean(actividad.idEventoExistente)}
+                      options={catalogos.periodos.map((periodo) => ({ value: periodo.id, label: periodo.nombre }))}
+                    />
+                    <Field name="fechaInicio" label="Fecha de inicio" value={actividad.fechaInicio} onChange={actualizarActividad} type="date" required readOnly={Boolean(actividad.idEventoExistente)} />
+                    <Field name="fechaFinalizacion" label="Fecha de finalización" value={actividad.fechaFinalizacion} onChange={actualizarActividad} type="date" required readOnly={Boolean(actividad.idEventoExistente)} />
+                    <Field
+                      name="modalidad"
+                      label="Modalidad"
+                      value={actividad.modalidad}
+                      onChange={actualizarActividad}
+                      readOnly={Boolean(actividad.idEventoExistente)}
+                      required={!actividad.idEventoExistente}
+                      options={MODALIDADES}
+                    />
+                    <Field name="ubicacion" label="Ubicación" value={actividad.ubicacion} onChange={actualizarActividad} readOnly={Boolean(actividad.idEventoExistente)} />
+                    <Field name="descripcion" label="Descripción de la jornada" value={actividad.descripcion || actividadSeleccionada?.descripcion || ""} onChange={actualizarActividad} type="textarea" readOnly={Boolean(actividad.idEventoExistente)} />
+                  </FormGrid>
+                  {eventosProximos.length === 0 && (
+                    <p className="text-muted" role="status">
+                      No hay actividades creadas disponibles. Puedes programar una desde el catálogo institucional.
+                    </p>
+                  )}
+                  {actividad.idEventoExistente && (
+                    <p className="text-muted" role="status">
+                      Se vinculará a este evento; sus datos y fechas se conservan desde el registro existente.
+                    </p>
+                  )}
+                </SectionCard>
+
+                <SectionCard
+                  title="Clasificación de la actividad"
+                  icon="fa-list-check"
+                  defaultOpen
+                >
+                  <FormGrid>
                 <Field
                   name="lineaAccion"
                   label="Área / línea de acción"
                   value={actividad.lineaAccion}
                   onChange={actualizarFiltroCatalogo}
                   required
+                  readOnly={Boolean(actividad.idEventoExistente)}
                   options={opcionesLinea}
                 />
-                <Field
+                {actividad.lineaAccion && <Field
                   name="componente"
                   label="Componente"
                   value={actividad.componente}
                   onChange={actualizarFiltroCatalogo}
                   required={opcionesComponente.length > 1}
-                  readOnly={!actividad.lineaAccion}
+                  readOnly={Boolean(actividad.idEventoExistente) || !actividad.lineaAccion}
                   options={opcionesComponente}
-                />
+                />}
+                {actividad.componente && (
                 <Field
                   name="programa"
                   label="Programa"
                   value={actividad.programa}
                   onChange={actualizarFiltroCatalogo}
                   required={opcionesPrograma.length > 1}
-                  readOnly={!actividad.lineaAccion || (opcionesComponente.length > 1 && !actividad.componente)}
+                  readOnly={Boolean(actividad.idEventoExistente)
+                    || !actividad.lineaAccion
+                    || (opcionesComponente.length > 1 && !actividad.componente)}
                   options={opcionesPrograma}
                 />
+                )}
+                {actividad.programa && (
                 <Field
                   name="proyecto"
                   label="Proyecto"
                   value={actividad.proyecto}
                   onChange={actualizarFiltroCatalogo}
                   required={opcionesProyecto.length > 1}
-                  readOnly={!actividad.programa}
+                  readOnly={Boolean(actividad.idEventoExistente) || !actividad.programa}
                   options={opcionesProyecto}
                 />
-                <Field
+                )}
+                  {actividad.proyecto && <>
+                  <Field
                   name="actividadBusqueda"
                   label="Buscar actividad"
                   value={actividad.actividadBusqueda}
                   onChange={actualizarFiltroCatalogo}
                   type="search"
                   placeholder="Escribe para filtrar las actividades"
-                  readOnly={!actividad.proyecto}
+                  readOnly={Boolean(actividad.idEventoExistente) || !actividad.proyecto}
                 />
                 <Field
                   name="idCatalogoActividad"
@@ -770,120 +1054,197 @@ export default function NewParticipantView({ onCancel }) {
                   onChange={(_name, id) => {
                     const selected = catalogoActividades.find((item) => item.id === id);
                     if (!selected) {
-                      actualizarActividad("idCatalogoActividad", "");
+                      setActividad((current) => ({
+                        ...current,
+                        idCatalogoActividad: "",
+                      }));
                       return;
                     }
                     setActividad((current) => ({
                       ...current,
                       idCatalogoActividad: id,
+                      descripcion: selected.descripcion || "",
                       lineaAccion: selected.lineaAccion || NULL_CATALOG_VALUE,
                       componente: selected.componente || NULL_CATALOG_VALUE,
                       programa: selected.programa || NULL_CATALOG_VALUE,
                       proyecto: selected.proyecto || NULL_CATALOG_VALUE,
+                      idTipoApoyo: selected.idTipoApoyoSugerido || "",
+                      estrategiaPoliticaBienestar: selected.estrategiaPoliticaBienestar || "",
+                      estrategiaPoliticaPermanencia: selected.estrategiaPoliticaPermanencia || "",
+                      estrategiaPoliticaEducacionInclusiva: selected.estrategiaPoliticaEducacionInclusiva || "",
                     }));
                   }}
                   required
-                  readOnly={!actividad.proyecto}
+                  readOnly={Boolean(actividad.idEventoExistente) || !actividad.proyecto}
                   options={actividadesDisponibles.map((item) => ({
                     value: item.id,
                     label: item.actividad,
                   }))}
                   placeholder={actividad.proyecto ? "Selecciona una actividad" : "Selecciona primero su clasificación"}
                 />
-                {actividad.proyecto && actividadesDisponibles.length === 0 && (
-                  <p className="text-muted" role="status">
-                    No hay actividades para esa clasificación o búsqueda.
-                  </p>
-                )}
-                <Field
-                  name="tipoActividadCatalogada"
-                  label="Tipo de actividad"
-                  value={actividadSeleccionada?.tipoActividad || ""}
-                  onChange={() => {}}
-                  readOnly
-                />
-                <Field
-                  name="proyectoCatalogado"
-                  label="Proyecto seleccionado"
-                  value={actividadSeleccionada?.proyecto || ""}
-                  onChange={() => {}}
-                  readOnly
-                />
-                <Field
-                  name="programaCatalogado"
-                  label="Programa seleccionado"
-                  value={actividadSeleccionada?.programa || ""}
-                  onChange={() => {}}
-                  readOnly
-                />
-                <Field
-                  name="alianzaInterinstitucional"
-                  label="Alianzas interinstitucional"
-                  value={actividad.alianzaInterinstitucional}
-                  onChange={actualizarActividad}
-                  options={[{ value: "true", label: "Sí" }, { value: "false", label: "No" }]}
-                />
-                <Field name="entidadAlianza" label="Entidad alianza" value={actividad.entidadAlianza} onChange={actualizarActividad} />
-                <Field name="articulacionInstitucional" label="Articulación institucional" value={actividad.articulacionInstitucional} onChange={actualizarActividad} />
-                <Field
-                  name="idDependencia"
-                  label="Dependencia"
-                  value={actividad.idDependencia}
-                  onChange={actualizarActividad}
-                  options={catalogos.dependencias.map((dependencia) => ({ value: dependencia.id, label: dependencia.nombre }))}
-                />
-                <Field name="dependenciaOtra" label="Otra dependencia" value={actividad.dependenciaOtra} onChange={actualizarActividad} />
-                <Field name="modalidad" label="Modalidad" value={actividad.modalidad} onChange={actualizarActividad} />
-                <Field name="fechaInicio" label="Fecha inicio" value={actividad.fechaInicio} onChange={actualizarActividad} type="date" required />
-                <Field name="fechaFinalizacion" label="Fecha finalización" value={actividad.fechaFinalizacion} onChange={actualizarActividad} type="date" required />
-              </FormGrid>
-              <Field
-                name="descripcionCatalogada"
-                label="Descripción actividad"
-                value={actividadSeleccionada?.descripcion || ""}
-                onChange={() => {}}
-                type="textarea"
-                readOnly
-              />
-              {actividadSeleccionada && (
-                <p className="text-muted">
-                  Fuente: {actividadSeleccionada.hojaOrigen}, fila {actividadSeleccionada.filaOrigen}.
-                  {" "}Componente y línea corresponden a los valores originales de esa fila.
-                </p>
-              )}
-              </SectionCard>
+                  </>}
+                  </FormGrid>
+                  {actividad.proyecto === NULL_CATALOG_VALUE && actividadesSinProyecto.length > 0 && (
+                    <p className="text-muted" role="status">
+                      Esta clasificación tiene actividades sin proyecto en el catálogo. Esos registros no se pueden programar hasta completar ese dato.
+                    </p>
+                  )}
+                  {actividad.proyecto && actividadesDisponibles.length === 0 && actividadesSinProyecto.length === 0 && (
+                    <p className="text-muted" role="status">No hay actividades para esa clasificación o búsqueda.</p>
+                  )}
+                  {actividadSeleccionada && (
+                    <div className="vec-activity-catalog-summary">
+                      <span><strong>Tipo:</strong> {tipoCatalogado || "No especificado en el catálogo"}</span>
+                      <span><strong>Programa:</strong> {actividadSeleccionada.programa || "No aplica"}</span>
+                      <span><strong>Proyecto:</strong> {actividadSeleccionada.proyecto || "No aplica"}</span>
+                      {actividadSeleccionada.descripcion && (
+                        <p><strong>Descripción:</strong> {actividadSeleccionada.descripcion}</p>
+                      )}
+                      <small>Fuente: {actividadSeleccionada.hojaOrigen}, fila {actividadSeleccionada.filaOrigen}.</small>
+                    </div>
+                  )}
+                </SectionCard>
 
-              <SectionCard title="Datos de bienestar" icon="fa-heart">
-              <FormGrid>
+                <SectionCard
+                  title="Información complementaria"
+                  icon="fa-sliders"
+                summary={mostrarEspecificacionOtra ? "Especifica el tipo “Otro”" : "Opcional"}
+                  description="Completa estos datos solo cuando apliquen a la jornada. Los campos vacíos se guardan como nulos."
+                >
+                  <FormGrid>
+                    {mostrarEspecificacionOtra && (
+                      <Field
+                        name="tipoActividadOtra"
+                        label={'Especifica el tipo de actividad "Otro"'}
+                        value={actividad.tipoActividadOtra}
+                        onChange={actualizarActividad}
+                        readOnly={Boolean(actividad.idEventoExistente)}
+                      />
+                    )}
+                    <Field
+                      name="alianzaInterinstitucional"
+                      label="¿La jornada tiene alianza institucional?"
+                      value={actividad.alianzaInterinstitucional}
+                      onChange={(_name, value) => setActividad((current) => ({
+                        ...current,
+                        alianzaInterinstitucional: value,
+                        ...(current.idEventoExistente ? {} : { entidadAlianza: "", articulacionInstitucional: "" }),
+                      }))}
+                      readOnly={Boolean(actividad.idEventoExistente)}
+                      placeholder="No aplica"
+                      options={[{ value: "true", label: "Sí" }, { value: "false", label: "No" }]}
+                    />
+                    {mostrarDatosAlianza && (
+                      <>
+                        <Field name="entidadAlianza" label="Entidad de la alianza" value={actividad.entidadAlianza} onChange={actualizarActividad} readOnly={Boolean(actividad.idEventoExistente)} />
+                        <Field name="articulacionInstitucional" label="Articulación institucional" value={actividad.articulacionInstitucional} onChange={actualizarActividad} readOnly={Boolean(actividad.idEventoExistente)} />
+                      </>
+                    )}
+                    <Field
+                      name="idDependencia"
+                      label="Dependencia responsable"
+                      value={actividad.idDependencia}
+                      onChange={(_name, value) => setActividad((current) => ({
+                        ...current,
+                        idDependencia: value,
+                        ...(current.idEventoExistente ? {} : { dependenciaOtra: "" }),
+                      }))}
+                      readOnly={Boolean(actividad.idEventoExistente)}
+                      placeholder="No aplica"
+                      options={[
+                        ...catalogos.dependencias.map((dependencia) => ({ value: dependencia.id, label: dependencia.nombre })),
+                        { value: OTRA_DEPENDENCIA_VALUE, label: "Otra dependencia (especificar)" },
+                      ]}
+                    />
+                    {mostrarOtraDependencia && (
+                      <Field name="dependenciaOtra" label="Especifica la otra dependencia" value={actividad.dependenciaOtra} onChange={actualizarActividad} readOnly={Boolean(actividad.idEventoExistente)} />
+                    )}
+                    <Field
+                      name="idTipoApoyo"
+                      label="Tipo de apoyo asociado"
+                      value={actividad.idTipoApoyo}
+                      onChange={(name, value) => {
+                        actualizarActividad(name, value);
+                        setConfirmacionRolApoyo(false);
+                      }}
+                      placeholder="No aplica"
+                      options={catalogos.tiposApoyo.map((apoyo) => ({ value: apoyo.id, label: apoyo.nombre }))}
+                    />
+                    <div className="form-group" style={{ gridColumn: "1 / -1" }}>
+                      {actividad.idTipoApoyo ? (
+                        <p className="text-muted" role="status">
+                          Se guardará explícitamente como <strong>{catalogos.tiposApoyo.find((item) => String(item.id) === String(actividad.idTipoApoyo))?.nombre || "tipo seleccionado"}</strong>.
+                        </p>
+                      ) : apoyoSugerido ? (
+                        <div className="vec-role-warning-details" role="status">
+                          <span>Coincidencia sugerida por la ruta institucional “{actividadSeleccionada.rutaApoyoSugerida}”: <strong>{apoyoSugerido.nombre}</strong>. La sugerencia no se guardará hasta que la selecciones.</span>
+                          <button className="btn btn-outline btn-sm" type="button" onClick={() => {
+                            actualizarActividad("idTipoApoyo", apoyoSugerido.id);
+                            setConfirmacionRolApoyo(false);
+                          }}>Usar sugerencia</button>
+                        </div>
+                      ) : (
+                        <p className="text-muted" role="status">
+                          No hay una ruta institucional coincidente. Si aplica, selecciona el tipo manualmente; si no, déjalo en “No aplica”.
+                        </p>
+                      )}
+                    </div>
+                  </FormGrid>
+                  {tieneRolesMultiples && actividad.idTipoApoyo && (
+                    <label className="form-group vec-support-role-confirmation">
+                      <input
+                        type="checkbox"
+                        checked={confirmacionRolApoyo}
+                        onChange={(event) => setConfirmacionRolApoyo(event.target.checked)}
+                      />
+                      <span>
+                        Confirmo que el tipo de apoyo se registra bajo el rol seleccionado: {" "}
+                        <strong>{TIPOS.find((item) => item.value === tipo)?.label || tipo}</strong>.
+                      </span>
+                    </label>
+                  )}
+                </SectionCard>
+                  <SectionCard
+                    title="Estrategias de bienestar, permanencia e inclusión"
+                    icon="fa-heart"
+                    summary={bienestarAplica || bienestarTieneInfoExistente ? "Opcional" : "No aplica a esta actividad"}
+                    description={bienestarAplica
+                      ? `Programa asociado: ${programaBienestarActual}`
+                      : bienestarTieneInfoExistente
+                        ? "La actividad conserva las estrategias guardadas en el evento existente."
+                        : "La actividad seleccionada no tiene programa de bienestar asociado en el catálogo."}
+                  >
+                    {bienestarAplica || bienestarTieneInfoExistente ? (
+                      <FormGrid>
                 <Field
-                  name="estrategiaPoliticaBienestar"
-                  label="Estrategia política de bienestar"
-                  value={actividad.estrategiaPoliticaBienestar}
-                  onChange={actualizarActividad}
-                  type="textarea"
-                />
+                          name="estrategiaPoliticaBienestar"
+                          label="Estrategia de bienestar"
+                          value={actividad.estrategiaPoliticaBienestar}
+                          onChange={actualizarActividad}
+                          type="textarea"
+                          readOnly={Boolean(actividad.idEventoExistente)}
+                        />
                 <Field
-                  name="estrategiaPoliticaPermanencia"
-                  label="Estrategia política de permanencia y graduación"
-                  value={actividad.estrategiaPoliticaPermanencia}
-                  onChange={actualizarActividad}
-                  type="textarea"
-                />
+                          name="estrategiaPoliticaPermanencia"
+                          label="Estrategia de permanencia y graduación"
+                          value={actividad.estrategiaPoliticaPermanencia}
+                          onChange={actualizarActividad}
+                          type="textarea"
+                          readOnly={Boolean(actividad.idEventoExistente)}
+                        />
                 <Field
-                  name="estrategiaPoliticaEducacionInclusiva"
-                  label="Estrategia política de educación inclusiva"
-                  value={actividad.estrategiaPoliticaEducacionInclusiva}
-                  onChange={actualizarActividad}
-                  type="textarea"
-                />
-                <Field
-                  name="idTipoApoyo"
-                  label="Tipo apoyo"
-                  value={actividad.idTipoApoyo}
-                  onChange={actualizarActividad}
-                  options={catalogos.tiposApoyo.map((apoyo) => ({ value: apoyo.id, label: apoyo.nombre }))}
-                />
-              </FormGrid>
+                          name="estrategiaPoliticaEducacionInclusiva"
+                          label="Estrategia de educación inclusiva"
+                          value={actividad.estrategiaPoliticaEducacionInclusiva}
+                          onChange={actualizarActividad}
+                          type="textarea"
+                          readOnly={Boolean(actividad.idEventoExistente)}
+                        />
+                      </FormGrid>
+                    ) : (
+                      <p className="text-muted" role="status">No aplica a esta actividad.</p>
+                    )}
+                  </SectionCard>
               </SectionCard>
             </>
           )}
@@ -898,7 +1259,6 @@ export default function NewParticipantView({ onCancel }) {
           className="btn btn-primary"
           type="submit"
           disabled={guardando
-            || soloDemostracion
             || !tipo
             || !identificacion.trim()
             || esperandoResultado
@@ -907,74 +1267,13 @@ export default function NewParticipantView({ onCancel }) {
             || catalogosStatus !== "loaded"}
         >
           <i className={`fas ${guardando ? "fa-spinner fa-spin" : "fa-floppy-disk"}`} aria-hidden="true"></i>
-          {guardando ? "Guardando registro..." : "Guardar actividad con este rol"}
+          {guardando
+            ? "Guardando registro..."
+            : actividad.idEventoExistente
+              ? "Vincular participante al evento"
+              : "Registrar participante y programar jornada"}
         </button>
       </div>
-      {confirmarMultirole && (
-        <div className="vec-role-warning-overlay">
-          <section
-            className="vec-role-warning-modal"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="vec-role-warning-title"
-            aria-describedby="vec-role-warning-description"
-          >
-            <div className="vec-role-warning-icon" aria-hidden="true">
-              <i className="fas fa-triangle-exclamation"></i>
-            </div>
-            <h2 id="vec-role-warning-title">Verifica los roles de esta persona</h2>
-            <p id="vec-role-warning-description">
-              Esta persona tiene varios roles institucionales:{" "}
-              <strong>
-                {busqueda.participante?.roles
-                  ?.map((role) => TIPOS.find((item) => item.value === role)?.label || role)
-                  .join(", ")}
-              </strong>
-              . Comprueba que el rol seleccionado y el tipo de apoyo sean correctos antes de continuar.
-            </p>
-            <dl className="vec-role-warning-details">
-              <div>
-                <dt>Rol para esta actividad</dt>
-                <dd>{TIPOS.find((item) => item.value === tipo)?.label || tipo}</dd>
-              </div>
-              <div>
-                <dt>Tipo de apoyo</dt>
-                <dd>
-                  {catalogos.tiposApoyo.find((item) => item.id === actividad.idTipoApoyo)?.nombre
-                    || "No especificado"}
-                </dd>
-              </div>
-            </dl>
-            <div className="vec-role-warning-actions">
-              <button
-                className="btn btn-outline"
-                type="button"
-                onClick={() => setConfirmarMultirole(false)}
-                disabled={guardando}
-              >
-                Volver a revisar
-              </button>
-              <button
-                className="btn btn-primary"
-                type="button"
-                onClick={() => guardarRegistro({
-                  ...form,
-                  tipo,
-                  identificacion: form.identificacion || identificacion.trim(),
-                  celular: form.celular || form.contacto || null,
-                  semestre: form.semestre === "" ? null : Number(form.semestre),
-                  correo: form.correo || null,
-                  fechaNacimiento: form.fechaNacimiento || null,
-                  fechaEgreso: form.fechaEgreso || null,
-                })}
-                disabled={guardando}
-              >
-                {guardando ? "Guardando..." : "Confirmar y guardar"}
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
     </form>
   );
 }

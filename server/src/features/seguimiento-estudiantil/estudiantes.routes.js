@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Feature: Seguimiento Estudiantil (Ficha 360° - RQF12)
+   Feature: Seguimiento Estudiantil (Ficha 360°)
    Búsqueda multicriterio por:
      - Código institucional (ej. 202510045, 220109009, 220109010)
      - Cédula / Documento de identidad (ej. 1085324901, 1085001009, 1085002000)

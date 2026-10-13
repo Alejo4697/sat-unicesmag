@@ -1,7 +1,7 @@
 /* ==========================================================================
-   Feature: Alertas Tempranas (RQF06/RQF07/RQF14/RQF15)
+   Feature: Alertas Tempranas
    GET  /api/alertas       -> lista de alertas
-   POST /api/alertas       -> crear alerta manual (RQF15)
+   POST /api/alertas       -> crear alerta manual
    ========================================================================== */
 
 import { Router } from "express";

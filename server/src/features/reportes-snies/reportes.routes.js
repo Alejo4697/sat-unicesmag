@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Feature: Reportes y Exportación / SNIES (RQF13/RQF21)
+   Feature: Reportes y Exportación / SNIES
    GET /api/reportes                -> resumen numérico para la pantalla
    GET /api/reportes/filtros        -> opciones de los filtros (periodo,
                                        programa, semestre, nivel de riesgo)
@@ -13,7 +13,7 @@
    propio permiso ("reportes"), independiente de si ese rol también tiene
    acceso a Ficha 360°, Alertas, Intervenciones o Remisiones.
    ==========================================================================
-   FILTROS (RQF13): los 3 listados aceptan ?periodo=&programa=&semestre=
+   FILTROS: los 3 listados aceptan ?periodo=&programa=&semestre=
    &nivelRiesgo=. Antes la barra de filtros de la pantalla era decorativa;
    ahora recorta de verdad lo exportado. El filtro se resuelve SIEMPRE
    contra el estudiante dueño de la fila (MOCK_DATA.estudiantes), que es

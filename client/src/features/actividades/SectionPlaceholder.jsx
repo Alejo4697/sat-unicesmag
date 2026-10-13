@@ -5,12 +5,12 @@ const SECTION_CONTENT = {
   registros: {
     title: "Asistencia y reportes",
     icon: "fa-clipboard-check",
-    message: "Elige una actividad y su jornada para revisar asistentes, marcar la lista física desde Excel, pegando documentos o con el checklist, y descargar el reporte.",
+    message: "Elige una actividad y su jornada para revisar asistentes, confirmar manualmente la asistencia y descargar el reporte.",
   },
   apoyos: {
     title: "Consultar apoyos",
     icon: "fa-hand-holding-heart",
-    message: "Selecciona un tipo de apoyo y el filtro de actividad mostrará únicamente las actividades donde se registró ese apoyo. También puedes limitar por periodo o buscar una persona por nombre/documento.",
+    message: "Consulta los beneficiarios registrados en actividades por tipo de apoyo.",
   },
 };
 
@@ -49,7 +49,7 @@ export default function SectionPlaceholder({ section }) {
           <ol className="vec-workflow-steps" aria-label="Pasos para verificar asistencia">
             <li><strong>1.</strong> Busca y selecciona la actividad.</li>
             <li><strong>2.</strong> Elige el periodo y las fechas de la jornada.</li>
-            <li><strong>3.</strong> Revisa la lista, carga el Excel o marca la asistencia manualmente.</li>
+            <li><strong>3.</strong> Marca a las personas presentes y confirma la selección para guardar la asistencia.</li>
           </ol>
         </section>
         <AsistentesActividadTable />

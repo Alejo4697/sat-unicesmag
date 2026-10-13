@@ -50,7 +50,7 @@ const PROGRAM_NAMES = {
 export async function ejecutarSincronizacion() {
   const tInicio = Date.now();
   console.log("================================================================");
-  console.log("🚀 INICIANDO SINCRONIZACIÓN INSTITUCIONAL prod18sep2 -> DataBasePractica");
+  console.log("INICIANDO SINCRONIZACIÓN INSTITUCIONAL prod18sep2 -> DataBasePractica");
   console.log("================================================================");
 
   const academicClient = new Client({
@@ -66,7 +66,7 @@ export async function ejecutarSincronizacion() {
 
   try {
     await academicClient.connect();
-    console.log("✅ Conectado a la base de datos institucional prod18sep2");
+    console.log("[OK] Conectado a la base de datos institucional prod18sep2");
 
     // 1. Preparar infraestructura previa en local
     // Asegurar índice único en sat.asignaturas(codigo_externo)
@@ -113,14 +113,14 @@ export async function ejecutarSincronizacion() {
     // -------------------------------------------------------------
     // DETECCIÓN DINÁMICA DE VISTAS EN PROD18SEP2
     // -------------------------------------------------------------
-    console.log("\n🔎 Detectando vistas disponibles en prod18sep2...");
+    console.log("\n Detectando vistas disponibles en prod18sep2...");
     const vistasRes = await academicClient.query(`
       SELECT table_name 
       FROM information_schema.tables 
       WHERE table_schema = 'public' AND table_type = 'VIEW';
     `);
     const vistasDisponibles = new Set(vistasRes.rows.map((r) => r.table_name.toLowerCase()));
-    console.log(`📋 Vistas detectadas en prod18sep2 (${vistasDisponibles.size}):`, [...vistasDisponibles].join(", "));
+    console.log(`Vistas detectadas en prod18sep2 (${vistasDisponibles.size}):`, [...vistasDisponibles].join(", "));
 
     // -------------------------------------------------------------
     // PASO 1: Sincronización de Facultades (sat.facultades)
@@ -129,7 +129,7 @@ export async function ejecutarSincronizacion() {
     const facultadMap = new Map(); // NOMBRE_MAYUSCULA -> id_facultades
 
     if (vistasDisponibles.has("vista_facultades")) {
-      console.log("\n🏛️ PASO 1: Sincronizando vista_facultades a sat.facultades...");
+      console.log("\n PASO 1: Sincronizando vista_facultades a sat.facultades...");
       const facProd = await academicClient.query(`SELECT * FROM public.vista_facultades;`);
       
       for (const row of facProd.rows) {
@@ -148,13 +148,13 @@ export async function ejecutarSincronizacion() {
         facultadMap.set(nombreFac.toUpperCase(), idFac);
         facultadesSincronizadas++;
       }
-      console.log(`✅ ${facultadesSincronizadas} facultades sincronizadas en sat.facultades.`);
+      console.log(`[OK] ${facultadesSincronizadas} facultades sincronizadas en sat.facultades.`);
     }
 
     // -------------------------------------------------------------
     // PASO 2: Sincronización de Programas Académicos (sat.programas_academicos)
     // -------------------------------------------------------------
-    console.log("\n📦 PASO 2: Verificando y mapeando Programas Académicos...");
+    console.log("\n PASO 2: Verificando y mapeando Programas Académicos...");
     const progsProd = await academicClient.query(`
       SELECT DISTINCT "CODIGO_PROGRAMA" 
       FROM public.vista_informacion_estudiantes 
@@ -179,11 +179,11 @@ export async function ejecutarSincronizacion() {
           RETURNING id_programas_academicos;
         `, [code, nombreProg, idSede]);
         progMap.set(code, insProg.rows[0].id_programas_academicos);
-        console.log(`   ➕ Nuevo programa registrado: [${code}] ${nombreProg}`);
+        console.log(`   + Nuevo programa registrado: [${code}] ${nombreProg}`);
       }
     }
     const defaultProgId = progMap.values().next().value;
-    console.log(`✅ ${progMap.size} programas académicos listos.`);
+    console.log(`[OK] ${progMap.size} programas académicos listos.`);
 
     // Asociar facultades a sat.programas_academicos según correspondencia institucional
     if (facultadMap.size > 0) {
@@ -214,13 +214,13 @@ export async function ejecutarSincronizacion() {
           }
         }
       }
-      console.log(`✅ Relación Programas <-> Facultades actualizada en DataBasePractica.`);
+      console.log(`[OK] Relación Programas <-> Facultades actualizada en DataBasePractica.`);
     }
 
     // -------------------------------------------------------------
     // PASO 2: Sincronización de Personas (sat.personas)
     // -------------------------------------------------------------
-    console.log("\n👤 PASO 2: Leyendo vista_informacion_estudiantes de prod18sep2...");
+    console.log("\n PASO 2: Leyendo vista_informacion_estudiantes de prod18sep2...");
     const estProd = await academicClient.query(`
       SELECT 
         "CODIGO",
@@ -300,12 +300,12 @@ export async function ejecutarSincronizacion() {
         personaIdMap.set(doc, res.rows[0].id);
       }
     }
-    console.log(`✅ ${personaIdMap.size} personas sincronizadas en sat.personas.`);
+    console.log(`[OK] ${personaIdMap.size} personas sincronizadas en sat.personas.`);
 
     // -------------------------------------------------------------
     // PASO 3: Sincronización de Estudiantes (sat.estudiantes)
     // -------------------------------------------------------------
-    console.log("\n🎓 PASO 3: Sincronizando sat.estudiantes...");
+    console.log("\n PASO 3: Sincronizando sat.estudiantes...");
     const studentIdMap = new Map(); // codigo_estudiante -> id_estudiantes
 
     for (let i = 0; i < personasArray.length; i += batchSize) {
@@ -377,12 +377,12 @@ export async function ejecutarSincronizacion() {
         studentIdMap.set(cod, idEst);
       }
     }
-    console.log(`✅ ${studentIdMap.size} códigos/documentos mapeados a sat.estudiantes.`);
+    console.log(`[OK] ${studentIdMap.size} códigos/documentos mapeados a sat.estudiantes.`);
 
     // -------------------------------------------------------------
     // PASO 4: Sincronización de Matrículas (sat.matriculas)
     // -------------------------------------------------------------
-    console.log("\n📋 PASO 4: Sincronizando sat.matriculas (soporte Pregrado + Posgrado)...");
+    console.log("\n PASO 4: Sincronizando sat.matriculas (soporte Pregrado + Posgrado)...");
     await localClient.query(`
       ALTER TABLE sat.matriculas DROP CONSTRAINT IF EXISTS uq_matricula_estudiante_periodo;
       CREATE UNIQUE INDEX IF NOT EXISTS uq_matricula_estudiante_programa_periodo 
@@ -421,12 +421,12 @@ export async function ejecutarSincronizacion() {
       matriculaIdMap.set(idEst, idMat);
       matriculaCodMap.set(cod, idMat);
     }
-    console.log(`✅ ${matriculaCodMap.size} matrículas activas (Pregrado y Posgrado) registradas/actualizadas.`);
+    console.log(`[OK] ${matriculaCodMap.size} matrículas activas (Pregrado y Posgrado) registradas/actualizadas.`);
 
     // -------------------------------------------------------------
     // PASO 5: Asignaturas y Grupos (sat.asignaturas, sat.grupos_asignatura)
     // -------------------------------------------------------------
-    console.log("\n📚 PASO 5: Leyendo vista_informacion_academica de prod18sep2...");
+    console.log("\n PASO 5: Leyendo vista_informacion_academica de prod18sep2...");
     const acadProd = await academicClient.query(`
       SELECT 
         "CODIGO_ESTUDIANTE",
@@ -481,12 +481,12 @@ export async function ejecutarSincronizacion() {
 
       grupoIdMap.set(codMat, resGrp.rows[0].id_grupos_asignatura);
     }
-    console.log(`✅ ${asignaturaIdMap.size} asignaturas y grupos asegurados.`);
+    console.log(`[OK] ${asignaturaIdMap.size} asignaturas y grupos asegurados.`);
 
     // -------------------------------------------------------------
     // PASO 6: Calificaciones y Asistencias (sat.matriculas_asignaturas)
     // -------------------------------------------------------------
-    console.log("\n📊 PASO 6: Sincronizando notas e inasistencias en sat.matriculas_asignaturas...");
+    console.log("\n PASO 6: Sincronizando notas e inasistencias en sat.matriculas_asignaturas...");
     let notasSincronizadas = 0;
     const acadBatchSize = 1000;
 
@@ -546,12 +546,12 @@ export async function ejecutarSincronizacion() {
       }
       process.stdout.write(`   Procesados ${Math.min(i + acadBatchSize, acadProd.rows.length)} / ${acadProd.rows.length} registros...\r`);
     }
-    console.log(`\n✅ ${notasSincronizadas} registros académicos sincronizados en sat.matriculas_asignaturas.`);
+    console.log(`\n[OK] ${notasSincronizadas} registros académicos sincronizados en sat.matriculas_asignaturas.`);
 
     // -------------------------------------------------------------
     // PASO 7: Información Financiera (sat.apoyos_financieros)
     // -------------------------------------------------------------
-    console.log("\n💰 PASO 7: Sincronizando vista_informacion_financiera...");
+    console.log("\n PASO 7: Sincronizando vista_informacion_financiera...");
     const finProd = await academicClient.query(`
       SELECT 
         "DOCUMENTO_ESTUDIANTE",
@@ -585,14 +585,14 @@ export async function ejecutarSincronizacion() {
       `, [idEst, idPeriodo, concepto, nombre, pct, val]);
       apoyosSincronizados++;
     }
-    console.log(`✅ ${apoyosSincronizados} apoyos financieros registrados en sat.apoyos_financieros.`);
+    console.log(`[OK] ${apoyosSincronizados} apoyos financieros registrados en sat.apoyos_financieros.`);
 
     // -------------------------------------------------------------
     // PASO 8: Sincronización de Docentes (sat.docentes y sat.personas)
     // -------------------------------------------------------------
     let docentesSincronizados = 0;
     if (vistasDisponibles.has("vista_docentes")) {
-      console.log("\n👨‍🏫 PASO 8: Sincronizando vista_docentes a sat.docentes y sat.personas...");
+      console.log("\n‍ PASO 8: Sincronizando vista_docentes a sat.docentes y sat.personas...");
       const docProd = await academicClient.query(`SELECT * FROM public.vista_docentes;`);
       
       const progsDb = await localClient.query(`SELECT id_programas_academicos, nombre FROM sat.programas_academicos;`);
@@ -660,7 +660,7 @@ export async function ejecutarSincronizacion() {
 
         docentesSincronizados++;
       }
-      console.log(`✅ ${docentesSincronizados} docentes sincronizados en sat.docentes y sat.personas.`);
+      console.log(`[OK] ${docentesSincronizados} docentes sincronizados en sat.docentes y sat.personas.`);
     }
 
     // -------------------------------------------------------------
@@ -678,7 +678,7 @@ export async function ejecutarSincronizacion() {
 
     const duracion = ((Date.now() - tInicio) / 1000).toFixed(1);
     console.log("\n================================================================");
-    console.log(`🎉 SINCRONIZACIÓN EXITOSA en ${duracion} segundos`);
+    console.log(`[OK] SINCRONIZACIÓN EXITOSA en ${duracion} segundos`);
     console.log(`   - Facultades sincronizadas:        ${facultadesSincronizadas}`);
     console.log(`   - Docentes sincronizados:          ${docentesSincronizados}`);
     console.log(`   - Personas sincronizadas:          ${personaIdMap.size}`);
@@ -705,7 +705,7 @@ export async function ejecutarSincronizacion() {
     };
 
   } catch (err) {
-    console.error("❌ ERROR EN LA SINCRONIZACIÓN:", err);
+    console.error("[ERROR] ERROR EN LA SINCRONIZACIÓN:", err);
     if (idCarga) {
       await localClient.query(`
         UPDATE sat.cargas_sincronizacion

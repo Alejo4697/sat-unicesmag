@@ -90,9 +90,9 @@ export async function enviarCorreoOtp({ correo, nombre, codigoOtp, expiraMinutos
 
   // Log visible en consola para monitoreo y desarrollo
   console.log("=================================================================");
-  console.log(`📧 [EMAIL SERVICE] Código OTP para: ${correo}`);
-  console.log(`👤 Estudiante: ${nombre}`);
-  console.log(`🔑 CÓDIGO OTP: [ ${codigoOtp} ] (Válido por ${expiraMinutos} min)`);
+  console.log(`[EMAIL SERVICE] Código OTP para: ${correo}`);
+  console.log(`Estudiante: ${nombre}`);
+  console.log(`CÓDIGO OTP: [ ${codigoOtp} ] (Válido por ${expiraMinutos} min)`);
   console.log("=================================================================");
 
   const mailer = obtenerTransporter();
@@ -107,13 +107,13 @@ export async function enviarCorreoOtp({ correo, nombre, codigoOtp, expiraMinutos
         subject: asunto,
         html: cuerpoHtml
       });
-      console.log(`✅ Correo enviado exitosamente a la bandeja de ${correo}`);
+      console.log(`[OK] Correo enviado exitosamente a la bandeja de ${correo}`);
       envioRealizado = true;
     } catch (err) {
-      console.error(`⚠️ Error al despachar correo vía SMTP a ${correo}:`, err.message);
+      console.error(`[WARN] Error al despachar correo vía SMTP a ${correo}:`, err.message);
     }
   } else {
-    console.log(`ℹ️ [SMTP no configurado en .env]: El código OTP [${codigoOtp}] está disponible en consola y en la interfaz para pruebas.`);
+    console.log(`[INFO] [SMTP no configurado en .env]: El código OTP [${codigoOtp}] está disponible en consola y en la interfaz para pruebas.`);
   }
 
   return {

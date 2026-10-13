@@ -7,13 +7,13 @@
 --    sat.roles              -> los 5 roles del sistema (RBAC), mismos ids que
 --                              server/src/shared/data/menuConfig.js y
 --                              client/src/shared/config/menuConfig.js.
---    sat.rangos_riesgo      -> bandas de semaforización de riesgo (RQF11) que
+--    sat.rangos_riesgo      -> bandas de semaforización de riesgo que
 --                              consume GET /api/administracion/umbrales-riesgo
 --                              (lee puntaje_min de las filas 'Alto' y 'Medio').
---    sat.dependencias       -> áreas de atención destino de remisiones (RQF17),
+--    sat.dependencias       -> áreas de atención destino de remisiones,
 --                              catálogo administrable desde Administración.
---    sat.estados_remision   -> flujo de estados de la bandeja de remisiones (RQF18).
---    sat.tipos_intervencion -> tipos del formulario de Intervenciones (RQF04).
+--    sat.estados_remision   -> flujo de estados de la bandeja de remisiones.
+--    sat.tipos_intervencion -> tipos del formulario de Intervenciones.
 --
 --  Es idempotente: se puede volver a correr sin duplicar filas.
 --    - sat.roles / sat.dependencias / sat.estados_remision tienen UNIQUE(nombre)
@@ -61,12 +61,12 @@ WHERE NOT EXISTS (
 );
 
 -- --------------------------------------------------------------------------
---  sat.dependencias  (áreas de atención destino de remisiones - RQF17)
+--  sat.dependencias  (áreas de atención destino de remisiones)
 --  Portado de AREAS_DESTINO en client/src/shared/panels/RemisionesPanel.jsx.
 --  `tipo` = 'AREA_ATENCION' distingue estas filas de otras dependencias que
 --  usan la misma tabla (programas académicos, unidades administrativas) y que
 --  NO se administran desde el catálogo de Administración.
---  `es_confidencialidad_especial` = true en las áreas con reserva VBG (RNF01):
+--  `es_confidencialidad_especial` = true en las áreas con reserva VBG:
 --  USP y Consultorios Jurídicos (coincide con puedeVerDetalleVBG() del mock).
 --  nombre es UNIQUE -> ON CONFLICT DO NOTHING.
 -- --------------------------------------------------------------------------
@@ -85,7 +85,7 @@ INSERT INTO sat.dependencias (nombre, tipo, es_confidencialidad_especial, activo
 ON CONFLICT (nombre) DO NOTHING;
 
 -- --------------------------------------------------------------------------
---  sat.estados_remision  (flujo de la bandeja de remisiones - RQF18)
+--  sat.estados_remision  (flujo de la bandeja de remisiones)
 --  Portado de ESTADOS en RemisionesPanel.jsx, en el mismo orden.
 --  es_final = true en los estados que cierran el flujo: 'Atendida' y
 --  'Devuelta con Observaciones'.
@@ -100,7 +100,7 @@ INSERT INTO sat.estados_remision (nombre, orden, es_final, activo) VALUES
 ON CONFLICT (nombre) DO NOTHING;
 
 -- --------------------------------------------------------------------------
---  sat.tipos_intervencion  (tipos del formulario de Intervenciones - RQF04)
+--  sat.tipos_intervencion  (tipos del formulario de Intervenciones)
 --  El mockup no tenía este catálogo (la intervención no capturaba "tipo");
 --  se agrega porque sat.intervenciones.id_tipos_intervencion es NOT NULL.
 --  Set inicial derivado de los `motivo` de MOCK_DATA.intervenciones y de las

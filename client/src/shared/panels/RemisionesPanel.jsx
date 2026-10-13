@@ -212,7 +212,7 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
 
             <div className="form-group">
               <label className="form-label" htmlFor="remision-tipo-apoyo">
-                Tipo de Apoyo (RQF17)
+                Tipo de Apoyo
               </label>
               <select
                 id="remision-tipo-apoyo"
@@ -305,10 +305,10 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
                 value={form.nivelRiesgo}
                 onChange={(e) => setForm({ ...form, nivelRiesgo: e.target.value })}
               >
-                <option value="Medio">Medio 🟠</option>
-                <option value="Alto">Alto 🔴 (Escalamiento en 48h hábiles RQF18)</option>
-                <option value="Muy Alto">Muy Alto 🔴 (Atención Prioritaria)</option>
-                <option value="Bajo">Bajo 🟢</option>
+                <option value="Medio">Medio</option>
+                <option value="Alto">Alto (Escalamiento en 48h hábiles)</option>
+                <option value="Muy Alto">Muy Alto (Atención Prioritaria)</option>
+                <option value="Bajo">Bajo</option>
               </select>
             </div>
 
@@ -443,7 +443,7 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
             </div>
 
             <div className="form-group">
-              <label className="form-label">Recomendaciones para el Aula / Docente Acompañante (RQF18)</label>
+              <label className="form-label">Recomendaciones para el Aula / Docente Acompañante</label>
               <textarea
                 className="form-control"
                 placeholder="Redacte recomendaciones generales para el aula respetando la reserva psicosocial..."

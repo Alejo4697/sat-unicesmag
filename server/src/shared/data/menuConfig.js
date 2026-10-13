@@ -1,5 +1,5 @@
 /* ==========================================================================
-   SAT-UNICESMAG - Menú Dinámico por Rol (RQF03)
+   SAT-UNICESMAG - Menú Dinámico por Rol
    Portado 1:1 desde assets/js/menu.js del mockup estático.
    Catálogo de módulos (id, nombre, ícono, ruta, sección).
 

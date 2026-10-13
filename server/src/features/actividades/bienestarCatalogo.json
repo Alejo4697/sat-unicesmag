@@ -1,0 +1,596 @@
+[
+  {
+    "lineaAccion": "Pastoral franciscano - capuchina",
+    "tipoApoyoExcel": "Apoyo 3: Apoyo psicosocial",
+    "programa": "Orientación espiritual",
+    "estrategiaPoliticaBienestar": "Estrategia 5. Formación permanente de la comunidad universitaria desde una dimensión espiritual",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Espiritualidad y formación franciscana",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Pastoral franciscano - capuchina",
+    "tipoApoyoExcel": "Apoyo 7: Cursos cortos o diplomados",
+    "programa": "Formación cristiana",
+    "estrategiaPoliticaBienestar": "Estrategia 5. Formación permanente de la comunidad universitaria desde una dimensión espiritual",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Crecimiento y celebración de la fe",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Pastoral franciscano - capuchina",
+    "tipoApoyoExcel": "Apoyo 9: Espacio Académico",
+    "programa": "Itinerario franciscano para la vida universitaria - Electiva",
+    "estrategiaPoliticaBienestar": "Estrategia 3, 4, 5, 6 y 7",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Espiritualidad y formación franciscana",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Pastoral franciscano - capuchina",
+    "tipoApoyoExcel": "Apoyo 7: Cursos cortos o diplomados",
+    "programa": "Itinerario franciscano para la vida universitaria - Cursos cortos (participantes certificados)",
+    "estrategiaPoliticaBienestar": "Estrategia 5. Formación permanente de la comunidad universitaria desde una dimensión espiritual",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Espiritualidad y formación franciscana",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Pastoral franciscano - capuchina",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Itinerario franciscano para la vida universitaria - Cursos cortos (participantes NO certificados)",
+    "estrategiaPoliticaBienestar": "Estrategia 5. Formación permanente de la comunidad universitaria desde una dimensión espiritual",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Espiritualidad y formación franciscana",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Pastoral franciscano - capuchina",
+    "tipoApoyoExcel": "Apoyo 7: Cursos cortos o diplomados",
+    "programa": "Acción y transformación social (voluntariado, ecología) - Cursos cortos (participantes certificados)",
+    "estrategiaPoliticaBienestar": "Estrategia 5. Formación permanente de la comunidad universitaria desde una dimensión espiritual",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Acción social y ecológica",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Pastoral franciscano - capuchina",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Acción y transformación social (voluntariado, ecología) - Cursos cortos (participantes NO certificados)",
+    "estrategiaPoliticaBienestar": "Estrategia 5. Formación permanente de la comunidad universitaria desde una dimensión espiritual",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Acción social y ecológica",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Pastoral franciscano - capuchina",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Acción y transformación social (voluntariado, ecología) - Actividades",
+    "estrategiaPoliticaBienestar": "Estrategia 5. Formación permanente de la comunidad universitaria desde una dimensión espiritual",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Acción social y ecológica",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Pastoral franciscano - capuchina",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Liturgia y sacramentos",
+    "estrategiaPoliticaBienestar": "Estrategia 5. Formación permanente de la comunidad universitaria desde una dimensión espiritual",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Crecimiento y celebración de la fe",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Pastoral franciscano - capuchina",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Itinerario franciscano para la vida universitaria",
+    "estrategiaPoliticaBienestar": "Estrategia 5. Formación permanente de la comunidad universitaria desde una dimensión espiritual",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Espiritualidad y formación franciscana",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Acompañamiento",
+    "tipoApoyoExcel": "Apoyo 2: Apoyos académicos",
+    "programa": "Acompañamiento a estudiantes con discapacidad",
+    "estrategiaPoliticaBienestar": "Estrategia 3. Procesos de educación inclusiva",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Inclusión y diversidad",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 5. Espacios de acompañamiento inclusivo"
+  },
+  {
+    "lineaAccion": "Acompañamiento",
+    "tipoApoyoExcel": "Apoyo 3: Apoyo psicosocial",
+    "programa": "Acompañamiento a grupos poblacionales",
+    "estrategiaPoliticaBienestar": "Estrategia 3. Procesos de educación inclusiva",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Inclusión y diversidad",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 5. Espacios de acompañamiento inclusivo"
+  },
+  {
+    "lineaAccion": "Acompañamiento",
+    "tipoApoyoExcel": "Apoyo 2: Apoyos académicos",
+    "programa": "Aulas Incluyentes",
+    "estrategiaPoliticaBienestar": "Estrategia 3. Procesos de educación inclusiva",
+    "estrategiaPoliticaPermanencia": "Estrategia 5. Articulación procesos académicos e investigativos",
+    "componente": "Inclusión y diversidad",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 5. Espacios de acompañamiento inclusivo"
+  },
+  {
+    "lineaAccion": "Acompañamiento",
+    "tipoApoyoExcel": "Apoyo 9: Espacio Académico",
+    "programa": "Aulas Incluyentes - Electiva",
+    "estrategiaPoliticaBienestar": "Estrategia 3, 4, 5, 6 y 7",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Inclusión y diversidad",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Acompañamiento",
+    "tipoApoyoExcel": "Apoyo 3: Apoyo psicosocial",
+    "programa": "Universidad para familias",
+    "estrategiaPoliticaBienestar": "Estrategia 2. Acompañamiento integral para la permanencia y graduación exitosa",
+    "estrategiaPoliticaPermanencia": "Estrategia 8. Participación del núcleo familiar",
+    "componente": "Compromiso con el núcleo familiar",
+    "estrategiaPoliticaEducacionInclusiva": "No aplica"
+  },
+  {
+    "lineaAccion": "Acompañamiento",
+    "tipoApoyoExcel": "Apoyo 7: Cursos cortos o diplomados",
+    "programa": "Universidad para familias - cursos (participantes certificados)",
+    "estrategiaPoliticaBienestar": "Estrategia 2. Acompañamiento integral para la permanencia y graduación exitosa",
+    "estrategiaPoliticaPermanencia": "Estrategia 8. Participación del núcleo familiar",
+    "componente": "Compromiso con el núcleo familiar",
+    "estrategiaPoliticaEducacionInclusiva": "No aplica"
+  },
+  {
+    "lineaAccion": "Acompañamiento",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Universidad para familias - cursos (participantes NO certificados)",
+    "estrategiaPoliticaBienestar": "Estrategia 2. Acompañamiento integral para la permanencia y graduación exitosa",
+    "estrategiaPoliticaPermanencia": "Estrategia 8. Participación del núcleo familiar",
+    "componente": "Compromiso con el núcleo familiar",
+    "estrategiaPoliticaEducacionInclusiva": "No aplica"
+  },
+  {
+    "lineaAccion": "Acompañamiento",
+    "tipoApoyoExcel": "Apoyo 1: Beneficios económicos",
+    "programa": "Plan Padrino",
+    "estrategiaPoliticaBienestar": "Estrategia 2. Acompañamiento integral para la permanencia y graduación exitosa",
+    "estrategiaPoliticaPermanencia": "Estrategia 9. Apoyo financiero",
+    "componente": "Gestión de apoyos financieros",
+    "estrategiaPoliticaEducacionInclusiva": "No aplica"
+  },
+  {
+    "lineaAccion": "Acompañamiento",
+    "tipoApoyoExcel": "Apoyo 1: Beneficios económicos",
+    "programa": "Becas, incentivos, beneficios y subsidios",
+    "estrategiaPoliticaBienestar": "Estrategia 2. Acompañamiento integral para la permanencia y graduación exitosa",
+    "estrategiaPoliticaPermanencia": "Estrategia 9. Apoyo financiero",
+    "componente": "Gestión de apoyos financieros",
+    "estrategiaPoliticaEducacionInclusiva": "No aplica"
+  },
+  {
+    "lineaAccion": "Acompañamiento",
+    "tipoApoyoExcel": "Apoyo 1: Beneficios económicos",
+    "programa": "Apoyos adicionales",
+    "estrategiaPoliticaBienestar": "Estrategia 2. Acompañamiento integral para la permanencia y graduación exitosa",
+    "estrategiaPoliticaPermanencia": "Estrategia 9. Apoyo financiero",
+    "componente": "Gestión de apoyos financieros",
+    "estrategiaPoliticaEducacionInclusiva": "No aplica"
+  },
+  {
+    "lineaAccion": "Acompañamiento",
+    "tipoApoyoExcel": "Apoyo 3: Apoyo psicosocial",
+    "programa": "Docentes acompañantes",
+    "estrategiaPoliticaBienestar": "Estrategia 2. Acompañamiento integral para la permanencia y graduación exitosa",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Permanencia y graduación exitosa",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Acompañamiento",
+    "tipoApoyoExcel": "Apoyo 2: Apoyos académicos",
+    "programa": "Tutorías académicas",
+    "estrategiaPoliticaBienestar": "Estrategia 2. Acompañamiento integral para la permanencia y graduación exitosa",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Permanencia y graduación exitosa",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Acompañamiento",
+    "tipoApoyoExcel": "Apoyo 2: Apoyos académicos",
+    "programa": "Primer paso+",
+    "estrategiaPoliticaBienestar": "Estrategia 2. Acompañamiento integral para la permanencia y graduación exitosa",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Permanencia y graduación exitosa",
+    "estrategiaPoliticaEducacionInclusiva": "No aplica"
+  },
+  {
+    "lineaAccion": "Acompañamiento",
+    "tipoApoyoExcel": "Apoyo 2: Apoyos académicos",
+    "programa": "Centro de desarrollo y aprendizaje María Goretti",
+    "estrategiaPoliticaBienestar": "Estrategia 2. Acompañamiento integral para la permanencia y graduación exitosa",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Permanencia y graduación exitosa",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Acompañamiento",
+    "tipoApoyoExcel": "Apoyo 2: Apoyos académicos",
+    "programa": "Rutas alternativas para egresados no graduados",
+    "estrategiaPoliticaBienestar": "Estrategia 2. Acompañamiento integral para la permanencia y graduación exitosa",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Permanencia y graduación exitosa",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 3. Flexibilidad curricular"
+  },
+  {
+    "lineaAccion": "Acompañamiento",
+    "tipoApoyoExcel": "Apoyo 2: Apoyos académicos",
+    "programa": "Preuniversitario",
+    "estrategiaPoliticaBienestar": "Estrategia 2. Acompañamiento integral para la permanencia y graduación exitosa",
+    "estrategiaPoliticaPermanencia": "Estrategia 6. Alianzas con instituciones de educación media y otros",
+    "componente": "Proyección a la educación superior",
+    "estrategiaPoliticaEducacionInclusiva": "No aplica"
+  },
+  {
+    "lineaAccion": "Acompañamiento",
+    "tipoApoyoExcel": "Apoyo 2: Apoyos académicos",
+    "programa": "Convenios homologación Escuelas Normales, SENA y otros",
+    "estrategiaPoliticaBienestar": "Estrategia 2. Acompañamiento integral para la permanencia y graduación exitosa",
+    "estrategiaPoliticaPermanencia": "Estrategia 6. Alianzas con instituciones de educación media y otros",
+    "componente": "Proyección a la educación superior",
+    "estrategiaPoliticaEducacionInclusiva": "No aplica"
+  },
+  {
+    "lineaAccion": "Acompañamiento",
+    "tipoApoyoExcel": "Apoyo 2: Apoyos académicos",
+    "programa": "Relación educación media",
+    "estrategiaPoliticaBienestar": "Estrategia 2. Acompañamiento integral para la permanencia y graduación exitosa",
+    "estrategiaPoliticaPermanencia": "Estrategia 6. Alianzas con instituciones de educación media y otros",
+    "componente": "Proyección a la educación superior",
+    "estrategiaPoliticaEducacionInclusiva": "No aplica"
+  },
+  {
+    "lineaAccion": "Acompañamiento",
+    "tipoApoyoExcel": "Apoyo 3: Apoyo psicosocial",
+    "programa": "Orientación general para la permanencia",
+    "estrategiaPoliticaBienestar": "Estrategia 2. Acompañamiento integral para la permanencia y graduación exitosa",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Permanencia y graduación exitosa",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Acompañamiento",
+    "tipoApoyoExcel": "Apoyo 2: Apoyos académicos",
+    "programa": "Orientación vocacional",
+    "estrategiaPoliticaBienestar": "Estrategia 2. Acompañamiento integral para la permanencia y graduación exitosa",
+    "estrategiaPoliticaPermanencia": "Estrategia 6. Alianzas con instituciones de educación media y otros",
+    "componente": "Proyección a la educación superior",
+    "estrategiaPoliticaEducacionInclusiva": "No aplica"
+  },
+  {
+    "lineaAccion": "Desarrollo Humano y Salud",
+    "tipoApoyoExcel": "Apoyo 5: Atención en salud física.",
+    "programa": "Programa de atención en salud (medicina, enfermería, odontología)",
+    "estrategiaPoliticaBienestar": "Estrategia 4. Procesos de prevención promoción y atención en salud",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Atención promoción de la salud y prevención de la enfermedad",
+    "estrategiaPoliticaEducacionInclusiva": "No aplica"
+  },
+  {
+    "lineaAccion": "Desarrollo Humano y Salud",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Programa de salud sexual y reproductiva - USMG",
+    "estrategiaPoliticaBienestar": "Estrategia 4. Procesos de prevención promoción y atención en salud",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Atención promoción de la salud y prevención de la enfermedad",
+    "estrategiaPoliticaEducacionInclusiva": "No aplica"
+  },
+  {
+    "lineaAccion": "Desarrollo Humano y Salud",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Programas de hábitos y estilos de vida saludable",
+    "estrategiaPoliticaBienestar": "Estrategia 4. Procesos de prevención promoción y atención en salud",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Atención promoción de la salud y prevención de la enfermedad",
+    "estrategiaPoliticaEducacionInclusiva": "No aplica"
+  },
+  {
+    "lineaAccion": "Desarrollo Humano y Salud",
+    "tipoApoyoExcel": "Apoyo 9: Espacio Académico",
+    "programa": "Programas de hábitos y estilos de vida saludable - Electiva",
+    "estrategiaPoliticaBienestar": "Estrategia 3, 4, 5, 6 y 7",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Atención promoción de la salud y prevención de la enfermedad",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Desarrollo Humano y Salud",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Programa de promoción y prevención en la salud mental",
+    "estrategiaPoliticaBienestar": "Estrategia 4. Procesos de prevención promoción y atención en salud",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Atención promoción y prevención en salud mental",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Desarrollo Humano y Salud",
+    "tipoApoyoExcel": "Apoyo 3: Apoyo psicosocial",
+    "programa": "Programa de promoción y prevención en la salud mental - Consejería",
+    "estrategiaPoliticaBienestar": "Estrategia 4. Procesos de prevención promoción y atención en salud",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Atención promoción y prevención en salud mental",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Desarrollo Humano y Salud",
+    "tipoApoyoExcel": "Apoyo 9: Espacio Académico",
+    "programa": "Programa de promoción y prevención en la salud mental - Electiva",
+    "estrategiaPoliticaBienestar": "Estrategia 3, 4, 5, 6 y 7",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Atención promoción y prevención en salud mental",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Desarrollo Humano y Salud",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Programa de promoción y prevención en la salud mental - VBG",
+    "estrategiaPoliticaBienestar": "Estrategia 4. Procesos de prevención promoción y atención en salud",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Atención promoción y prevención en salud mental",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 7. Protocolos VBG"
+  },
+  {
+    "lineaAccion": "Desarrollo Humano y Salud",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Programa de promoción y prevención en la salud mental - NNA",
+    "estrategiaPoliticaBienestar": "Estrategia 4. Procesos de prevención promoción y atención en salud",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Atención promoción y prevención en salud mental",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Desarrollo Humano y Salud",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Programa de fortalecimiento en habilidades blandas",
+    "estrategiaPoliticaBienestar": "Estrategia 4. Procesos de prevención promoción y atención en salud",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Atención promoción y prevención en salud mental",
+    "estrategiaPoliticaEducacionInclusiva": "No aplica"
+  },
+  {
+    "lineaAccion": "Desarrollo Humano y Salud",
+    "tipoApoyoExcel": "Apoyo 9: Espacio Académico",
+    "programa": "Programa de fortalecimiento en habilidades blandas - Electiva",
+    "estrategiaPoliticaBienestar": "Estrategia 3, 4, 5, 6 y 7",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Atención promoción y prevención en salud mental",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Desarrollo Humano y Salud",
+    "tipoApoyoExcel": "Apoyo 4: Atención clínica en psicología",
+    "programa": "Programa atención integral para la salud mental CLINICA",
+    "estrategiaPoliticaBienestar": "Estrategia 4. Procesos de prevención promoción y atención en salud",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Atención promoción y prevención en salud mental",
+    "estrategiaPoliticaEducacionInclusiva": "No aplica"
+  },
+  {
+    "lineaAccion": "Deporte Recreación y Actividad Física",
+    "tipoApoyoExcel": "Apoyo 3: Apoyo psicosocial",
+    "programa": "Orientación general (Deporte y Cultura)",
+    "estrategiaPoliticaBienestar": "Estrategia  6. Práctica del deporte la recreación, la actividad física, el arte y la cultura promoviendo el desarrollo integral",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Orientación general (Deporte y Cultura)",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Deporte Recreación y Actividad Física",
+    "tipoApoyoExcel": "Apoyo 9: Espacio Académico",
+    "programa": "Deporte universitario - Electiva",
+    "estrategiaPoliticaBienestar": "Estrategia 3, 4, 5, 6 y 7",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Deporte",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Deporte Recreación y Actividad Física",
+    "tipoApoyoExcel": "Apoyo 9: Espacio Académico",
+    "programa": "Deporte universitario",
+    "estrategiaPoliticaBienestar": "Estrategia  6. Práctica del deporte la recreación, la actividad física, el arte y la cultura promoviendo el desarrollo integral",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Deporte",
+    "estrategiaPoliticaEducacionInclusiva": "No aplica"
+  },
+  {
+    "lineaAccion": "Deporte Recreación y Actividad Física",
+    "tipoApoyoExcel": "Apoyo 6: Cultura y Deporte: Grupos institucionales",
+    "programa": "Deporte competitivo - Selecciones deportivas",
+    "estrategiaPoliticaBienestar": "Estrategia  6. Práctica del deporte la recreación, la actividad física, el arte y la cultura promoviendo el desarrollo integral",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Deporte",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Deporte Recreación y Actividad Física",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Programa RecreArte UNICESMAG",
+    "estrategiaPoliticaBienestar": "Estrategia  6. Práctica del deporte la recreación, la actividad física, el arte y la cultura promoviendo el desarrollo integral",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Recreación",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Deporte Recreación y Actividad Física",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Programa VITALIZATE UNICESMAG",
+    "estrategiaPoliticaBienestar": "Estrategia  6. Práctica del deporte la recreación, la actividad física, el arte y la cultura promoviendo el desarrollo integral",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Actividad física",
+    "estrategiaPoliticaEducacionInclusiva": "No aplica"
+  },
+  {
+    "lineaAccion": "Arte y Cultura",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Programa \"SER\" Danza",
+    "estrategiaPoliticaBienestar": "Estrategia  6. Práctica del deporte la recreación, la actividad física, el arte y la cultura promoviendo el desarrollo integral",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Danza",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Arte y Cultura",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Programa \"SER\" Música",
+    "estrategiaPoliticaBienestar": "Estrategia  6. Práctica del deporte la recreación, la actividad física, el arte y la cultura promoviendo el desarrollo integral",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Música",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Arte y Cultura",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Programa \"SER\" Teatro",
+    "estrategiaPoliticaBienestar": "Estrategia  6. Práctica del deporte la recreación, la actividad física, el arte y la cultura promoviendo el desarrollo integral",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Teatro",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Arte y Cultura",
+    "tipoApoyoExcel": "Apoyo 7: Cursos cortos o diplomados",
+    "programa": "Programa \"SER\" Danza - CURSOS (participantes certificados)",
+    "estrategiaPoliticaBienestar": "Estrategia  6. Práctica del deporte la recreación, la actividad física, el arte y la cultura promoviendo el desarrollo integral",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Danza",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Arte y Cultura",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Programa \"SER\" Danza - CURSOS (participantes NO certificados)",
+    "estrategiaPoliticaBienestar": "Estrategia  6. Práctica del deporte la recreación, la actividad física, el arte y la cultura promoviendo el desarrollo integral",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Danza",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Arte y Cultura",
+    "tipoApoyoExcel": "Apoyo 7: Cursos cortos o diplomados",
+    "programa": "Programa \"SER\" Música - CURSOS (participantes certificados)",
+    "estrategiaPoliticaBienestar": "Estrategia  6. Práctica del deporte la recreación, la actividad física, el arte y la cultura promoviendo el desarrollo integral",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Música",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Arte y Cultura",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Programa \"SER\" Música - CURSOS (participantes NO certificados)",
+    "estrategiaPoliticaBienestar": "Estrategia  6. Práctica del deporte la recreación, la actividad física, el arte y la cultura promoviendo el desarrollo integral",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Música",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Arte y Cultura",
+    "tipoApoyoExcel": "Apoyo 7: Cursos cortos o diplomados",
+    "programa": "Programa \"SER\" Teatro - CURSOS (participantes certificados)",
+    "estrategiaPoliticaBienestar": "Estrategia  6. Práctica del deporte la recreación, la actividad física, el arte y la cultura promoviendo el desarrollo integral",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Teatro",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Arte y Cultura",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Programa \"SER\" Teatro - CURSOS (participantes NO certificados)",
+    "estrategiaPoliticaBienestar": "Estrategia  6. Práctica del deporte la recreación, la actividad física, el arte y la cultura promoviendo el desarrollo integral",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Teatro",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Arte y Cultura",
+    "tipoApoyoExcel": "Apoyo 6: Cultura y Deporte: Grupos institucionales",
+    "programa": "Programa \"SER\" Danza (GRUPOS)",
+    "estrategiaPoliticaBienestar": "Estrategia  6. Práctica del deporte la recreación, la actividad física, el arte y la cultura promoviendo el desarrollo integral",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Danza",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Arte y Cultura",
+    "tipoApoyoExcel": "Apoyo 6: Cultura y Deporte: Grupos institucionales",
+    "programa": "Programa \"SER\" Música (GRUPOS)",
+    "estrategiaPoliticaBienestar": "Estrategia  6. Práctica del deporte la recreación, la actividad física, el arte y la cultura promoviendo el desarrollo integral",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Música",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Arte y Cultura",
+    "tipoApoyoExcel": "Apoyo 6: Cultura y Deporte: Grupos institucionales",
+    "programa": "Programa \"SER\" Teatro (GRUPO)",
+    "estrategiaPoliticaBienestar": "Estrategia  6. Práctica del deporte la recreación, la actividad física, el arte y la cultura promoviendo el desarrollo integral",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Teatro",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Paz y Convivencia",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Programa bienestar interior",
+    "estrategiaPoliticaBienestar": "Estrategia 7. Fomento de una cultura de paz y sana convivencia en el marco del trato digno la justicia y el respeto",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Cultura pacificadora",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Paz y Convivencia",
+    "tipoApoyoExcel": "Apoyo 3: Apoyo psicosocial",
+    "programa": "Programa de seguridad vial",
+    "estrategiaPoliticaBienestar": "Estrategia 7. Fomento de una cultura de paz y sana convivencia en el marco del trato digno la justicia y el respeto",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Cultura pacificadora",
+    "estrategiaPoliticaEducacionInclusiva": "No aplica"
+  },
+  {
+    "lineaAccion": "Paz y Convivencia",
+    "tipoApoyoExcel": "Apoyo 9: Espacio Académico",
+    "programa": "Programa gestión del conocimiento para la paz - Electiva",
+    "estrategiaPoliticaBienestar": "Estrategia 3, 4, 5, 6 y 7",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Formación en paz y convivencia",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  },
+  {
+    "lineaAccion": "Paz y Convivencia",
+    "tipoApoyoExcel": "Apoyo 7: Cursos cortos o diplomados",
+    "programa": "Programa gestión del conocimiento para la paz (participantes certificados)",
+    "estrategiaPoliticaBienestar": "Estrategia 7. Fomento de una cultura de paz y sana convivencia en el marco del trato digno la justicia y el respeto",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Formación en paz y convivencia",
+    "estrategiaPoliticaEducacionInclusiva": "No aplica"
+  },
+  {
+    "lineaAccion": "Paz y Convivencia",
+    "tipoApoyoExcel": "Apoyo 8: Asistencia a actividades",
+    "programa": "Programa gestión del conocimiento para la paz (participantes NO certificados)",
+    "estrategiaPoliticaBienestar": "Estrategia 7. Fomento de una cultura de paz y sana convivencia en el marco del trato digno la justicia y el respeto",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Formación en paz y convivencia",
+    "estrategiaPoliticaEducacionInclusiva": "No aplica"
+  },
+  {
+    "lineaAccion": "Paz y Convivencia",
+    "tipoApoyoExcel": "Apoyo 3: Apoyo psicosocial",
+    "programa": "Programa bienestar interior - Consejería",
+    "estrategiaPoliticaBienestar": "Estrategia 7. Fomento de una cultura de paz y sana convivencia en el marco del trato digno la justicia y el respeto",
+    "estrategiaPoliticaPermanencia": "Estrategia 7. Apoyo integral",
+    "componente": "Cultura pacificadora",
+    "estrategiaPoliticaEducacionInclusiva": "Estrategia 2. Programas y actividades que favorecen la educación inclusiva"
+  }
+]

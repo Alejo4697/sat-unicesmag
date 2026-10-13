@@ -1,11 +1,11 @@
 /* ==========================================================================
-   SAT-UNICESMAG - Middleware de control de acceso (RQF03 / RBAC)
+   SAT-UNICESMAG - Middleware de control de acceso (RBAC)
    ==========================================================================
    Auth "de mockup": no hay contraseñas ni JWT todavía (el mockup original
    tampoco los tenía: guardaba el usuario activo en localStorage). El cliente
    manda el id del usuario activo en el header `x-user-id` en cada petición;
    este middleware lo resuelve contra MOCK_DATA.usuarios y lo cuelga en
-   `req.user`. Cuando haya autenticación real (RQF01), solo hay que
+   `req.user`. Cuando haya autenticación real, solo hay que
    reemplazar `identifyUser` por la verificación del token — el resto
    (requireModule) no cambia.
 

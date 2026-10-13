@@ -9,7 +9,7 @@ const app = createApp();
 setupTables().catch((err) => console.error("Error al inicializar tablas en BD:", err.message));
 
 app.listen(PORT, () => {
-  console.log(`✅ API SAT-UNICESMAG escuchando en http://localhost:${PORT}`);
+  console.log(`[OK] API SAT-UNICESMAG escuchando en http://localhost:${PORT}`);
   // Iniciar servicio de sincronización automática en segundo plano (cada 30 min y por detección de cambios)
   iniciarSincronizadorAutomatico(30);
 });

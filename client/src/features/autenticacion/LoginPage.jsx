@@ -247,7 +247,7 @@ export default function LoginPage() {
           {/* Micro-información de seguridad */}
           <div className="login-security-notice">
             <i className="fas fa-lock-keyhole"></i>
-            <span>Acceso seguro con control de confidencialidad y secreto profesional (RNF01)</span>
+            <span>Acceso seguro con control de confidencialidad y secreto profesional</span>
           </div>
 
           {/* Footer institucional */}
