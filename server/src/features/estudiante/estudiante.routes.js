@@ -139,7 +139,7 @@ router.post("/solicitar-otp", async (req, res, next) => {
       mensaje: `Se ha enviado un código de verificación de 6 dígitos a su correo institucional.`,
       correoOfuscado: ofuscarCorreo(estudiante.correo_institucional),
       expiraMinutos,
-      codigoDev: otpNumber
+      ...(process.env.NODE_ENV === "development" ? { codigoDev: otpNumber } : {})
     });
   } catch (err) {
     next(err);

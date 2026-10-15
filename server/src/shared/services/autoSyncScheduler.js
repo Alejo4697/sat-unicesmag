@@ -21,12 +21,17 @@ let vistasConocidas = new Set();
  * Consulta las vistas actualmente disponibles en prod18sep2
  */
 async function obtenerVistasRemotas() {
+  if (!process.env.ACADEMIC_DB_HOST || !process.env.ACADEMIC_DB_USER || !process.env.ACADEMIC_DB_PASSWORD) {
+    console.warn("[AutoSync] Variables ACADEMIC_DB_* no configuradas en .env. Sincronización automática suspendida.");
+    return null;
+  }
+
   const client = new Client({
-    host: process.env.ACADEMIC_DB_HOST || "10.10.192.7",
+    host: process.env.ACADEMIC_DB_HOST,
     port: Number(process.env.ACADEMIC_DB_PORT) || 5432,
     database: process.env.ACADEMIC_DB_NAME || "prod18sep2",
-    user: process.env.ACADEMIC_DB_USER || "pruebas_adviser",
-    password: process.env.ACADEMIC_DB_PASSWORD || "REDACTED_PASSWORD"
+    user: process.env.ACADEMIC_DB_USER,
+    password: process.env.ACADEMIC_DB_PASSWORD
   });
 
   try {

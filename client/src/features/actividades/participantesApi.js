@@ -102,6 +102,20 @@ export function registrarActividad({ participante, actividad, autorizarExcepcion
   });
 }
 
+export function validarParticipantesMasivo({ idActividad, participantes }) {
+  return apiFetch("/actividades/participantes/registro-actividad/validar-masivo", {
+    method: "POST",
+    body: { idActividad, participantes },
+  });
+}
+
+export function registrarParticipantesMasivo({ idActividad, participantes }) {
+  return apiFetch("/actividades/participantes/registro-actividad/masivo", {
+    method: "POST",
+    body: { idActividad, participantes },
+  });
+}
+
 export function getRegistrosEstudiante({ limite = 50 } = {}) {
   const params = new URLSearchParams({ limite: String(limite) });
   return apiFetch(`/actividades/participantes/registros-estudiante?${params.toString()}`);

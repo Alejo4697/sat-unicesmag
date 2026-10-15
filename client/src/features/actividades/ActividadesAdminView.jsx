@@ -7,14 +7,14 @@ import {
   crearActividad,
   getAuditoriaInscripcion,
   getActividades,
-  getCatalogoMaestroActividades,
   getCatalogosEstudiante,
   getHistorialParticipacion,
   getParticipantesActividad,
 } from "./participantesApi.js";
 
 const EMPTY_FORM = {
-  idPeriodo: "", idCatalogoActividad: "", descripcion: "", ubicacion: "", fechaInicio: "", fechaFinalizacion: "",
+  idPeriodo: "", actividad: "", programaBienestar: "", subdivisionProgramas: [],
+  descripcion: "", ubicacion: "", fechaInicio: "", fechaFinalizacion: "",
   modalidad: "", alianzaInterinstitucional: "", entidadAlianza: "",
   articulacionInstitucional: "", idDependencia: "", dependenciaOtra: "",
   estrategiaPoliticaBienestar: "", estrategiaPoliticaPermanencia: "",
@@ -22,7 +22,28 @@ const EMPTY_FORM = {
 };
 const ESTADOS = ["PROGRAMADA", "EN_CURSO", "FINALIZADA", "CANCELADA"];
 
-function Modal({ title, onClose, children, wide = false }) {
+function fechaLocalActual() {
+  const hoy = new Date();
+  const mes = String(hoy.getMonth() + 1).padStart(2, "0");
+  const dia = String(hoy.getDate()).padStart(2, "0");
+  return `${hoy.getFullYear()}-${mes}-${dia}`;
+}
+
+function formatoFecha(value) {
+  const fecha = String(value || "").slice(0, 10);
+  if (!fecha) return "Fecha pendiente";
+  return new Intl.DateTimeFormat("es-CO", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(`${fecha}T12:00:00`));
+}
+
+function claseEstado(estado) {
+  return `activity-status activity-status--${String(estado || "").toLowerCase()}`;
+}
+
+function Modal({ title, subtitle, onClose, children, wide = false }) {
   const dialogRef = useRef(null);
   const titleId = useId();
 
@@ -43,7 +64,13 @@ function Modal({ title, onClose, children, wide = false }) {
       onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
     >
       <div className="activity-modal__header">
-        <h2 id={titleId}>{title}</h2>
+        <div className="activity-modal__heading">
+          <span className="activity-modal__heading-icon"><i className="fas fa-calendar-plus" aria-hidden="true"></i></span>
+          <span>
+            <h2 id={titleId}>{title}</h2>
+            {subtitle && <p>{subtitle}</p>}
+          </span>
+        </div>
         <button className="activity-modal__close" type="button" onClick={onClose} aria-label="Cerrar ventana">
           <i className="fas fa-times" aria-hidden="true"></i>
         </button>
@@ -53,12 +80,17 @@ function Modal({ title, onClose, children, wide = false }) {
   );
 }
 
-function toForm(activity) {
+function toForm(activity, programasBienestar) {
+  const programa = programasBienestar.find((item) => item.programaCompleto === activity.programaBienestar);
   return {
     ...EMPTY_FORM,
     idEventoExistente: activity.id,
     idPeriodo: activity.idPeriodo,
-    idCatalogoActividad: activity.idCatalogoActividad,
+    actividad: activity.actividad || "",
+    programaBienestar: programa?.programa || activity.programaBienestar || "",
+    subdivisionProgramas: Array.isArray(activity.variablesModalidades) && activity.variablesModalidades.length
+      ? activity.variablesModalidades
+      : (programa?.subdivision ? [programa.programaCompleto] : []),
     descripcion: activity.descripcion || "",
     ubicacion: activity.ubicacion || "",
     fechaInicio: String(activity.fechaInicio || "").slice(0, 10),
@@ -79,9 +111,10 @@ function toForm(activity) {
 export default function ActividadesAdminView() {
   const [actividades, setActividades] = useState([]);
   const [periodos, setPeriodos] = useState([]);
-  const [catalogo, setCatalogo] = useState([]);
+  const [programasBienestar, setProgramasBienestar] = useState([]);
   const [tiposApoyo, setTiposApoyo] = useState([]);
   const [busqueda, setBusqueda] = useState("");
+  const [mostrarArchivadas, setMostrarArchivadas] = useState(false);
   const [form, setForm] = useState(null);
   const [participantes, setParticipantes] = useState(null);
   const [historial, setHistorial] = useState(null);
@@ -103,15 +136,15 @@ export default function ActividadesAdminView() {
 
   useEffect(() => {
     let mounted = true;
-    Promise.all([getActividades(), getCatalogosEstudiante(), getCatalogoMaestroActividades()])
-      .then(([rows, refs, activities]) => {
+    Promise.all([getActividades(), getCatalogosEstudiante()])
+      .then(([rows, refs]) => {
         if (!mounted) return;
         setActividades(rows);
         setPeriodos(refs.periodos || []);
+        setProgramasBienestar(refs.programasBienestar || []);
         setTiposApoyo(refs.tiposApoyo || []);
-        setCatalogo(activities || []);
       })
-      .catch((requestError) => mounted && setError(requestError.message || "No se pudieron cargar las actividades."))
+      .catch(() => mounted && setError("Hubo un error."))
       .finally(() => mounted && setCargando(false));
     return () => { mounted = false; };
   }, []);
@@ -120,7 +153,7 @@ export default function ActividadesAdminView() {
     const timeout = setTimeout(() => {
       getActividades({ busqueda })
         .then(setActividades)
-        .catch((requestError) => setError(requestError.message || "No se pudo filtrar el listado."));
+        .catch(() => setError("Hubo un error."));
     }, 250);
     return () => clearTimeout(timeout);
   }, [busqueda]);
@@ -134,7 +167,7 @@ export default function ActividadesAdminView() {
       setBuscandoPersonas(true);
       buscarPersonasActividades(personaTerm.trim())
         .then(setPersonas)
-        .catch((requestError) => setError(requestError.message || "No se pudo buscar la persona."))
+        .catch(() => setError("Hubo un error."))
         .finally(() => setBuscandoPersonas(false));
     }, 250);
     return () => clearTimeout(timeout);
@@ -144,29 +177,78 @@ export default function ActividadesAdminView() {
     setForm((current) => ({ ...current, [name]: value }));
   }
 
+  const programasDelGrupo = programasBienestar
+    .filter((item) => item.programa === form?.programaBienestar);
+  const opcionesProgramasBienestar = [...new Map(programasBienestar
+    .filter((item) => item.programa)
+    .map((item) => [item.programa, {
+      value: item.programa,
+      label: item.programa,
+    }])).values()]
+    .sort((a, b) => a.label.localeCompare(b.label, "es"));
+  const subdivisionesPrograma = programasDelGrupo
+    .filter((item) => item.subdivision)
+    .sort((a, b) => a.subdivision.localeCompare(b.subdivision, "es"));
+  const modalidadesSeleccionadas = subdivisionesPrograma
+    .filter((item) => form?.subdivisionProgramas?.includes(item.programaCompleto));
+  const fechaMinima = fechaLocalActual();
+  const fechaFinalMinima = form?.fechaInicio && form.fechaInicio > fechaMinima
+    ? form.fechaInicio
+    : fechaMinima;
+  const actividadesVisibles = actividades.filter((activity) => (
+    (activity.estado === "CANCELADA") === mostrarArchivadas
+  ));
+  const totalParticipantesVisibles = actividadesVisibles.reduce(
+    (total, activity) => total + Number(activity.totalParticipantes || 0),
+    0
+  );
+  const actividadesEnCurso = actividadesVisibles.filter(
+    (activity) => activity.estado === "EN_CURSO"
+  ).length;
+
   async function save(event) {
     event.preventDefault();
     setError("");
     setMensaje("");
-    if (!form?.idPeriodo || !form.idCatalogoActividad || !form.fechaInicio || !form.fechaFinalizacion) {
-      setError("Selecciona el periodo, la actividad del catálogo y ambas fechas.");
+    if (!form?.idPeriodo || !form.actividad?.trim() || !form.fechaInicio || !form.fechaFinalizacion || !form.ubicacion) {
+      setError("Ingresa el periodo, el nombre de la actividad, la ubicación y ambas fechas.");
       return;
     }
     if (form.fechaFinalizacion < form.fechaInicio) {
       setError("La fecha final no puede ser anterior a la fecha inicial.");
       return;
     }
+    if (!form.idEventoExistente && (
+      form.fechaInicio < fechaMinima || form.fechaFinalizacion < fechaMinima
+    )) {
+      setError("Las fechas deben ser iguales o posteriores a hoy.");
+      return;
+    }
+    if (subdivisionesPrograma.length > 0) {
+      if (!form.subdivisionProgramas?.length) {
+        setError("Selecciona al menos una variable o modalidad del programa de Bienestar.");
+        return;
+      }
+      if (form.subdivisionProgramas.some((value) => (
+        !subdivisionesPrograma.some((item) => item.programaCompleto === value)
+      ))) {
+        setError("Selecciona variables o modalidades válidas para el programa de Bienestar.");
+        return;
+      }
+    }
     setGuardando(true);
     try {
-      const result = form.idEventoExistente
-        ? await actualizarActividad(form.idEventoExistente, form)
-        : await crearActividad(form);
+      if (form.idEventoExistente) await actualizarActividad(form.idEventoExistente, form);
+      else await crearActividad(form);
       setMensaje(form.idEventoExistente ? "Actividad actualizada." : "Actividad guardada.");
       setForm(null);
-      await cargarActividades();
-      if (result?.id && !form.idEventoExistente) setParticipantes({ actividadId: result.id, filas: [] });
-    } catch (requestError) {
-      setError(requestError.message || "No se pudo guardar la actividad.");
+      try {
+        await cargarActividades();
+      } catch {
+        setError("Hubo un error.");
+      }
+    } catch {
+      setError("Hubo un error.");
     } finally {
       setGuardando(false);
     }
@@ -178,8 +260,25 @@ export default function ActividadesAdminView() {
       await cambiarEstadoActividad(id, estado);
       await cargarActividades();
       setMensaje("Estado de actividad actualizado.");
-    } catch (requestError) {
-      setError(requestError.message || "No se pudo cambiar el estado.");
+      return true;
+    } catch {
+      setError("Hubo un error.");
+      return false;
+    }
+  }
+
+  async function archiveActivity(activity) {
+    const confirmed = window.confirm(
+      `¿Archivar "${activity.actividad}"? Se marcará como cancelada y se conservarán sus participantes e historial.`
+    );
+    if (!confirmed) return;
+    setError("");
+    try {
+      await cambiarEstadoActividad(activity.id, "CANCELADA");
+      await cargarActividades();
+      setMensaje("Actividad archivada. Se conservaron sus participantes e historial.");
+    } catch {
+      setError("Hubo un error.");
     }
   }
 
@@ -189,11 +288,11 @@ export default function ActividadesAdminView() {
     try {
       const filas = await getParticipantesActividad(activity.id);
       setParticipantes({ actividadId: activity.id, actividad: activity.actividad, filas, cargando: false, error: "" });
-    } catch (requestError) {
+    } catch {
       setParticipantes((current) => current ? {
         ...current,
         cargando: false,
-        error: requestError.message || "No se pudieron consultar los participantes.",
+        error: "Hubo un error.",
       } : current);
     }
   }
@@ -203,8 +302,8 @@ export default function ActividadesAdminView() {
     try {
       const rows = await getHistorialParticipacion(person.identificacion);
       setHistorial({ person, rows });
-    } catch (requestError) {
-      setError(requestError.message || "No se pudo consultar el historial.");
+    } catch {
+      setError("Hubo un error.");
     }
   }
 
@@ -222,8 +321,8 @@ export default function ActividadesAdminView() {
       setParticipantes((current) => current ? { ...current, filas } : current);
       setMensaje("Corrección de apoyo guardada con motivo y auditoría.");
       setEdicionApoyo(null);
-    } catch (requestError) {
-      setError(requestError.message || "No se pudo guardar la corrección del apoyo.");
+    } catch {
+      setError("Hubo un error.");
     } finally {
       setGuardandoApoyo(false);
     }
@@ -234,88 +333,288 @@ export default function ActividadesAdminView() {
     try {
       const rows = await getAuditoriaInscripcion(row.id);
       setAuditoriaApoyo({ persona: row.apellidosNombres, rows });
-    } catch (requestError) {
-      setError(requestError.message || "No se pudo consultar la auditoría del apoyo.");
+    } catch {
+      setError("Hubo un error.");
     }
   }
 
   return (
     <>
-      <section className="card">
-        <div className="card-header" style={{ display: "flex", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
-          <h2 className="card-title"><i className="fas fa-calendar-check" aria-hidden="true"></i> Actividades registradas</h2>
+      <section className="card activity-admin">
+        <div className="activity-admin__header">
+          <div>
+            <span className="activity-admin__eyebrow">GESTIÓN VEC</span>
+            <h2 className="card-title"><i className="fas fa-calendar-check" aria-hidden="true"></i> Actividades</h2>
+            <p className="activity-admin__subtitle">Organiza, consulta y administra las actividades registradas.</p>
+          </div>
           <button className="btn btn-primary" type="button" onClick={() => setForm({ ...EMPTY_FORM })}>
             <i className="fas fa-plus" aria-hidden="true"></i> Crear actividad
           </button>
         </div>
-        <div className="form-group">
-          <label className="form-label" htmlFor="activity-search">Buscar actividad, proyecto o periodo</label>
-          <input className="form-control" id="activity-search" value={busqueda} onChange={(event) => setBusqueda(event.target.value)} />
+        <div className="activity-toolbar">
+          <div className="activity-toolbar__search">
+            <label className="form-label" htmlFor="activity-search">Buscar actividades</label>
+            <div className="activity-search">
+              <i className="fas fa-search" aria-hidden="true"></i>
+              <input
+                className="form-control"
+                id="activity-search"
+                placeholder="Nombre, programa, proyecto o periodo"
+                value={busqueda}
+                onChange={(event) => setBusqueda(event.target.value)}
+              />
+            </div>
+          </div>
+          <div className="activity-toolbar__filter">
+            <label className="form-label" htmlFor="activity-archive-filter">Vista</label>
+            <select
+              className="form-select"
+              id="activity-archive-filter"
+              value={mostrarArchivadas ? "archivadas" : "activas"}
+              onChange={(event) => setMostrarArchivadas(event.target.value === "archivadas")}
+            >
+              <option value="activas">Actividades activas</option>
+              <option value="archivadas">Actividades archivadas</option>
+            </select>
+          </div>
         </div>
+        {!cargando && (
+          <div className="activity-overview" aria-label="Resumen de actividades visibles">
+            <div className="activity-overview__item">
+              <span className="activity-overview__icon activity-overview__icon--blue"><i className="fas fa-calendar-alt" aria-hidden="true"></i></span>
+              <span><strong>{actividadesVisibles.length}</strong><small>{mostrarArchivadas ? "Actividades archivadas" : "Actividades activas"}</small></span>
+            </div>
+            <div className="activity-overview__item">
+              <span className="activity-overview__icon activity-overview__icon--green"><i className="fas fa-users" aria-hidden="true"></i></span>
+              <span><strong>{totalParticipantesVisibles}</strong><small>Participaciones registradas</small></span>
+            </div>
+            {!mostrarArchivadas && (
+              <div className="activity-overview__item">
+                <span className="activity-overview__icon activity-overview__icon--gold"><i className="fas fa-bolt" aria-hidden="true"></i></span>
+                <span><strong>{actividadesEnCurso}</strong><small>En curso</small></span>
+              </div>
+            )}
+          </div>
+        )}
         {error && <div className="auth-error" role="alert">{error}</div>}
         {mensaje && <div className="autosave-banner" role="status">{mensaje}</div>}
-        {cargando ? <p className="text-muted" role="status">Consultando actividades de PostgreSQL...</p> : actividades.length === 0 ? (
-          <p className="text-muted" role="status">No hay actividades guardadas que coincidan con la búsqueda.</p>
+        {cargando ? <p className="text-muted" role="status">Consultando actividades de PostgreSQL...</p> : actividadesVisibles.length === 0 ? (
+          <div className="activity-empty" role="status">
+            <span className="activity-empty__icon"><i className="fas fa-calendar-day" aria-hidden="true"></i></span>
+            <strong>No hay actividades para mostrar</strong>
+            <span>Prueba otra búsqueda o cambia la vista seleccionada.</span>
+          </div>
         ) : (
-          <div className="table-responsive">
-            <table className="table">
-              <thead><tr><th>Actividad / proyecto</th><th>Periodo y fechas</th><th>Estado</th><th>Participantes</th><th>Acciones</th></tr></thead>
-              <tbody>
-                {actividades.map((activity) => (
-                  <tr key={activity.id}>
-                    <td><strong>{activity.actividad}</strong><div className="text-muted">{activity.proyecto}{activity.ubicacion ? ` · ${activity.ubicacion}` : ""}</div></td>
-                    <td>{activity.periodo}<div className="text-muted">{String(activity.fechaInicio).slice(0, 10)} – {String(activity.fechaFinalizacion).slice(0, 10)}</div></td>
-                    <td>
-                      <select className="form-select" aria-label={`Estado de ${activity.actividad}`} value={activity.estado} onChange={(event) => changeStatus(activity.id, event.target.value)}>
-                        {ESTADOS.map((status) => <option key={status} value={status}>{status.replace("_", " ")}</option>)}
-                      </select>
-                    </td>
-                    <td>{activity.totalParticipantes}</td>
-                    <td style={{ display: "flex", flexWrap: "wrap", gap: ".4rem" }}>
-                      <button className="btn btn-outline btn-sm" type="button" onClick={() => setForm(toForm(activity))}>Editar</button>
-                      <button className="btn btn-outline btn-sm" type="button" onClick={() => showParticipants(activity)}>Participantes</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="activity-card-grid">
+            {actividadesVisibles.map((activity) => {
+              const bienestar = programasBienestar
+                .find((item) => item.programaCompleto === activity.programaBienestar);
+              const modalidades = Array.isArray(activity.variablesModalidades)
+                ? activity.variablesModalidades
+                : [];
+              return (
+                <article className="activity-card" key={activity.id}>
+                  <div className="activity-card__top">
+                    <span className="activity-card__icon"><i className="fas fa-calendar-check" aria-hidden="true"></i></span>
+                    <span className={claseEstado(activity.estado)}>{String(activity.estado || "").replaceAll("_", " ")}</span>
+                  </div>
+                  <h3 className="activity-card__title">{activity.actividad}</h3>
+                  <p className="activity-card__project">{activity.proyecto || "Actividad institucional"}</p>
+
+                  <div className="activity-card__details">
+                    <div className="activity-detail">
+                      <i className="far fa-calendar-alt" aria-hidden="true"></i>
+                      <span><strong>{activity.periodo || "Sin periodo"}</strong><small>{formatoFecha(activity.fechaInicio)} – {formatoFecha(activity.fechaFinalizacion)}</small></span>
+                    </div>
+                    <div className="activity-detail">
+                      <i className="fas fa-map-marker-alt" aria-hidden="true"></i>
+                      <span><strong>{activity.ubicacion || "Ubicación no especificada"}</strong><small>{activity.modalidad || "Modalidad no especificada"}</small></span>
+                    </div>
+                  </div>
+
+                  {activity.programaBienestar && (
+                    <div className="activity-card__program">
+                      <span className="activity-card__label">PROGRAMA DE BIENESTAR</span>
+                      <strong>{bienestar?.programa || activity.programaBienestar}</strong>
+                      {modalidades.length > 0 && (
+                        <div className="activity-card__tags">
+                          {modalidades.map((modalidad) => {
+                            const detalle = programasBienestar.find((item) => item.programaCompleto === modalidad);
+                            return (
+                              <span className="activity-chip" key={modalidad}>
+                                {detalle?.subdivision || modalidad}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {activity.tipoApoyoPrograma && (
+                        <span className="activity-card__support"><i className="fas fa-hand-holding-heart" aria-hidden="true"></i>{activity.tipoApoyoPrograma}</span>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="activity-card__footer">
+                    <button className="activity-card__participants" type="button" onClick={() => showParticipants(activity)}>
+                      <i className="fas fa-users" aria-hidden="true"></i>
+                      <span><strong>{activity.totalParticipantes}</strong> participantes</span>
+                    </button>
+                    <div className="activity-card__actions">
+                      <label className="activity-card__status-control">
+                        <span className="sr-only">Cambiar estado de {activity.actividad}</span>
+                        <select
+                          className="form-select"
+                          value={activity.estado}
+                          onChange={(event) => changeStatus(activity.id, event.target.value)}
+                        >
+                          {ESTADOS.map((status) => <option key={status} value={status}>{status.replaceAll("_", " ")}</option>)}
+                        </select>
+                      </label>
+                      <button className="btn btn-outline btn-sm" type="button" onClick={() => setForm(toForm(activity, programasBienestar))}>Editar</button>
+                      {activity.estado !== "CANCELADA" && (
+                        <button className="btn btn-outline btn-sm activity-card__archive" type="button" onClick={() => archiveActivity(activity)}>Archivar</button>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
           </div>
         )}
       </section>
 
-      <section className="card">
-        <div className="card-header"><h2 className="card-title">Buscar una persona e historial</h2></div>
-        <div className="form-group"><label className="form-label" htmlFor="activity-person-search">Documento, nombre o código</label><input className="form-control" id="activity-person-search" value={personaTerm} onChange={(event) => setPersonaTerm(event.target.value)} /></div>
-        {buscandoPersonas && <p className="text-muted" role="status">Buscando personas…</p>}
-        {personas.length > 0 && <div className="table-responsive"><table className="table"><thead><tr><th>Persona</th><th>Documento</th><th>Código</th><th>Roles</th><th>Historial</th></tr></thead><tbody>{personas.map((person) => <tr key={person.idPersona}><td>{[person.apellidos, person.nombres].filter(Boolean).join(" ")}</td><td>{person.identificacion}</td><td>{person.codigo || "—"}</td><td>{person.roles.join(" · ") || "—"}</td><td><button className="btn btn-outline btn-sm" type="button" onClick={() => showHistory({ ...person, apellidosNombres: [person.apellidos, person.nombres].filter(Boolean).join(" ") })}>Ver historial</button></td></tr>)}</tbody></table></div>}
+      <section className="card activity-people">
+        <div className="activity-people__header">
+          <div>
+            <span className="activity-admin__eyebrow">CONSULTA</span>
+            <h2 className="card-title">Historial de participación</h2>
+            <p className="activity-admin__subtitle">Busca una persona para revisar su participación en actividades.</p>
+          </div>
+          {personas.length > 0 && <span className="activity-people__count">{personas.length} resultados</span>}
+        </div>
+        <div className="activity-people__search">
+          <label className="form-label" htmlFor="activity-person-search">Documento, nombre o código</label>
+          <div className="activity-search">
+            <i className="fas fa-search" aria-hidden="true"></i>
+            <input
+              className="form-control"
+              id="activity-person-search"
+              placeholder="Escribe al menos 2 caracteres"
+              value={personaTerm}
+              onChange={(event) => setPersonaTerm(event.target.value)}
+            />
+          </div>
+        </div>
+        {buscandoPersonas && <p className="activity-people__message" role="status"><i className="fas fa-spinner fa-spin" aria-hidden="true"></i> Buscando personas…</p>}
+        {!buscandoPersonas && personaTerm.trim().length < 2 && (
+          <p className="activity-people__message">Ingresa un nombre, documento o código para comenzar la búsqueda.</p>
+        )}
+        {!buscandoPersonas && personaTerm.trim().length >= 2 && personas.length === 0 && (
+          <p className="activity-people__message" role="status">No se encontraron personas con esos datos.</p>
+        )}
+        {personas.length > 0 && <div className="table-responsive activity-people__table"><table className="table"><thead><tr><th>Persona</th><th>Documento</th><th>Código</th><th>Roles</th><th>Historial</th></tr></thead><tbody>{personas.map((person) => <tr key={person.idPersona}><td><strong>{[person.apellidos, person.nombres].filter(Boolean).join(" ")}</strong></td><td>{person.identificacion}</td><td>{person.codigo || "—"}</td><td>{person.roles.join(" · ") || "—"}</td><td><button className="btn btn-outline btn-sm" type="button" onClick={() => showHistory({ ...person, apellidosNombres: [person.apellidos, person.nombres].filter(Boolean).join(" ") })}>Ver historial</button></td></tr>)}</tbody></table></div>}
       </section>
 
       {form && (
-        <Modal title={form.idEventoExistente ? "Editar actividad" : "Crear actividad"} onClose={() => setForm(null)} wide>
+        <Modal
+          title={form.idEventoExistente ? "Editar actividad" : "Crear actividad"}
+          subtitle="Completa la información para organizar y publicar la actividad."
+          onClose={() => setForm(null)}
+          wide
+        >
         <section className="card activity-modal__card">
           <form onSubmit={save}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: "0 1rem" }}>
-              <div className="form-group"><label className="form-label" htmlFor="activity-period">Periodo académico</label>
-                <select className="form-select" id="activity-period" value={form.idPeriodo} onChange={(event) => update("idPeriodo", event.target.value)} required>
-                  <option value="">Selecciona el periodo</option>{periodos.map((item) => <option key={item.id} value={item.id}>{item.nombre}</option>)}
-                </select>
-              </div>
-              <div className="form-group"><label className="form-label" htmlFor="activity-catalog">Actividad del catálogo institucional</label>
-                <select className="form-select" id="activity-catalog" value={form.idCatalogoActividad} onChange={(event) => update("idCatalogoActividad", event.target.value)} required>
-                  <option value="">Selecciona la actividad</option>{catalogo.map((item) => <option key={item.id} value={item.id} disabled={!item.proyecto}>{item.actividad} · {item.proyecto || "No disponible: falta proyecto"}</option>)}
-                </select>
-                {catalogo.some((item) => !item.proyecto) && <p className="text-muted">{catalogo.filter((item) => !item.proyecto).length} actividades del catálogo están deshabilitadas hasta completar su proyecto en la fuente institucional.</p>}
-              </div>
-              <div className="form-group"><label className="form-label" htmlFor="activity-start">Fecha inicial</label><input className="form-control" id="activity-start" type="date" value={form.fechaInicio} onChange={(event) => update("fechaInicio", event.target.value)} required /></div>
-              <div className="form-group"><label className="form-label" htmlFor="activity-end">Fecha final</label><input className="form-control" id="activity-end" type="date" value={form.fechaFinalizacion} onChange={(event) => update("fechaFinalizacion", event.target.value)} required /></div>
-              <div className="form-group"><label className="form-label" htmlFor="activity-mode">Modalidad</label><select className="form-select" id="activity-mode" value={form.modalidad} onChange={(event) => update("modalidad", event.target.value)}><option value="">Selecciona</option>{["Presencial", "Virtual", "Híbrida"].map((item) => <option key={item}>{item}</option>)}</select></div>
-              <div className="form-group"><label className="form-label" htmlFor="activity-location">Ubicación</label><input className="form-control" id="activity-location" value={form.ubicacion} onChange={(event) => update("ubicacion", event.target.value)} /></div>
-              <div className="form-group" style={{ gridColumn: "1 / -1" }}><label className="form-label" htmlFor="activity-description">Descripción</label><textarea className="form-control" id="activity-description" value={form.descripcion} onChange={(event) => update("descripcion", event.target.value)} rows={3} /></div>
+            <div className="activity-form-content">
+              <section className="activity-form-section">
+                <div className="activity-form-section__heading">
+                  <span className="activity-form-section__icon"><i className="fas fa-info-circle" aria-hidden="true"></i></span>
+                  <span><h3>Información general</h3><p>Identifica la actividad y el programa al que pertenece.</p></span>
+                </div>
+                <div className="activity-form-grid">
+                  <div className="form-group"><label className="form-label" htmlFor="activity-period">Periodo académico</label>
+                    <select className="form-select" id="activity-period" value={form.idPeriodo} onChange={(event) => update("idPeriodo", event.target.value)} required>
+                      <option value="">Selecciona el periodo</option>{periodos.map((item) => <option key={item.id} value={item.id}>{item.nombre}</option>)}
+                    </select>
+                  </div>
+                  <div className="form-group"><label className="form-label" htmlFor="activity-name">Nombre de la actividad</label>
+                    <input className="form-control" id="activity-name" value={form.actividad} onChange={(event) => update("actividad", event.target.value)} maxLength={250} placeholder="Ej. Jornada de bienestar universitario" required />
+                  </div>
+                  <div className="form-group activity-form-field--wide"><label className="form-label" htmlFor="activity-program">Programa general de Bienestar <span className="activity-form-optional">Opcional</span></label>
+                    <select className="form-select" id="activity-program" value={form.programaBienestar} onChange={(event) => setForm((current) => ({ ...current, programaBienestar: event.target.value, subdivisionProgramas: [] }))}>
+                      <option value="">No aplica</option>{opcionesProgramasBienestar.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                    </select>
+                  </div>
+                  {subdivisionesPrograma.length > 0 && (
+                    <div className="form-group activity-form-field--wide activity-modalities-field" role="group" aria-labelledby="activity-subdivision-label">
+                      <span className="form-label" id="activity-subdivision-label">Variables / Modalidades</span>
+                      <p className="activity-modalities__hint">Selecciona las opciones disponibles para los participantes. Cada modalidad conserva su apoyo correspondiente.</p>
+                      <div className="activity-modalities">
+                        {subdivisionesPrograma.map((item) => {
+                          const seleccionada = form.subdivisionProgramas.includes(item.programaCompleto);
+                          return (
+                            <label
+                              className={`activity-modality${seleccionada ? " activity-modality--selected" : ""}`}
+                              key={item.programaCompleto}
+                            >
+                              <input
+                                className="activity-modality__checkbox"
+                                type="checkbox"
+                                checked={seleccionada}
+                                onChange={(event) => update(
+                                  "subdivisionProgramas",
+                                  event.target.checked
+                                    ? [...form.subdivisionProgramas, item.programaCompleto]
+                                    : form.subdivisionProgramas.filter((value) => value !== item.programaCompleto)
+                                )}
+                              />
+                              <span className="activity-modality__content">
+                                <span className="activity-modality__name">{item.subdivision}</span>
+                                <span className="activity-modality__support">
+                                  <i className="fas fa-hand-holding-heart" aria-hidden="true"></i>
+                                  {item.tipoApoyo || "Apoyo no especificado"}
+                                </span>
+                              </span>
+                              <i className="fas fa-check activity-modality__check" aria-hidden="true"></i>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              <section className="activity-form-section">
+                <div className="activity-form-section__heading">
+                  <span className="activity-form-section__icon"><i className="far fa-calendar-alt" aria-hidden="true"></i></span>
+                  <span><h3>Fecha y lugar</h3><p>Define cuándo se realizará y en qué modalidad y sede.</p></span>
+                </div>
+                <div className="activity-form-grid">
+                  <div className="form-group"><label className="form-label" htmlFor="activity-start">Fecha inicial</label><input className="form-control" id="activity-start" type="date" min={form.idEventoExistente ? undefined : fechaMinima} value={form.fechaInicio} onChange={(event) => update("fechaInicio", event.target.value)} required /></div>
+                  <div className="form-group"><label className="form-label" htmlFor="activity-end">Fecha final</label><input className="form-control" id="activity-end" type="date" min={form.idEventoExistente ? undefined : fechaFinalMinima} value={form.fechaFinalizacion} onChange={(event) => update("fechaFinalizacion", event.target.value)} required /></div>
+                  <div className="form-group"><label className="form-label" htmlFor="activity-mode">Modalidad</label><select className="form-select" id="activity-mode" value={form.modalidad} onChange={(event) => update("modalidad", event.target.value)}><option value="">Selecciona la modalidad</option>{["Presencial", "Virtual", "Híbrida"].map((item) => <option key={item}>{item}</option>)}</select></div>
+                  <div className="form-group"><label className="form-label" htmlFor="activity-location">Campus</label><select className="form-select" id="activity-location" value={form.ubicacion} onChange={(event) => update("ubicacion", event.target.value)} required><option value="">Selecciona el campus</option>{["Campus Centro", "Campus San Damián", "Campus Santiago"].map((campus) => <option key={campus} value={campus}>{campus}</option>)}</select></div>
+                </div>
+              </section>
+
+              <section className="activity-form-section">
+                <div className="activity-form-section__heading">
+                  <span className="activity-form-section__icon"><i className="fas fa-align-left" aria-hidden="true"></i></span>
+                  <span><h3>Descripción</h3><p>Agrega información adicional para contextualizar la actividad.</p></span>
+                  <span className="activity-form-optional">Opcional</span>
+                </div>
+                <textarea className="form-control activity-form-description" id="activity-description" aria-label="Descripción de la actividad" value={form.descripcion} onChange={(event) => update("descripcion", event.target.value)} rows={3} placeholder="Describe brevemente el propósito o los detalles de la actividad." />
+              </section>
             </div>
-            {error && <div className="auth-error" role="alert">{error}</div>}
-            <div style={{ display: "flex", gap: ".5rem", justifyContent: "flex-end" }}>
+            <div className="activity-form-footer">
+              {error && <div className="auth-error" role="alert">{error}</div>}
+              <div className="activity-form-footer__actions">
               <button className="btn btn-outline" type="button" onClick={() => setForm(null)} disabled={guardando}>Cancelar</button>
-              <button className="btn btn-primary" type="submit" disabled={guardando}>{guardando ? "Guardando…" : "Guardar"}</button>
+              <button className="btn btn-primary activity-form-submit" type="submit" disabled={guardando}>
+                <i className={`fas ${guardando ? "fa-spinner fa-spin" : "fa-check"}`} aria-hidden="true"></i>
+                {guardando ? "Guardando…" : form.idEventoExistente ? "Guardar cambios" : "Crear actividad"}
+              </button>
+              </div>
             </div>
           </form>
         </section>

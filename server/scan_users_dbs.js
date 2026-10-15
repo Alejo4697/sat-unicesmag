@@ -1,8 +1,18 @@
+import "dotenv/config";
 import pg from "pg";
 
 const { Client } = pg;
 
 async function scanDbs() {
+  const host = process.env.ACADEMIC_DB_HOST;
+  const user = process.env.ACADEMIC_DB_USER;
+  const password = process.env.ACADEMIC_DB_PASSWORD;
+
+  if (!host || !user || !password) {
+    console.error("Configure las variables ACADEMIC_DB_* en server/.env para ejecutar este script de diagnóstico.");
+    return;
+  }
+
   const dbs = [
     "prod18sep2",
     "prod23sep",
@@ -14,11 +24,11 @@ async function scanDbs() {
 
   for (const db of dbs) {
     const client = new Client({
-      host: "10.10.192.7",
-      port: 5432,
+      host,
+      port: Number(process.env.ACADEMIC_DB_PORT) || 5432,
       database: db,
-      user: "pruebas_adviser",
-      password: "REDACTED_PASSWORD"
+      user,
+      password
     });
 
     try {

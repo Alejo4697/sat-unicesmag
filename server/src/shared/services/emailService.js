@@ -19,8 +19,9 @@ function obtenerTransporter() {
       host,
       port,
       secure: port === 465,
-      auth: { user, pass },
-      tls: { rejectUnauthorized: false }
+      tls: {
+        rejectUnauthorized: process.env.SMTP_ALLOW_INSECURE_TLS === "true" ? false : true
+      }
     });
   } else if (process.env.GMAIL_USER && process.env.GMAIL_PASS) {
     transporter = nodemailer.createTransport({

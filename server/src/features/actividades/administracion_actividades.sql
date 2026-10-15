@@ -5,7 +5,8 @@ BEGIN;
 ALTER TABLE sat.actividades_vec
   ADD COLUMN IF NOT EXISTS estado varchar(20) NOT NULL DEFAULT 'PROGRAMADA',
   ADD COLUMN IF NOT EXISTS actualizado_en timestamptz NOT NULL DEFAULT now(),
-  ADD COLUMN IF NOT EXISTS ubicacion text;
+  ADD COLUMN IF NOT EXISTS ubicacion text,
+  ADD COLUMN IF NOT EXISTS variables_modalidades text[] NOT NULL DEFAULT ARRAY[]::text[];
 
 ALTER TABLE sat.participantes_vec
   ADD COLUMN IF NOT EXISTS detalle_tipo_participante varchar(120);
@@ -18,8 +19,14 @@ CREATE TABLE IF NOT EXISTS sat.catalogo_bienestar_actividades (
   estrategia_politica_permanencia text,
   estrategia_politica_educacion_inclusiva text,
   numero_tipo_apoyo smallint,
+  tipo_apoyo_excel varchar(200),
+  orden_excel integer,
   actualizado_en timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE sat.catalogo_bienestar_actividades
+  ADD COLUMN IF NOT EXISTS tipo_apoyo_excel varchar(200),
+  ADD COLUMN IF NOT EXISTS orden_excel integer;
 
 DO $$
 BEGIN

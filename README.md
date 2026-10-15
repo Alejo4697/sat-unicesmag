@@ -132,9 +132,24 @@ por-dispositivo, como el borrador de intervenciones):
 - **Actividades VEC**: catálogo institucional, registros vinculados a
   participantes, filtro por actividad/periodo y búsqueda de asistentes.
   La administración consulta jornadas en PostgreSQL, permite crear/editar y
-  cambiar su estado con auditoria. La creacion pide periodo, actividad, fechas,
-  modalidad, ubicacion y descripcion. La busqueda de personas e historial
-  reutilizan las identidades y participaciones institucionales. La migracion
+  cambiar su estado con auditoría. La creación permite escribir el nombre de
+  la actividad y seleccionar la ubicación entre Campus Centro, Campus San
+  Damián y Campus Santiago. Las actividades creadas manualmente también quedan
+  disponibles al registrar participantes; las opciones del catálogo
+  institucional permanecen separadas. En la administración y al registrar
+  participantes, los programas aparecen numerados según su primera aparición
+  en «Sis bienestar»; los que tienen variantes se muestran una sola vez como
+  programa general y permiten elegir una o varias variables/modalidades al
+  crear la actividad, conservando los apoyos correspondientes. La búsqueda de personas e historial reutilizan las
+  identidades y participaciones institucionales. El registro permite el flujo
+  individual y la carga masiva `.xlsx` por actividad; la plantilla contiene
+  cédula, rol, nombres, apellidos y modalidad/variable. También reconoce
+  encabezados comunes de exportaciones de Google Forms (por ejemplo, «Cédula»,
+  «Número de identificación» o «Número de documento»); nombres y apellidos
+  deben estar en columnas separadas. La carga valida las identidades y las
+  modalidades antes de habilitar el registro, con un máximo
+  de 500 filas por archivo. El registro masivo se guarda en una sola
+  transacción: si alguna fila falla, no se registra ninguna. La migración
   `server/src/features/actividades/administracion_actividades.sql` extiende
   `sat.actividades_vec` y crea su auditoría; se aplica con
   `npm --prefix server run db:actividades`.
@@ -199,9 +214,11 @@ por-dispositivo, como el borrador de intervenciones):
 Además de los puntos abiertos marcados con `// TODO`, Actividades VEC tiene
 estos pendientes de conexión/datos:
 
-- Dos actividades importadas del Excel no tienen proyecto. El formulario las
-  informa y no permite registrarlas porque el esquema exige ese campo; se debe
-  completar el proyecto correcto desde la fuente institucional.
+- Dos actividades importadas del Excel no tienen proyecto. El registro de
+  participantes desde el catálogo institucional no las permite seleccionar
+  porque el esquema exige ese campo; se debe completar el proyecto correcto
+  desde la fuente institucional. La administración puede programar una jornada
+  escribiendo manualmente el nombre de la actividad.
 
 Otros puntos abiertos del proyecto:
 

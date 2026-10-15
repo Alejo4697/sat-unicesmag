@@ -1,14 +1,81 @@
 import { Router } from "express";
+import { createRequire } from "node:module";
 import { pool, query } from "../../shared/db/pool.js";
 import { identifyUser, requireModule, requireRole } from "../../shared/middleware/requireRole.js";
 import { generarExcelAsistentes } from "./excelAsistentes.js";
 
+const require = createRequire(import.meta.url);
+const catalogoBienestarFuente = require("./bienestarCatalogo.json");
 const router = Router();
 const TIPOS = new Set(["ESTUDIANTE", "COLABORADOR", "EGRESADO", "EXTERNO"]);
 const ESTADOS_ACTIVIDAD = new Set(["PROGRAMADA", "EN_CURSO", "FINALIZADA", "CANCELADA"]);
 const MAX_IDENTIFICACION_LENGTH = 64;
 const NUMERO_TIPO_BENEFICIOS_ECONOMICOS = 1;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const HOJA_REGISTRO_MANUAL = "REGISTRO MANUAL";
+const UBICACIONES_ACTIVIDAD = new Set(["Campus Centro", "Campus San Damián", "Campus Santiago"]);
+const bienestarFuentePorPrograma = new Map(
+  catalogoBienestarFuente.map((item, index) => [item.programa, { ...item, ordenExcel: index + 1 }])
+);
+
+function obtenerProgramaGeneralBienestar(nombre) {
+  const separador = nombre.indexOf(" - ");
+  if (separador >= 0) return nombre.slice(0, separador).trim();
+  const agregadoFinal = nombre.match(/ \((participantes|grupos?)(?=[ )])([^()]*)\)$/i);
+  return agregadoFinal ? nombre.slice(0, agregadoFinal.index).trim() : nombre;
+}
+
+const ordenProgramaBienestar = new Map();
+for (const item of catalogoBienestarFuente) {
+  const general = obtenerProgramaGeneralBienestar(String(item.programa || "").trim());
+  if (!ordenProgramaBienestar.has(general)) {
+    ordenProgramaBienestar.set(general, ordenProgramaBienestar.size + 1);
+  }
+}
+
+function listarProgramasBienestar() {
+  const basePorNombre = new Map(catalogoBienestarFuente.map((item) => [
+    item.programa,
+    obtenerProgramaGeneralBienestar(String(item.programa || "").trim()),
+  ]));
+  const cantidadPorBase = new Map();
+  for (const base of basePorNombre.values()) {
+    const clave = base.toLocaleLowerCase("es");
+    cantidadPorBase.set(clave, (cantidadPorBase.get(clave) || 0) + 1);
+  }
+
+  return catalogoBienestarFuente.map((item, index) => {
+    const programaCompleto = String(item.programa || "").trim();
+    const programaBase = basePorNombre.get(item.programa) || programaCompleto;
+    const agrupado = (cantidadPorBase.get(programaBase.toLocaleLowerCase("es")) || 0) > 1;
+    const separador = programaCompleto.indexOf(" - ");
+    const programaGeneral = agrupado ? programaBase : programaCompleto;
+    let subdivision = null;
+    if (agrupado) {
+      if (programaCompleto.toLocaleLowerCase("es") === programaBase.toLocaleLowerCase("es")) {
+        subdivision = "(Sin especificación / General)";
+      } else if (separador >= 0) {
+        subdivision = programaCompleto.slice(separador + 3).trim();
+      } else {
+        subdivision = programaCompleto.slice(programaBase.length).trim()
+          .replace(/^\(/, "")
+          .replace(/\)$/, "");
+      }
+    }
+    const fuente = bienestarFuentePorPrograma.get(programaCompleto);
+    return {
+      programa: programaGeneral,
+      programaCompleto,
+      subdivision,
+      componente: item.componente || null,
+      lineaAccion: item.lineaAccion || null,
+      numeroTipoApoyo: Number(fuente?.tipoApoyoExcel?.match(/Apoyo\s+(\d+)/i)?.[1]) || null,
+      tipoApoyo: fuente?.tipoApoyoExcel || null,
+      ordenExcel: index + 1,
+      ordenPrograma: ordenProgramaBienestar.get(programaBase) || index + 1,
+    };
+  });
+}
 
 const ASSISTANTS_QUERY = `
   SELECT avp.id_actividades_vec_participantes AS "id",
@@ -126,8 +193,8 @@ router.get("/actividades-disponibles", async (req, res, next) => {
   try {
     const { rows } = await query(
       `SELECT cat.id_catalogo_actividades_vec AS id,
-              cat.actividad,
-              cat.descripcion,
+             cat.actividad,
+             cat.descripcion,
               cat.tipo_actividad AS "tipoActividad",
               cat.proyecto,
               cat.programa,
@@ -159,9 +226,10 @@ router.get("/actividades-disponibles", async (req, res, next) => {
        LEFT JOIN sat.tipos_apoyo ta
          ON ta.id_tipos_apoyo = avp.id_tipos_apoyo
        WHERE cat.tipo_registro = 'ACTIVIDAD'
+         AND cat.hoja_origen <> $1
        GROUP BY cat.id_catalogo_actividades_vec
        ORDER BY cat.actividad, cat.hoja_origen, cat.proyecto`,
-      []
+      [HOJA_REGISTRO_MANUAL]
     );
     res.json(rows);
   } catch (err) {
@@ -176,8 +244,8 @@ router.get("/eventos-proximos", async (_req, res, next) => {
               cat.id_catalogo_actividades_vec AS "idCatalogoActividad",
               a.id_periodos_academicos AS "idPeriodo",
               pa.nombre AS periodo,
-              cat.actividad,
-              cat.descripcion,
+              COALESCE(cat.actividad, a.actividad) AS actividad,
+              COALESCE(cat.descripcion, a.descripcion_actividad) AS descripcion,
               (ARRAY_AGG(COALESCE(cat.tipo_actividad, a.tipo_actividad)
                          ORDER BY a.creado_en, a.id_actividades_vec))[1] AS "tipoActividad",
               COALESCE(cat.proyecto, (ARRAY_AGG(a.proyecto
@@ -199,6 +267,13 @@ router.get("/eventos-proximos", async (_req, res, next) => {
               (ARRAY_AGG(a.estrategia_politica_bienestar ORDER BY a.creado_en, a.id_actividades_vec))[1] AS "estrategiaPoliticaBienestar",
               (ARRAY_AGG(a.estrategia_politica_permanencia ORDER BY a.creado_en, a.id_actividades_vec))[1] AS "estrategiaPoliticaPermanencia",
               (ARRAY_AGG(a.estrategia_politica_educacion_inclusiva ORDER BY a.creado_en, a.id_actividades_vec))[1] AS "estrategiaPoliticaEducacionInclusiva",
+              COALESCE(
+                jsonb_agg(DISTINCT jsonb_build_object(
+                  'programaCompleto', modalidad.programa_completo,
+                  'idTipoApoyo', apoyo_modalidad.id_tipos_apoyo
+                )) FILTER (WHERE modalidad.programa_completo IS NOT NULL),
+                '[]'::jsonb
+              ) AS "variablesModalidades",
               COUNT(DISTINCT avp.id_actividades_vec_participantes)::int AS "totalParticipantes"
        FROM sat.actividades_vec a
        JOIN sat.catalogo_actividades_vec cat
@@ -208,15 +283,42 @@ router.get("/eventos-proximos", async (_req, res, next) => {
          ON pa.id_periodos_academicos = a.id_periodos_academicos
        LEFT JOIN sat.actividades_vec_participantes avp
          ON avp.id_actividades_vec = a.id_actividades_vec
-       WHERE a.estado <> 'CANCELADA'
+       LEFT JOIN LATERAL unnest(COALESCE(a.variables_modalidades, ARRAY[]::text[]))
+         AS modalidad(programa_completo) ON true
+       LEFT JOIN sat.catalogo_bienestar_actividades bienestar_modalidad
+         ON bienestar_modalidad.programa = modalidad.programa_completo
+       LEFT JOIN LATERAL (
+         SELECT ta.id_tipos_apoyo
+         FROM sat.tipos_apoyo ta
+         WHERE ta.activo = true
+           AND ta.numero = bienestar_modalidad.numero_tipo_apoyo
+         ORDER BY ta.id_tipos_apoyo
+         LIMIT 1
+       ) apoyo_modalidad ON true
+       WHERE a.estado IN ('PROGRAMADA', 'EN_CURSO')
+         AND a.fecha_finalizacion >= CURRENT_DATE
        GROUP BY cat.id_catalogo_actividades_vec, a.id_periodos_academicos, pa.nombre,
-                cat.actividad, cat.descripcion, cat.proyecto, cat.programa,
+                COALESCE(cat.actividad, a.actividad),
+                COALESCE(cat.descripcion, a.descripcion_actividad),
+                cat.proyecto, cat.programa,
                 cat.componente, cat.linea_accion, cat.hoja_origen,
-                a.fecha_inicio, a.fecha_finalizacion
+                a.fecha_inicio, a.fecha_finalizacion, a.variables_modalidades
        ORDER BY a.fecha_inicio, a.fecha_finalizacion, actividad
        LIMIT 500`
     );
-    res.json(rows);
+    const modalidadesPorPrograma = new Map(listarProgramasBienestar().map((item) => [
+      item.programaCompleto,
+      item,
+    ]));
+    res.json(rows.map((row) => ({
+      ...row,
+      variablesModalidades: row.variablesModalidades.map((item) => ({
+        ...modalidadesPorPrograma.get(item.programaCompleto),
+        programaCompleto: item.programaCompleto,
+        idTipoApoyo: item.idTipoApoyo,
+        tipoApoyo: bienestarFuentePorPrograma.get(item.programaCompleto)?.tipoApoyoExcel || null,
+      })),
+    })));
   } catch (err) {
     enviarErrorBaseDatos(err, res, next);
   }
@@ -236,6 +338,8 @@ router.get("/eventos", async (req, res, next) => {
               a.id_catalogo_actividades_vec AS "idCatalogoActividad",
               COALESCE(cat.actividad, a.actividad) AS actividad,
               COALESCE(a.descripcion_actividad, cat.descripcion) AS descripcion,
+              COALESCE(cat.programa, pb.nombre) AS "programaBienestar",
+              COALESCE(cat.componente, cb.nombre) AS "componenteBienestar",
               COALESCE(cat.proyecto, a.proyecto) AS proyecto,
               COALESCE(cat.tipo_actividad, a.tipo_actividad) AS "tipoActividad",
               a.modalidad,
@@ -249,6 +353,7 @@ router.get("/eventos", async (req, res, next) => {
               a.estrategia_politica_bienestar AS "estrategiaPoliticaBienestar",
               a.estrategia_politica_permanencia AS "estrategiaPoliticaPermanencia",
               a.estrategia_politica_educacion_inclusiva AS "estrategiaPoliticaEducacionInclusiva",
+              a.variables_modalidades AS "variablesModalidades",
               a.fecha_inicio AS "fechaInicio",
               a.fecha_finalizacion AS "fechaFinalizacion",
               a.estado,
@@ -260,19 +365,29 @@ router.get("/eventos", async (req, res, next) => {
        LEFT JOIN sat.catalogo_actividades_vec cat
          ON cat.id_catalogo_actividades_vec = a.id_catalogo_actividades_vec
         AND cat.tipo_registro = 'ACTIVIDAD'
+       LEFT JOIN sat.programas_bienestar pb
+         ON pb.id_programas_bienestar = a.id_programas_bienestar
+       LEFT JOIN sat.componentes_bienestar cb
+         ON cb.id_componentes_bienestar = pb.id_componentes_bienestar
        LEFT JOIN sat.actividades_vec_participantes avp
          ON avp.id_actividades_vec = a.id_actividades_vec
        WHERE ($1::text = '' OR a.estado = $1)
          AND ($2::text = '' OR COALESCE(cat.actividad, a.actividad) ILIKE '%' || $2 || '%'
+              OR COALESCE(cat.programa, pb.nombre, '') ILIKE '%' || $2 || '%'
+              OR COALESCE(cat.componente, cb.nombre, '') ILIKE '%' || $2 || '%'
               OR COALESCE(cat.proyecto, a.proyecto) ILIKE '%' || $2 || '%'
               OR pa.nombre ILIKE '%' || $2 || '%')
        GROUP BY a.id_actividades_vec, pa.nombre, cat.actividad, cat.descripcion,
-                cat.proyecto, cat.tipo_actividad
+                cat.programa, pb.nombre, cat.componente, cb.nombre,
+                cat.proyecto, cat.tipo_actividad, a.variables_modalidades
        ORDER BY a.fecha_inicio DESC, a.creado_en DESC
        LIMIT 500`,
       [estado, busqueda]
     );
-    res.json(rows);
+    res.json(rows.map((row) => ({
+      ...row,
+      tipoApoyoPrograma: bienestarFuentePorPrograma.get(row.programaBienestar)?.tipoApoyoExcel || null,
+    })));
   } catch (err) {
     enviarErrorBaseDatos(err, res, next);
   }
@@ -280,7 +395,10 @@ router.get("/eventos", async (req, res, next) => {
 
 router.post("/eventos", requireRole("admin", "coordinador", "administrador"), async (req, res, next) => {
   const activity = normalizarActividad(req.body || {});
-  const invalid = validarActividad(activity);
+  const invalid = validarActividad(activity, {
+    requiereNombre: true,
+    fechaMinima: fechaActualLocalISO(),
+  });
   if (invalid) return res.status(400).json({ error: invalid });
   let client;
   try {
@@ -300,7 +418,7 @@ router.post("/eventos", requireRole("admin", "coordinador", "administrador"), as
 router.put("/eventos/:id", requireRole("admin", "coordinador", "administrador"), async (req, res, next) => {
   if (!UUID_PATTERN.test(String(req.params.id || ""))) return res.status(400).json({ error: "Identificador de actividad inválido." });
   const activity = normalizarActividad(req.body || {});
-  const invalid = validarActividad(activity);
+  const invalid = validarActividad(activity, { requiereNombre: true });
   if (invalid) return res.status(400).json({ error: invalid });
   if (activity.idEventoExistente && activity.idEventoExistente !== req.params.id) {
     return res.status(400).json({ error: "El evento del formulario no coincide con la actividad que se desea editar." });
@@ -309,46 +427,29 @@ router.put("/eventos/:id", requireRole("admin", "coordinador", "administrador"),
   try {
     client = await pool.connect();
     await client.query("BEGIN");
-    const { rows: catalogRows } = await client.query(
-      `SELECT id_catalogo_actividades_vec AS id, actividad, descripcion,
-              tipo_actividad AS tipo, proyecto,
-              bienestar.estrategia_politica_bienestar AS "estrategiaBienestar",
-              bienestar.estrategia_politica_permanencia AS "estrategiaPermanencia",
-              bienestar.estrategia_politica_educacion_inclusiva AS "estrategiaInclusiva",
-              (SELECT pb.id_programas_bienestar FROM sat.programas_bienestar pb
-               WHERE pb.activo = true AND LOWER(BTRIM(pb.nombre)) = LOWER(BTRIM(cat.programa))
-               ORDER BY pb.id_programas_bienestar LIMIT 1) AS "idProgramaBienestar"
-       FROM sat.catalogo_actividades_vec cat
-       LEFT JOIN sat.catalogo_bienestar_actividades bienestar
-         ON translate(LOWER(BTRIM(bienestar.programa)), 'áéíóúüñ', 'aeiouun') = translate(LOWER(BTRIM(cat.programa)), 'áéíóúüñ', 'aeiouun')
-       WHERE id_catalogo_actividades_vec = $1 AND tipo_registro = 'ACTIVIDAD'
-       FOR SHARE OF cat`,
-      [activity.idCatalogoActividad]
-    );
-    const catalog = catalogRows[0];
-    if (!catalog || !catalog.proyecto) throw Object.assign(new Error("La actividad del catálogo no existe o no tiene proyecto."), { status: 400 });
+    const catalog = await obtenerCatalogoActividadManual(client, activity);
     const { rows } = await client.query(
       `UPDATE sat.actividades_vec SET
          id_periodos_academicos=$2, id_catalogo_actividades_vec=$3,
-         actividad=$4, descripcion_actividad=$5, proyecto=$6, tipo_actividad=$7,
+         actividad=$4, descripcion_actividad=$5, proyecto=$6, tipo_actividad=COALESCE($7, tipo_actividad),
          tipo_actividad_otra=$8, alianza_interinstitucional=$9, entidad_alianza=$10,
          articulacion_institucional=$11, id_dependencias=$12, dependencia_otra=$13,
          modalidad=$14, fecha_inicio=$15, fecha_finalizacion=$16,
-         id_programas_bienestar=$17, estrategia_politica_bienestar=COALESCE($18, estrategia_politica_bienestar),
-         estrategia_politica_permanencia=COALESCE($19, estrategia_politica_permanencia), estrategia_politica_educacion_inclusiva=COALESCE($20, estrategia_politica_educacion_inclusiva),
-         ubicacion=$21,
+         id_programas_bienestar=$17, estrategia_politica_bienestar=$18,
+         estrategia_politica_permanencia=$19, estrategia_politica_educacion_inclusiva=$20,
+         ubicacion=$21, variables_modalidades=$22,
          actualizado_en=now()
        WHERE id_actividades_vec=$1
        RETURNING id_actividades_vec AS id, estado`,
-      [req.params.id, activity.idPeriodo, catalog.id, catalog.actividad,
-        activity.descripcion || catalog.descripcion, catalog.proyecto, catalog.tipo, activity.tipoOtra,
+      [req.params.id, activity.idPeriodo, catalog.id, activity.nombreActividad,
+        activity.descripcion, catalog.proyecto, catalog.tipo, activity.tipoOtra,
         activity.alianza, activity.entidadAlianza, activity.articulacion,
         activity.idDependencia, activity.dependenciaOtra, activity.modalidad,
         activity.fechaInicio, activity.fechaFinalizacion, catalog.idProgramaBienestar,
-        activity.estrategiaBienestar || catalog.estrategiaBienestar,
-        activity.estrategiaPermanencia || catalog.estrategiaPermanencia,
-        activity.estrategiaInclusiva || catalog.estrategiaInclusiva,
-        activity.ubicacion]
+        catalog.estrategiaBienestar || activity.estrategiaBienestar,
+        catalog.estrategiaPermanencia || activity.estrategiaPermanencia,
+        catalog.estrategiaInclusiva || activity.estrategiaInclusiva,
+        activity.ubicacion, activity.subdivisionProgramas]
     );
     if (!rows[0]) {
       await client.query("ROLLBACK");
@@ -695,11 +796,25 @@ router.get("/catalogo-maestro", async (req, res, next) => {
          LIMIT 1
        ) apoyo_excel ON true
        WHERE cat.tipo_registro = 'ACTIVIDAD'
+         AND cat.hoja_origen <> $1
        ORDER BY cat.linea_accion NULLS LAST, cat.componente NULLS LAST,
                 cat.programa NULLS LAST, cat.proyecto NULLS LAST, cat.actividad`,
-      []
+      [HOJA_REGISTRO_MANUAL]
     );
-    res.json(rows);
+    const ordenProgramas = new Map(catalogoBienestarFuente.map((item, index) => [item.programa, index]));
+    const enriquecidas = rows.map((row) => ({
+      ...row,
+      tipoApoyoExcel: bienestarFuentePorPrograma.get(row.programa)?.tipoApoyoExcel || null,
+    }));
+    enriquecidas.sort((a, b) => (
+      String(a.lineaAccion || "").localeCompare(String(b.lineaAccion || ""), "es")
+      || String(a.componente || "").localeCompare(String(b.componente || ""), "es")
+      || (ordenProgramas.get(a.programa) ?? Number.MAX_SAFE_INTEGER)
+        - (ordenProgramas.get(b.programa) ?? Number.MAX_SAFE_INTEGER)
+      || String(a.proyecto || "").localeCompare(String(b.proyecto || ""), "es")
+      || String(a.actividad || "").localeCompare(String(b.actividad || ""), "es")
+    ));
+    res.json(enriquecidas);
   } catch (err) {
     enviarErrorBaseDatos(err, res, next);
   }
@@ -756,7 +871,8 @@ router.get("/catalogos-estudiante", async (req, res, next) => {
       tiposApoyo: tiposApoyo.rows,
       generos: generos.rows.map((row) => row.valor),
       etnias: etnias.rows.map((row) => row.valor),
-      municipios: municipios.rows.map((row) => row.valor)
+      municipios: municipios.rows.map((row) => row.valor),
+      programasBienestar: listarProgramasBienestar()
     });
   } catch (err) {
     enviarErrorBaseDatos(err, res, next);
@@ -1379,6 +1495,273 @@ router.get("/buscar", async (req, res, next) => {
   }
 });
 
+function normalizarNombreImportacion(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleUpperCase("es");
+}
+
+async function mapConcurrent(items, limit, worker) {
+  const results = new Array(items.length);
+  let index = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (index < items.length) {
+      const current = index;
+      index += 1;
+      results[current] = await worker(items[current], current);
+    }
+  }));
+  return results;
+}
+
+async function validarCargaMasiva(idActividad, filas) {
+  const { rows: eventos } = await query(
+    `SELECT id_actividades_vec AS id, estado,
+            fecha_finalizacion::date::text AS "fechaFinalizacion",
+            variables_modalidades AS "variablesModalidades"
+     FROM sat.actividades_vec
+     WHERE id_actividades_vec = $1`,
+    [idActividad]
+  );
+  const actividad = eventos[0];
+  if (!actividad || actividad.estado === "CANCELADA"
+    || !["PROGRAMADA", "EN_CURSO"].includes(actividad.estado)
+    || String(actividad.fechaFinalizacion).slice(0, 10) < fechaActualLocalISO()) {
+    throw Object.assign(new Error("La actividad ya no está disponible para recibir participantes."), { status: 409 });
+  }
+
+  const normalizadas = filas.map((fila, index) => {
+    const participante = normalizarEntrada({
+      ...fila,
+      tipoDocumento: fila.tipoDocumento || "CC",
+    });
+    return {
+      fila: Number(fila.fila) || index + 2,
+      participante,
+      variable: String(fila.modalidadVariable || fila.subdivisionPrograma || "").trim(),
+      idTipoApoyo: String(fila.idTipoApoyo || "").trim(),
+    };
+  });
+  const conteoPorIdentificacion = new Map();
+  for (const row of normalizadas) {
+    const key = normalizarNombreImportacion(row.participante.identificacion);
+    if (key) conteoPorIdentificacion.set(key, (conteoPorIdentificacion.get(key) || 0) + 1);
+  }
+
+  const identificaciones = [...new Set(normalizadas.map((row) => row.participante.identificacion).filter(Boolean))];
+  const { rows: inscritos } = await query(
+    `SELECT p.numero_identificacion AS identificacion,
+            pv.tipo_participante AS tipo
+     FROM sat.actividades_vec_participantes avp
+     JOIN sat.participantes_vec pv
+       ON pv.id_participantes_vec = avp.id_participantes_vec
+     JOIN sat.personas p ON p.id = pv.id_personas
+     WHERE avp.id_actividades_vec = $1
+       AND p.numero_identificacion = ANY($2::text[])`,
+    [idActividad, identificaciones]
+  );
+  const keysInscritos = new Set(inscritos.map((row) => (
+    `${normalizarNombreImportacion(row.identificacion)}:${row.tipo}`
+  )));
+  const variables = actividad.variablesModalidades || [];
+  const { rows: apoyoVariables } = variables.length
+    ? await query(
+      `SELECT bienestar.programa AS "programaCompleto",
+              ta.id_tipos_apoyo AS id
+       FROM sat.catalogo_bienestar_actividades bienestar
+       JOIN sat.tipos_apoyo ta
+         ON ta.numero = bienestar.numero_tipo_apoyo AND ta.activo = true
+       WHERE bienestar.programa = ANY($1::text[])
+       ORDER BY bienestar.programa, ta.id_tipos_apoyo`,
+      [variables]
+    )
+    : { rows: [] };
+  const apoyosPorVariable = new Map(apoyoVariables.map((row) => [row.programaCompleto, row.id]));
+  const requestedSupportIds = [...new Set(normalizadas.map((row) => row.idTipoApoyo).filter(Boolean))];
+  const { rows: apoyosValidos } = requestedSupportIds.length
+    ? await query(
+      "SELECT id_tipos_apoyo AS id FROM sat.tipos_apoyo WHERE activo = true AND id_tipos_apoyo = ANY($1::uuid[])",
+      [requestedSupportIds]
+    )
+    : { rows: [] };
+  const idsApoyoValidos = new Set(apoyosValidos.map((row) => row.id));
+
+  return mapConcurrent(normalizadas, 5, async (row) => {
+    const { participante } = row;
+    const invalidacion = validarEntrada(participante);
+    if (invalidacion) return { ...row, status: "invalid", message: invalidacion };
+    if (conteoPorIdentificacion.get(normalizarNombreImportacion(participante.identificacion)) > 1) {
+      return { ...row, status: "invalid", message: "La cédula está repetida en el archivo." };
+    }
+    if (keysInscritos.has(`${normalizarNombreImportacion(participante.identificacion)}:${participante.tipo}`)) {
+      return { ...row, status: "invalid", message: "La persona ya está registrada en esta actividad con este rol." };
+    }
+
+    let idTipoApoyo = row.idTipoApoyo || null;
+    if (variables.length) {
+      if (!row.variable || !variables.includes(row.variable)) {
+        return { ...row, status: "invalid", message: "La modalidad no corresponde a esta actividad." };
+      }
+      idTipoApoyo = apoyosPorVariable.get(row.variable) || null;
+      if (!idTipoApoyo) {
+        return { ...row, status: "invalid", message: "La modalidad no tiene un apoyo activo asociado." };
+      }
+    } else if (row.variable) {
+      return { ...row, status: "invalid", message: "Esta actividad no tiene modalidades configuradas." };
+    } else if (idTipoApoyo && !idsApoyoValidos.has(idTipoApoyo)) {
+      return { ...row, status: "invalid", message: "El tipo de apoyo no está disponible." };
+    }
+
+    try {
+      const encontrado = await buscarParticipante(participante.tipo, participante.identificacion)
+        || await buscarParticipanteEnPersonas(participante.tipo, participante.identificacion);
+      if (!encontrado) {
+        return { ...row, status: "invalid", message: "No se encontró esta persona con el rol indicado." };
+      }
+      if (normalizarNombreImportacion(participante.nombres) !== normalizarNombreImportacion(encontrado.nombres)
+        || normalizarNombreImportacion(participante.apellidos) !== normalizarNombreImportacion(encontrado.apellidos)) {
+        return { ...row, status: "invalid", message: "El nombre no coincide con la cédula en los registros institucionales." };
+      }
+      return {
+        ...row,
+        idTipoApoyo,
+        participante: {
+          ...encontrado,
+          ...participante,
+          detalleTipoParticipante: participante.detalleTipoParticipante
+            || encontrado.detalleTipoParticipante
+            || (participante.tipo === "ESTUDIANTE" ? "Estudiante" : null),
+          tipoDocumento: participante.tipoDocumento || encontrado.tipoDocumento || "CC",
+          correo: participante.correo || encontrado.correo || null,
+          celular: participante.celular || encontrado.celular || encontrado.contacto || null,
+        },
+        status: "valid",
+        message: "Persona y modalidad verificadas.",
+      };
+    } catch {
+      return { ...row, status: "invalid", message: "No se pudo verificar esta cédula." };
+    }
+  });
+}
+
+router.post("/registro-actividad/validar-masivo", async (req, res, next) => {
+  const idActividad = String(req.body?.idActividad || "").trim();
+  const filas = req.body?.participantes;
+  if (!UUID_PATTERN.test(idActividad)) return res.status(400).json({ error: "Selecciona una actividad válida." });
+  if (!Array.isArray(filas) || filas.length < 1 || filas.length > 500) {
+    return res.status(400).json({ error: "La carga debe contener entre 1 y 500 participantes." });
+  }
+  try {
+    const results = await validarCargaMasiva(idActividad, filas);
+    res.json({
+      valido: results.every((row) => row.status === "valid"),
+      filas: results.map((row) => ({
+        fila: row.fila,
+        identificacion: row.participante.identificacion,
+        tipo: row.participante.tipo,
+        nombres: row.participante.nombres,
+        apellidos: row.participante.apellidos,
+        modalidadVariable: row.variable,
+        idTipoApoyo: row.idTipoApoyo || null,
+        status: row.status,
+        message: row.message,
+      })),
+    });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    enviarErrorBaseDatos(err, res, next);
+  }
+});
+
+router.post("/registro-actividad/masivo", async (req, res, next) => {
+  const idActividad = String(req.body?.idActividad || "").trim();
+  const filas = req.body?.participantes;
+  if (!UUID_PATTERN.test(idActividad)) return res.status(400).json({ error: "Selecciona una actividad válida." });
+  if (!Array.isArray(filas) || filas.length < 1 || filas.length > 500) {
+    return res.status(400).json({ error: "La carga debe contener entre 1 y 500 participantes." });
+  }
+
+  let validRows;
+  try {
+    validRows = await validarCargaMasiva(idActividad, filas);
+    const invalidRows = validRows.filter((row) => row.status !== "valid");
+    if (invalidRows.length) {
+      const details = invalidRows.map((row) => `Fila ${row.fila}: ${row.message}`).join(" ");
+      return res.status(400).json({ error: `No se registró ningún participante. ${details}` });
+    }
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    return enviarErrorBaseDatos(err, res, next);
+  }
+
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query("BEGIN");
+    const { rows: eventos } = await client.query(
+      `SELECT estado, fecha_finalizacion::date::text AS "fechaFinalizacion",
+              variables_modalidades AS "variablesModalidades"
+       FROM sat.actividades_vec
+       WHERE id_actividades_vec = $1
+       FOR UPDATE`,
+      [idActividad]
+    );
+    const actividad = eventos[0];
+    if (!actividad || actividad.estado === "CANCELADA"
+      || !["PROGRAMADA", "EN_CURSO"].includes(actividad.estado)
+      || String(actividad.fechaFinalizacion).slice(0, 10) < fechaActualLocalISO()) {
+      throw Object.assign(new Error("La actividad ya no está disponible para recibir participantes."), { status: 409 });
+    }
+
+    const resultados = [];
+    for (const row of validRows) {
+      if (actividad.variablesModalidades?.length) {
+        if (!actividad.variablesModalidades.includes(row.variable)) {
+          throw Object.assign(new Error(`La modalidad de la fila ${row.fila} ya no está disponible.`), { status: 409 });
+        }
+      } else if (row.variable) {
+        throw Object.assign(new Error(`La actividad ya no tiene modalidad para la fila ${row.fila}.`), { status: 409 });
+      }
+
+      const profile = await guardarPerfilDeActividad(client, row.participante);
+      const { rows: inserted } = await client.query(
+        `INSERT INTO sat.actividades_vec_participantes
+           (id_actividades_vec, id_participantes_vec, id_tipos_apoyo)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (id_actividades_vec, id_participantes_vec) DO NOTHING
+         RETURNING id_actividades_vec_participantes AS id`,
+        [idActividad, profile.idParticipante, row.idTipoApoyo || null]
+      );
+      if (!inserted[0]) {
+        throw Object.assign(
+          new Error(`La persona de la fila ${row.fila} ya está registrada en esta actividad.`),
+          { status: 409 }
+        );
+      }
+      resultados.push({
+        fila: row.fila,
+        identificacion: row.participante.identificacion,
+        rol: row.participante.tipo,
+        idInscripcion: inserted[0].id,
+      });
+    }
+    await client.query("COMMIT");
+    res.status(201).json({ registrados: resultados.length, participantes: resultados });
+  } catch (err) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    if (err.code === "23505") {
+      return res.status(409).json({ error: "La carga contiene un registro duplicado. No se guardó ningún participante." });
+    }
+    enviarErrorBaseDatos(err, res, next);
+  } finally {
+    client?.release();
+  }
+});
+
 router.post("/registro-estudiante", (req, res, next) => (
   registrarActividad(req, res, next, "ESTUDIANTE")
 ));
@@ -1386,26 +1769,7 @@ router.post("/registro-estudiante", (req, res, next) => (
 router.post("/registro-actividad", (req, res, next) => registrarActividad(req, res, next));
 
 export async function crearActividadTransaccion(client, activity, userId) {
-  const { rows: catalogRows } = await client.query(
-    `SELECT id_catalogo_actividades_vec AS id, actividad, descripcion,
-            tipo_actividad AS tipo, proyecto,
-            bienestar.estrategia_politica_bienestar AS "estrategiaBienestar",
-            bienestar.estrategia_politica_permanencia AS "estrategiaPermanencia",
-            bienestar.estrategia_politica_educacion_inclusiva AS "estrategiaInclusiva",
-            (SELECT pb.id_programas_bienestar FROM sat.programas_bienestar pb
-             WHERE pb.activo=true AND LOWER(BTRIM(pb.nombre))=LOWER(BTRIM(cat.programa))
-             ORDER BY pb.id_programas_bienestar LIMIT 1) AS "idProgramaBienestar"
-     FROM sat.catalogo_actividades_vec cat
-     LEFT JOIN sat.catalogo_bienestar_actividades bienestar
-       ON translate(LOWER(BTRIM(bienestar.programa)), 'áéíóúüñ', 'aeiouun') = translate(LOWER(BTRIM(cat.programa)), 'áéíóúüñ', 'aeiouun')
-     WHERE id_catalogo_actividades_vec=$1 AND tipo_registro='ACTIVIDAD'
-     FOR SHARE OF cat`,
-    [activity.idCatalogoActividad]
-  );
-  const catalog = catalogRows[0];
-  if (!catalog || !catalog.proyecto) {
-    throw Object.assign(new Error("La actividad del catálogo no existe o no tiene proyecto registrado."), { status: 400 });
-  }
+  const catalog = await obtenerCatalogoActividadManual(client, activity);
   const { rows } = await client.query(
     `INSERT INTO sat.actividades_vec (
        id_periodos_academicos, id_catalogo_actividades_vec, actividad,
@@ -1413,18 +1777,19 @@ export async function crearActividadTransaccion(client, activity, userId) {
        alianza_interinstitucional, entidad_alianza, articulacion_institucional,
        id_dependencias, dependencia_otra, modalidad, fecha_inicio, fecha_finalizacion,
        id_programas_bienestar, estrategia_politica_bienestar,
-       estrategia_politica_permanencia, estrategia_politica_educacion_inclusiva, ubicacion
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+       estrategia_politica_permanencia, estrategia_politica_educacion_inclusiva,
+       ubicacion, variables_modalidades
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
      RETURNING id_actividades_vec AS id, estado`,
-    [activity.idPeriodo, catalog.id, catalog.actividad, catalog.descripcion,
+    [activity.idPeriodo, catalog.id, activity.nombreActividad, activity.descripcion,
       catalog.proyecto, catalog.tipo, activity.tipoOtra, activity.alianza,
       activity.entidadAlianza, activity.articulacion, activity.idDependencia,
       activity.dependenciaOtra, activity.modalidad, activity.fechaInicio,
       activity.fechaFinalizacion, catalog.idProgramaBienestar,
-      activity.estrategiaBienestar || catalog.estrategiaBienestar,
-      activity.estrategiaPermanencia || catalog.estrategiaPermanencia,
-      activity.estrategiaInclusiva || catalog.estrategiaInclusiva,
-      activity.ubicacion]
+      catalog.estrategiaBienestar || activity.estrategiaBienestar,
+      catalog.estrategiaPermanencia || activity.estrategiaPermanencia,
+      catalog.estrategiaInclusiva || activity.estrategiaInclusiva,
+      activity.ubicacion, activity.subdivisionProgramas]
   );
   await client.query(
     `INSERT INTO sat.actividades_vec_auditoria (id_actividades_vec, accion, id_usuario, detalle)
@@ -1432,6 +1797,144 @@ export async function crearActividadTransaccion(client, activity, userId) {
     [rows[0].id, String(userId || ""), JSON.stringify(activity)]
   );
   return rows[0];
+}
+
+async function obtenerCatalogoActividadManual(client, activity) {
+  const bienestar = await obtenerProgramaBienestar(client, activity);
+  await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [HOJA_REGISTRO_MANUAL]);
+  let { rows } = await client.query(
+    `SELECT id_catalogo_actividades_vec AS id, tipo_actividad AS tipo, proyecto
+     FROM sat.catalogo_actividades_vec
+     WHERE hoja_origen = $1
+       AND tipo_registro = 'ACTIVIDAD'
+       AND LOWER(BTRIM(actividad)) = LOWER(BTRIM($2))
+       AND LOWER(BTRIM(programa)) IS NOT DISTINCT FROM LOWER(BTRIM($3))
+     ORDER BY fila_origen
+     LIMIT 1
+     FOR UPDATE`,
+    [HOJA_REGISTRO_MANUAL, activity.nombreActividad, bienestar.programa]
+  );
+  if (rows[0]) return completarCatalogoManual(rows[0], bienestar);
+
+  const { rows: sequenceRows } = await client.query(
+    `SELECT COALESCE(MAX(fila_origen), 1) + 1 AS fila
+     FROM sat.catalogo_actividades_vec
+     WHERE hoja_origen = $1`,
+    [HOJA_REGISTRO_MANUAL]
+  );
+  ({ rows } = await client.query(
+    `INSERT INTO sat.catalogo_actividades_vec
+       (hoja_origen, fila_origen, tipo_registro, actividad, proyecto,
+        programa, componente, linea_accion)
+     VALUES ($1, $2, 'ACTIVIDAD', $3, $3, $4, $5, $6)
+     RETURNING id_catalogo_actividades_vec AS id, tipo_actividad AS tipo, proyecto`,
+    [HOJA_REGISTRO_MANUAL, sequenceRows[0].fila, activity.nombreActividad,
+      bienestar.programa, bienestar.componente, bienestar.lineaAccion]
+  ));
+  return completarCatalogoManual(rows[0], bienestar);
+}
+
+async function obtenerProgramaBienestar(client, activity) {
+  if (!activity.programaBienestar) {
+    if (activity.subdivisionProgramas.length) {
+      throw Object.assign(new Error("Selecciona el programa general de Bienestar para las variables o modalidades indicadas."), { status: 400 });
+    }
+    return {
+      programa: null,
+      componente: null,
+      lineaAccion: null,
+      tipoApoyo: null,
+      idProgramaBienestar: null,
+      estrategiaBienestar: null,
+      estrategiaPermanencia: null,
+      estrategiaInclusiva: null,
+    };
+  }
+
+  const { rows: catalogRows } = await client.query(
+    `WITH programas_base AS (
+       SELECT bienestar.*,
+              CASE
+                WHEN POSITION(' - ' IN programa) > 0
+                  THEN BTRIM(SUBSTRING(programa FROM 1 FOR POSITION(' - ' IN programa) - 1))
+                WHEN programa ~* ' \\((participantes|grupos?)([[:space:]][^()]*)?\\)$'
+                  THEN REGEXP_REPLACE(programa, ' \\((participantes|grupos?)([[:space:]][^()]*)?\\)$', '', 'i')
+                ELSE programa
+              END AS programa_general
+       FROM sat.catalogo_bienestar_actividades bienestar
+       WHERE NULLIF(BTRIM(programa), '') IS NOT NULL
+     ),
+     programas AS (
+       SELECT programas_base.*,
+              COUNT(*) OVER (PARTITION BY LOWER(BTRIM(programa_general))) AS total_programas
+       FROM programas_base
+     ),
+     programas_normalizados AS (
+       SELECT CASE WHEN total_programas > 1 THEN programa_general ELSE programa END AS programa_general,
+              programa AS programa_completo,
+              CASE WHEN total_programas <= 1 THEN NULL
+                   WHEN LOWER(BTRIM(programa)) = LOWER(BTRIM(programa_general)) THEN '(Sin especificación / General)'
+                   WHEN POSITION(' - ' IN programa) > 0
+                     THEN BTRIM(SUBSTRING(programa FROM POSITION(' - ' IN programa) + 3))
+                   ELSE BTRIM(SUBSTRING(programa FROM LENGTH(programa_general) + 1), ' ()')
+              END AS subdivision,
+              componente, linea_accion, numero_tipo_apoyo,
+              estrategia_politica_bienestar, estrategia_politica_permanencia,
+              estrategia_politica_educacion_inclusiva
+       FROM programas
+     )
+     SELECT programas_normalizados.programa_completo AS programa,
+            programas_normalizados.componente,
+            programas_normalizados.linea_accion AS "lineaAccion",
+            programas_normalizados.subdivision,
+            programas_normalizados.estrategia_politica_bienestar AS "estrategiaBienestar",
+            programas_normalizados.estrategia_politica_permanencia AS "estrategiaPermanencia",
+            programas_normalizados.estrategia_politica_educacion_inclusiva AS "estrategiaInclusiva",
+            (SELECT pb.id_programas_bienestar
+             FROM sat.programas_bienestar pb
+             WHERE pb.activo = true
+               AND LOWER(BTRIM(pb.nombre)) = LOWER(BTRIM(programas_normalizados.programa_general))
+             ORDER BY pb.id_programas_bienestar
+             LIMIT 1) AS "idProgramaBienestar"
+     FROM programas_normalizados
+     WHERE LOWER(BTRIM(programas_normalizados.programa_general)) = LOWER(BTRIM($1))
+     ORDER BY (programas_normalizados.programa_completo = programas_normalizados.programa_general) DESC,
+              programas_normalizados.programa_completo`,
+    [activity.programaBienestar]
+  );
+  const rows = catalogRows.map((row) => ({
+    ...row,
+    tipoApoyo: bienestarFuentePorPrograma.get(row.programa)?.tipoApoyoExcel || null,
+  }));
+  if (!rows.length) {
+    throw Object.assign(new Error("El programa de Bienestar seleccionado no existe en el catálogo."), { status: 400 });
+  }
+  const selectedNames = activity.subdivisionProgramas;
+  const selectedPrograms = selectedNames.map((name) => rows.find((row) => row.programa === name));
+  if (selectedPrograms.some((row) => !row)) {
+    throw Object.assign(new Error("Una variable o modalidad no corresponde al programa de Bienestar seleccionado."), { status: 400 });
+  }
+  if (rows.some((row) => row.subdivision) && !selectedPrograms.length) {
+    throw Object.assign(new Error("Selecciona al menos una variable o modalidad del programa de Bienestar."), { status: 400 });
+  }
+  return selectedPrograms[0] || rows.find((row) => row.programa === activity.programaBienestar) || {
+    programa: null,
+    componente: null,
+    lineaAccion: null,
+    tipoApoyo: null,
+    idProgramaBienestar: null,
+    estrategiaBienestar: null,
+    estrategiaPermanencia: null,
+    estrategiaInclusiva: null,
+  };
+}
+
+function completarCatalogoManual(catalog, bienestar) {
+  return {
+    ...catalog,
+    descripcion: null,
+    ...bienestar,
+  };
 }
 
 async function guardarPerfilDeActividad(client, participante) {
@@ -1590,7 +2093,7 @@ async function registrarActividad(req, res, next, tipoForzado = null) {
     }
     if (actividad.idEventoExistente) {
       const { rows: eventoRows } = await client.query(
-        `SELECT id_actividades_vec
+        `SELECT id_actividades_vec, variables_modalidades AS "variablesModalidades"
          FROM sat.actividades_vec
          WHERE id_actividades_vec = $1
            AND id_catalogo_actividades_vec = $2
@@ -1611,6 +2114,39 @@ async function registrarActividad(req, res, next, tipoForzado = null) {
         await client.query("ROLLBACK");
         return res.status(409).json({
           error: "El evento seleccionado ya no está disponible. Actualiza la lista y selecciona una jornada próxima.",
+        });
+      }
+      const variablesModalidades = eventoRows[0].variablesModalidades || [];
+      if (variablesModalidades.length) {
+        const seleccionadas = actividad.subdivisionProgramas;
+        if (seleccionadas.length !== 1 || !variablesModalidades.includes(seleccionadas[0])) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({
+            error: "Selecciona una variable o modalidad disponible para esta actividad.",
+          });
+        }
+        const { rows: apoyos } = await client.query(
+          `SELECT ta.id_tipos_apoyo AS id
+           FROM sat.catalogo_bienestar_actividades bienestar
+           JOIN sat.tipos_apoyo ta
+             ON ta.numero = bienestar.numero_tipo_apoyo
+            AND ta.activo = true
+           WHERE bienestar.programa = $1
+           ORDER BY ta.id_tipos_apoyo
+           LIMIT 1`,
+          [seleccionadas[0]]
+        );
+        if (!apoyos[0]) {
+          await client.query("ROLLBACK");
+          return res.status(409).json({
+            error: "La variable seleccionada no tiene un apoyo activo asociado.",
+          });
+        }
+        actividad.idTipoApoyo = apoyos[0].id;
+      } else if (actividad.subdivisionProgramas.length) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          error: "La actividad seleccionada no tiene variables o modalidades configuradas.",
         });
       }
     } else {
@@ -2444,11 +2980,17 @@ function normalizarEntrada(body = {}) {
 
 function normalizarActividad(body = {}) {
   const clean = (value) => value == null ? null : String(value).trim() || null;
+  const subdivisionProgramas = Array.isArray(body.subdivisionProgramas)
+    ? [...new Set(body.subdivisionProgramas.map(clean).filter(Boolean))]
+    : (clean(body.subdivisionPrograma) ? [clean(body.subdivisionPrograma)] : []);
   const alianza = body.alianzaInterinstitucional;
   return {
     idEventoExistente: clean(body.idEventoExistente),
     idPeriodo: clean(body.idPeriodo),
     idCatalogoActividad: clean(body.idCatalogoActividad),
+    nombreActividad: clean(body.actividad),
+    programaBienestar: clean(body.programaBienestar),
+    subdivisionProgramas,
     descripcion: clean(body.descripcion),
     tipoOtra: clean(body.tipoActividadOtra),
     alianza: alianza === true || alianza === "true"
@@ -2469,7 +3011,7 @@ function normalizarActividad(body = {}) {
   };
 }
 
-function validarActividad(actividad) {
+function validarActividad(actividad, { requiereNombre = false, fechaMinima = null } = {}) {
   const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   const esFechaValida = (value) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value || "")) return false;
@@ -2477,7 +3019,16 @@ function validarActividad(actividad) {
     return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
   };
   if (!actividad.idPeriodo || !uuidPattern.test(actividad.idPeriodo)) return "Selecciona un periodo académico válido.";
-  if (!actividad.idCatalogoActividad || !uuidPattern.test(actividad.idCatalogoActividad)) return "Selecciona una actividad del catálogo institucional.";
+  if (requiereNombre) {
+    if (!actividad.nombreActividad) return "Ingresa el nombre de la actividad.";
+    if (actividad.nombreActividad.length > 250) return "El nombre de la actividad no puede superar 250 caracteres.";
+    if (!UBICACIONES_ACTIVIDAD.has(actividad.ubicacion)) return "Selecciona uno de los campus disponibles.";
+    if (actividad.programaBienestar?.length > 250) return "El nombre del programa de Bienestar supera el límite permitido.";
+    if (actividad.subdivisionProgramas.some((nombre) => nombre.length > 250)) return "El nombre de una variable o modalidad supera el límite permitido.";
+    if (actividad.subdivisionProgramas.length && !actividad.programaBienestar) return "Selecciona el programa general de Bienestar.";
+  } else if (!actividad.idCatalogoActividad || !uuidPattern.test(actividad.idCatalogoActividad)) {
+    return "Selecciona una actividad del catálogo institucional.";
+  }
   if (actividad.idEventoExistente && !uuidPattern.test(actividad.idEventoExistente)) {
     return "Selecciona un evento próximo válido.";
   }
@@ -2486,6 +3037,11 @@ function validarActividad(actividad) {
   }
   if (!esFechaValida(actividad.fechaFinalizacion)) {
     return "Ingresa una fecha de finalización válida.";
+  }
+  if (fechaMinima && (
+    actividad.fechaInicio < fechaMinima || actividad.fechaFinalizacion < fechaMinima
+  )) {
+    return "Las fechas deben ser iguales o posteriores a hoy.";
   }
   if (actividad.fechaFinalizacion < actividad.fechaInicio) {
     return "La fecha de finalización no puede ser anterior a la fecha de inicio.";
@@ -2497,6 +3053,13 @@ function validarActividad(actividad) {
     return "Selecciona un tipo de apoyo válido.";
   }
   return null;
+}
+
+function fechaActualLocalISO() {
+  const hoy = new Date();
+  const mes = String(hoy.getMonth() + 1).padStart(2, "0");
+  const dia = String(hoy.getDate()).padStart(2, "0");
+  return `${hoy.getFullYear()}-${mes}-${dia}`;
 }
 
 function validarEntrada(payload) {

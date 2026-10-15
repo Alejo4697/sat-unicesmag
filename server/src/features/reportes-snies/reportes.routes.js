@@ -27,6 +27,7 @@
 import { Router } from "express";
 import { MOCK_DATA } from "../../shared/data/mockData.js";
 import { identifyUser, requireModule } from "../../shared/middleware/requireRole.js";
+import { sanitizarIntervencion } from "../../shared/security/vbg.js";
 
 const router = Router();
 
@@ -116,18 +117,21 @@ router.get("/intervenciones", (req, res) => {
   const filas = MOCK_DATA.intervenciones
     .map((i) => ({ i, e: estudiantePorCodigo(i.codigoEstudiante) }))
     .filter(({ e }) => pasa(e))
-    .map(({ i, e }) => ({
-      idIntervencion: i.id,
-      ...datosEstudiante(e, i.codigoEstudiante),
-      nivelRiesgo: e?.riesgoGlobal || "",
-      tipoIntervencion: i.tipoIntervencion || "",
-      motivo: i.motivo || "",
-      atendidoPor: i.atendidoPor,
-      cargo: i.cargoAtendio,
-      fecha: i.fecha,
-      sensibleVBG: i.esSensibleVBG ? "SI" : "NO",
-      estado: i.cerrado ? "Cerrada" : "Abierta"
-    }));
+    .map(({ i, e }) => {
+      const sanitizada = sanitizarIntervencion(i, req.user);
+      return {
+        idIntervencion: i.id,
+        ...datosEstudiante(e, i.codigoEstudiante),
+        nivelRiesgo: e?.riesgoGlobal || "",
+        tipoIntervencion: i.tipoIntervencion || "",
+        motivo: sanitizada.motivo || "",
+        atendidoPor: i.atendidoPor,
+        cargo: i.cargoAtendio,
+        fecha: i.fecha,
+        sensibleVBG: i.esSensibleVBG ? "SI" : "NO",
+        estado: i.cerrado ? "Cerrada" : "Abierta"
+      };
+    });
   res.json(filas);
 });
 

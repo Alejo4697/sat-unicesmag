@@ -15,7 +15,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import AppLayout from "../../shared/layout/AppLayout.jsx";
-import { descargarCSV, filaComoTexto, formatFechaCSV } from "../../shared/utils/csv.js";
+import { filaComoTexto, formatFechaCSV } from "../../shared/utils/csv.js";
+import { descargarExcel } from "../../shared/utils/excel.js";
 import {
   getReportesResumen,
   getOpcionesFiltros,
@@ -84,19 +85,22 @@ const REPORTES = {
     titulo: "Reporte Oficial SNIES / MEN",
     columnas: COLUMNAS_SNIES,
     cargar: getFilasSnies,
-    archivo: "REPORTE_SNIES_PERMANENCIA_UNICESMAG.csv"
+    archivo: "REPORTE_SNIES_PERMANENCIA_UNICESMAG.xlsx",
+    hoja: "SNIES_MEN"
   },
   intervenciones: {
     titulo: "Historial de Intervenciones",
     columnas: COLUMNAS_INTERVENCIONES,
     cargar: getFilasIntervenciones,
-    archivo: "REPORTE_INTERVENCIONES_INDIVIDUALES_UNICESMAG.csv"
+    archivo: "REPORTE_INTERVENCIONES_INDIVIDUALES_UNICESMAG.xlsx",
+    hoja: "Intervenciones"
   },
   remisiones: {
     titulo: "Reporte de Remisiones",
     columnas: COLUMNAS_REMISIONES,
     cargar: getFilasRemisiones,
-    archivo: "REPORTE_REMISIONES_CANALIZADAS_UNICESMAG.csv"
+    archivo: "REPORTE_REMISIONES_CANALIZADAS_UNICESMAG.xlsx",
+    hoja: "Remisiones"
   }
 };
 
@@ -159,7 +163,7 @@ export default function ReportesPage() {
         avisar("No hay registros que cumplan los filtros seleccionados.");
         return;
       }
-      descargarCSV(filas, reporte.columnas, reporte.archivo);
+      await descargarExcel(filas, reporte.columnas, reporte.archivo, { hoja: reporte.hoja });
       avisar(`Descarga completada: ${reporte.archivo} (${filas.length} registros).`);
     } catch (err) {
       setError(err.message);
@@ -293,7 +297,7 @@ export default function ReportesPage() {
             Consolidado de cobertura de caracterización, permanencia y atenciones para el Ministerio de Educación.
           </p>
           <button className="btn btn-primary" style={{ width: "100%" }} onClick={() => exportar("snies")} disabled={descargando === "snies"}>
-            <i className="fas fa-download"></i> {descargando === "snies" ? "Generando..." : "Descargar SNIES (CSV)"}
+            <i className="fas fa-file-excel"></i> {descargando === "snies" ? "Generando..." : "Descargar SNIES (Excel)"}
           </button>
           <button className="btn btn-outline btn-sm" style={{ width: "100%", marginTop: "0.5rem" }} onClick={() => setReporteActivo("snies")}>
             <i className="fas fa-eye"></i> Ver vista previa
@@ -309,7 +313,7 @@ export default function ReportesPage() {
             Relación individual de atenciones registradas con fecha, caso, profesional y acuerdos pactados.
           </p>
           <button className="btn btn-secondary" style={{ width: "100%" }} onClick={() => exportar("intervenciones")} disabled={descargando === "intervenciones"}>
-            <i className="fas fa-file-csv"></i> {descargando === "intervenciones" ? "Generando..." : "Exportar Intervenciones"}
+            <i className="fas fa-file-excel"></i> {descargando === "intervenciones" ? "Generando..." : "Exportar Intervenciones (Excel)"}
           </button>
           <button className="btn btn-outline btn-sm" style={{ width: "100%", marginTop: "0.5rem" }} onClick={() => setReporteActivo("intervenciones")}>
             <i className="fas fa-eye"></i> Ver vista previa
@@ -325,7 +329,7 @@ export default function ReportesPage() {
             Derivaciones canalizadas por la Matriz de Bienestar: tipo de apoyo, servicio, oficina y profesional.
           </p>
           <button className="btn btn-gold" style={{ width: "100%" }} onClick={() => exportar("remisiones")} disabled={descargando === "remisiones"}>
-            <i className="fas fa-file-excel"></i> {descargando === "remisiones" ? "Generando..." : "Exportar Remisiones"}
+            <i className="fas fa-file-excel"></i> {descargando === "remisiones" ? "Generando..." : "Exportar Remisiones (Excel)"}
           </button>
           <button className="btn btn-outline btn-sm" style={{ width: "100%", marginTop: "0.5rem" }} onClick={() => setReporteActivo("remisiones")}>
             <i className="fas fa-eye"></i> Ver vista previa
@@ -377,8 +381,8 @@ export default function ReportesPage() {
         </div>
 
         <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.75rem" }}>
-          El archivo descargado incluye todos los registros de la lista, no solo los visibles. Se genera en CSV separado
-          por punto y coma (;) y codificación UTF-8, de modo que Excel en español lo abre en columnas y con tildes.
+          El archivo descargado incluye todos los registros de la lista, no solo los visibles. Se genera en formato
+          nativo de Microsoft Excel (.xlsx) con estilos corporativos institucionales (#002855), autoajuste de columnas y encabezados fijados.
         </p>
       </div>
     </AppLayout>

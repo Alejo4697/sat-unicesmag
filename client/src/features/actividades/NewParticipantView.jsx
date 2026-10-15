@@ -6,6 +6,7 @@ import {
   getEventosProximos,
   registrarActividad,
 } from "./participantesApi.js";
+import BulkParticipantImport from "./BulkParticipantImport.jsx";
 
 const TIPOS = [
   { value: "ESTUDIANTE", label: "Estudiante" },
@@ -111,6 +112,7 @@ const EMPTY_ACTIVIDAD = {
   lineaAccion: "",
   componente: "",
   programa: "",
+  subdivisionPrograma: "",
   proyecto: "",
   actividadBusqueda: "",
   alianzaInterinstitucional: "",
@@ -145,6 +147,7 @@ const EMPTY_CATALOGOS = {
   periodos: [],
   dependencias: [],
   tiposApoyo: [],
+  programasBienestar: [],
   generos: [],
   etnias: [],
   municipios: [],
@@ -164,21 +167,28 @@ function opcionesConValorActual(base, valor) {
 
 function autoCompletarRamasUnicas(next, catalogoActividades, startAt) {
   const hierarchy = [
-    ["componente", "Sin componente en el Excel"],
-    ["programa", "Sin programa en el Excel"],
-    ["proyecto", "Sin proyecto en el Excel"],
+    ["componente", "componente", "Sin componente en el Excel"],
+    ["programa", "programaGeneral", "Sin programa en el Excel"],
+    ["subdivisionPrograma", "subdivisionPrograma", "Sin subdivisión para este programa"],
+    ["proyecto", "proyecto", "Sin proyecto en el Excel"],
   ];
   let matchingRows = filterCatalogo(catalogoActividades, { lineaAccion: next.lineaAccion });
 
   for (let index = 0; index < hierarchy.length; index += 1) {
-    const [field, emptyLabel] = hierarchy[index];
+    const [field, catalogField, emptyLabel] = hierarchy[index];
     if (index < startAt) {
-      matchingRows = filterCatalogo(matchingRows, { [field]: next[field] });
+      matchingRows = filterCatalogo(matchingRows, { [catalogField]: next[field] });
       continue;
     }
-    const options = catalogOptions(matchingRows, field, emptyLabel);
-    if (!next[field] && options.length === 1) next[field] = options[0].value;
-    matchingRows = filterCatalogo(matchingRows, { [field]: next[field] });
+    const options = catalogOptions(matchingRows, catalogField, emptyLabel);
+    if (field === "subdivisionPrograma"
+      && !next[field]
+      && matchingRows.some((row) => row.tieneSubdivisiones)) return next;
+    if (!next[field] && options.length === 1 && options[0].value !== NULL_CATALOG_VALUE) {
+      next[field] = options[0].value;
+    }
+    matchingRows = filterCatalogo(matchingRows, { [catalogField]: next[field] });
+    if (field === "subdivisionPrograma" && !next[field] && options.length > 1) return next;
   }
 
   return next;
@@ -204,6 +214,50 @@ function catalogOptions(rows, key, emptyLabel) {
       value,
       label: value === NULL_CATALOG_VALUE ? emptyLabel : value,
     }));
+}
+
+function clasificarProgramasCatalogo(rows) {
+  const programas = new Map();
+  rows.forEach((row) => {
+    const nombre = String(row.programa || "").trim();
+    if (!nombre) return;
+    let general = nombre;
+    let subdivision = "";
+    const separador = nombre.indexOf(" - ");
+    const agregadoFinal = nombre.match(/ \((participantes|grupos?)(?=[ )])([^()]*)\)$/i);
+    if (separador > -1) {
+      general = nombre.slice(0, separador).trim();
+      subdivision = nombre.slice(separador + 3).trim();
+    } else if (agregadoFinal) {
+      general = nombre.slice(0, agregadoFinal.index).trim();
+      subdivision = `${agregadoFinal[1]}${agregadoFinal[2]}`.trim();
+    }
+    programas.set(nombre, { nombre, general, subdivision });
+  });
+
+  const cantidadPorGeneral = new Map();
+  programas.forEach(({ general }) => {
+    const clave = general.toLocaleLowerCase("es");
+    cantidadPorGeneral.set(clave, (cantidadPorGeneral.get(clave) || 0) + 1);
+  });
+  const clasificacionPorNombre = new Map();
+  programas.forEach(({ nombre, general, subdivision }) => {
+    const agrupado = cantidadPorGeneral.get(general.toLocaleLowerCase("es")) > 1;
+    clasificacionPorNombre.set(nombre, {
+      programaGeneral: agrupado ? general : nombre,
+      subdivisionPrograma: agrupado ? nombre : "",
+      tieneSubdivisiones: agrupado,
+      etiquetaSubdivision: agrupado
+        ? (nombre.toLocaleLowerCase("es") === general.toLocaleLowerCase("es")
+          ? "(Sin especificación / General)"
+          : subdivision || nombre.slice(general.length).trim())
+        : "",
+    });
+  });
+  return rows.map((row) => ({
+    ...row,
+    ...clasificacionPorNombre.get(String(row.programa || "").trim()),
+  }));
 }
 
 function calculateAge(dateString) {
@@ -247,7 +301,9 @@ function Field({
   const displayValue = value == null ? "" : String(value);
   return (
     <div className="form-group">
-      <label className="form-label" htmlFor={id}>{label}</label>
+      <label className="form-label" htmlFor={id}>
+        {label}{required && <span className="vec-required-indicator" aria-hidden="true"> *</span>}
+      </label>
       {options ? (
         <select
           className="form-select"
@@ -307,6 +363,7 @@ function FormGrid({ children }) {
 }
 
 export default function NewParticipantView({ onCancel }) {
+  const [modoRegistro, setModoRegistro] = useState("individual");
   const [tipo, setTipo] = useState("");
   const [identificacion, setIdentificacion] = useState("");
   const [busqueda, setBusqueda] = useState({ status: "idle", participante: null, mensaje: "" });
@@ -320,6 +377,7 @@ export default function NewParticipantView({ onCancel }) {
   const [guardando, setGuardando] = useState(false);
   const [confirmacion, setConfirmacion] = useState("");
   const [confirmacionRolApoyo, setConfirmacionRolApoyo] = useState(false);
+  const [intentoContinuar, setIntentoContinuar] = useState(false);
   const [intentoBusqueda, setIntentoBusqueda] = useState(0);
   const [intentoCatalogos, setIntentoCatalogos] = useState(0);
 
@@ -333,10 +391,21 @@ export default function NewParticipantView({ onCancel }) {
   const esRolNuevoParaPersona = personaEncontrada && !rolesRegistrados.includes(tipo);
   const esperandoResultado = ["waiting", "loading"].includes(busqueda.status);
   const esEstudiante = tipo === "ESTUDIANTE";
-  const filasLinea = filterCatalogo(catalogoActividades, { lineaAccion: actividad.lineaAccion });
+  const catalogoClasificado = clasificarProgramasCatalogo(catalogoActividades);
+  const filasLinea = filterCatalogo(catalogoClasificado, { lineaAccion: actividad.lineaAccion });
   const filasComponente = filterCatalogo(filasLinea, { componente: actividad.componente });
-  const filasPrograma = filterCatalogo(filasComponente, { programa: actividad.programa });
-  const filasProyecto = filterCatalogo(filasPrograma, { proyecto: actividad.proyecto });
+  const filasPrograma = filterCatalogo(filasComponente, { programaGeneral: actividad.programa });
+  const opcionesSubdivisionPrograma = [...new Map(filasPrograma
+    .filter((row) => row.subdivisionPrograma)
+    .map((row) => [row.subdivisionPrograma, {
+      value: row.subdivisionPrograma,
+      label: row.etiquetaSubdivision,
+    }])).values()];
+  const requiereSubdivisionPrograma = filasPrograma.some((row) => row.tieneSubdivisiones);
+  const filasSubdivision = filterCatalogo(filasPrograma, {
+    subdivisionPrograma: actividad.subdivisionPrograma,
+  });
+  const filasProyecto = filterCatalogo(filasSubdivision, { proyecto: actividad.proyecto });
   const actividadesDisponibles = filasProyecto.filter((row) => (
     !actividad.actividadBusqueda
     || row.actividad.toLocaleLowerCase("es").includes(actividad.actividadBusqueda.toLocaleLowerCase("es"))
@@ -378,8 +447,16 @@ export default function NewParticipantView({ onCancel }) {
   );
   const opcionesLinea = catalogOptions(catalogoActividades, "lineaAccion", "Sin línea en el Excel");
   const opcionesComponente = catalogOptions(filasLinea, "componente", "Sin componente en el Excel");
-  const opcionesPrograma = catalogOptions(filasComponente, "programa", "Sin programa en el Excel");
-  const opcionesProyecto = catalogOptions(filasPrograma, "proyecto", "Sin proyecto en el Excel");
+  const opcionesPrograma = [...new Map(filasComponente
+    .map((row) => row.programaGeneral || NULL_CATALOG_VALUE)
+    .map((value) => [value, {
+      value,
+      label: value === NULL_CATALOG_VALUE ? "Sin programa en el Excel" : value,
+    }])).values()]
+    .sort((a, b) => a.label.localeCompare(b.label, "es"));
+  const subdivisionesOrdenadas = [...opcionesSubdivisionPrograma]
+    .sort((a, b) => a.label.localeCompare(b.label, "es"));
+  const opcionesProyecto = catalogOptions(filasSubdivision, "proyecto", "Sin proyecto en el Excel");
   const tipoDocumentoSeleccionado = normalizarTipoDocumento(form.tipoDocumento);
   const opcionesTipoDocumento = !tipoDocumentoSeleccionado
     || TIPOS_DOCUMENTO.some((item) => item.value === tipoDocumentoSeleccionado)
@@ -522,6 +599,7 @@ export default function NewParticipantView({ onCancel }) {
     const evento = eventosProximos.find((item) => item.id === value);
     if (!evento) return;
     const catalogoEvento = catalogoActividades.find((item) => item.id === evento.idCatalogoActividad);
+    const clasificacionEvento = catalogoClasificado.find((item) => item.id === evento.idCatalogoActividad);
     setActividad({
       ...EMPTY_ACTIVIDAD,
       idEventoExistente: evento.id,
@@ -531,7 +609,8 @@ export default function NewParticipantView({ onCancel }) {
       tipoActividadOtra: evento.tipoActividadOtra || "",
       lineaAccion: evento.lineaAccion || NULL_CATALOG_VALUE,
       componente: evento.componente || NULL_CATALOG_VALUE,
-      programa: evento.programa || NULL_CATALOG_VALUE,
+      programa: clasificacionEvento?.programaGeneral || evento.programa || NULL_CATALOG_VALUE,
+      subdivisionPrograma: clasificacionEvento?.subdivisionPrograma || "",
       proyecto: evento.proyecto || NULL_CATALOG_VALUE,
       actividadBusqueda: evento.actividad,
       alianzaInterinstitucional: evento.alianzaInterinstitucional == null
@@ -557,23 +636,30 @@ export default function NewParticipantView({ onCancel }) {
       const next = { ...current, [name]: value, idCatalogoActividad: "" };
       if (name === "lineaAccion") {
         return autoCompletarRamasUnicas(
-          { ...next, componente: "", programa: "", proyecto: "", actividadBusqueda: "" },
-          catalogoActividades,
+          { ...next, componente: "", programa: "", subdivisionPrograma: "", proyecto: "", actividadBusqueda: "" },
+          catalogoClasificado,
           0
         );
       }
       if (name === "componente") {
         return autoCompletarRamasUnicas(
-          { ...next, programa: "", proyecto: "", actividadBusqueda: "" },
-          catalogoActividades,
+          { ...next, programa: "", subdivisionPrograma: "", proyecto: "", actividadBusqueda: "" },
+          catalogoClasificado,
           1
         );
       }
       if (name === "programa") {
         return autoCompletarRamasUnicas(
-          { ...next, proyecto: "", actividadBusqueda: "" },
-          catalogoActividades,
+          { ...next, subdivisionPrograma: "", proyecto: "", actividadBusqueda: "" },
+          catalogoClasificado,
           2
+        );
+      }
+      if (name === "subdivisionPrograma") {
+        return autoCompletarRamasUnicas(
+          { ...next, proyecto: "", actividadBusqueda: "" },
+          catalogoClasificado,
+          3
         );
       }
       if (name === "proyecto") {
@@ -596,6 +682,7 @@ export default function NewParticipantView({ onCancel }) {
 
   async function handleContinuar(event) {
     event.preventDefault();
+    setIntentoContinuar(true);
     setError("");
     setConfirmacion("");
 
@@ -703,10 +790,40 @@ export default function NewParticipantView({ onCancel }) {
   const contactoActual = form.contacto || form.celular || form.telefono;
 
   return (
-    <form onSubmit={handleContinuar} noValidate>
+    <form
+      className="vec-participant-form"
+      data-attempted={intentoContinuar}
+      onSubmit={(event) => {
+        if (modoRegistro === "individual") handleContinuar(event);
+        else event.preventDefault();
+      }}
+      noValidate
+    >
+      <div className="vec-registration-mode" role="group" aria-label="Método de registro">
+        <button
+          className={`vec-registration-mode__option${modoRegistro === "individual" ? " is-active" : ""}`}
+          type="button"
+          aria-pressed={modoRegistro === "individual"}
+          onClick={() => setModoRegistro("individual")}
+        >
+          <i className="fas fa-user" aria-hidden="true"></i>
+          <span><strong>Registro individual</strong><small>Registrar una persona a la vez</small></span>
+        </button>
+        <button
+          className={`vec-registration-mode__option${modoRegistro === "masivo" ? " is-active" : ""}`}
+          type="button"
+          aria-pressed={modoRegistro === "masivo"}
+          onClick={() => setModoRegistro("masivo")}
+        >
+          <i className="fas fa-file-excel" aria-hidden="true"></i>
+          <span><strong>Carga masiva desde Excel</strong><small>Registrar varios participantes de una vez</small></span>
+        </button>
+      </div>
+
+      {modoRegistro === "masivo" ? <BulkParticipantImport /> : <>
       <SectionCard title="Tipo de participante e identificación" icon="fa-id-card" defaultOpen>
         <div className="form-group">
-          <label className="form-label" htmlFor="participant-type">Tipo de participante</label>
+          <label className="form-label" htmlFor="participant-type">Tipo de participante <span className="vec-required-indicator" aria-hidden="true">*</span></label>
           <select
             className="form-select"
             id="participant-type"
@@ -723,7 +840,7 @@ export default function NewParticipantView({ onCancel }) {
         </div>
         <div className="form-group">
           <label className="form-label" htmlFor="participant-identification" style={{ fontSize: "0.95rem" }}>
-            Cédula o código institucional
+            Cédula o código institucional <span className="vec-required-indicator" aria-hidden="true">*</span>
           </label>
           <input
             className="form-control"
@@ -1016,7 +1133,7 @@ export default function NewParticipantView({ onCancel }) {
                 {actividad.componente && (
                 <Field
                   name="programa"
-                  label="Programa"
+                  label="Programa general"
                   value={actividad.programa}
                   onChange={actualizarFiltroCatalogo}
                   required={opcionesPrograma.length > 1}
@@ -1026,7 +1143,19 @@ export default function NewParticipantView({ onCancel }) {
                   options={opcionesPrograma}
                 />
                 )}
-                {actividad.programa && (
+                {actividad.programa && requiereSubdivisionPrograma && (
+                <Field
+                  name="subdivisionPrograma"
+                  label="Variables / Modalidades"
+                  value={actividad.subdivisionPrograma}
+                  onChange={actualizarFiltroCatalogo}
+                  required
+                  readOnly={Boolean(actividad.idEventoExistente)}
+                  options={subdivisionesOrdenadas}
+                  placeholder="Selecciona una subdivisión"
+                />
+                )}
+                {actividad.programa && (!requiereSubdivisionPrograma || actividad.subdivisionPrograma) && (
                 <Field
                   name="proyecto"
                   label="Proyecto"
@@ -1053,6 +1182,7 @@ export default function NewParticipantView({ onCancel }) {
                   value={actividad.idCatalogoActividad}
                   onChange={(_name, id) => {
                     const selected = catalogoActividades.find((item) => item.id === id);
+                    const clasificacionSeleccionada = catalogoClasificado.find((item) => item.id === id);
                     if (!selected) {
                       setActividad((current) => ({
                         ...current,
@@ -1066,7 +1196,8 @@ export default function NewParticipantView({ onCancel }) {
                       descripcion: selected.descripcion || "",
                       lineaAccion: selected.lineaAccion || NULL_CATALOG_VALUE,
                       componente: selected.componente || NULL_CATALOG_VALUE,
-                      programa: selected.programa || NULL_CATALOG_VALUE,
+                      programa: clasificacionSeleccionada?.programaGeneral || selected.programa || NULL_CATALOG_VALUE,
+                      subdivisionPrograma: clasificacionSeleccionada?.subdivisionPrograma || "",
                       proyecto: selected.proyecto || NULL_CATALOG_VALUE,
                       idTipoApoyo: selected.idTipoApoyoSugerido || "",
                       estrategiaPoliticaBienestar: selected.estrategiaPoliticaBienestar || "",
@@ -1171,6 +1302,11 @@ export default function NewParticipantView({ onCancel }) {
                       options={catalogos.tiposApoyo.map((apoyo) => ({ value: apoyo.id, label: apoyo.nombre }))}
                     />
                     <div className="form-group" style={{ gridColumn: "1 / -1" }}>
+                      {actividadSeleccionada?.tipoApoyoExcel && (
+                        <p className="text-muted" role="status">
+                          Apoyo según «Sis bienestar»: <strong>{actividadSeleccionada.tipoApoyoExcel}</strong>.
+                        </p>
+                      )}
                       {actividad.idTipoApoyo ? (
                         <p className="text-muted" role="status">
                           Se guardará explícitamente como <strong>{catalogos.tiposApoyo.find((item) => String(item.id) === String(actividad.idTipoApoyo))?.nombre || "tipo seleccionado"}</strong>.
@@ -1194,10 +1330,12 @@ export default function NewParticipantView({ onCancel }) {
                     <label className="form-group vec-support-role-confirmation">
                       <input
                         type="checkbox"
+                        aria-invalid={intentoContinuar && !confirmacionRolApoyo}
                         checked={confirmacionRolApoyo}
                         onChange={(event) => setConfirmacionRolApoyo(event.target.checked)}
                       />
                       <span>
+                        {intentoContinuar && !confirmacionRolApoyo && <strong className="vec-required-indicator">Falta confirmar. </strong>}
                         Confirmo que el tipo de apoyo se registra bajo el rol seleccionado: {" "}
                         <strong>{TIPOS.find((item) => item.value === tipo)?.label || tipo}</strong>.
                       </span>
@@ -1274,6 +1412,7 @@ export default function NewParticipantView({ onCancel }) {
               : "Registrar participante y programar jornada"}
         </button>
       </div>
+      </>}
     </form>
   );
 }

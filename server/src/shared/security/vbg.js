@@ -15,7 +15,7 @@ export { puedeVerDetalleVBG };
 // contenido ya redactado.
 export function sanitizarAlerta(alerta, user) {
   if (!alerta.esVBG) return { ...alerta, detalleVisible: true };
-  const detalleVisible = puedeVerDetalleVBG(user.rol, user.cargo);
+  const detalleVisible = puedeVerDetalleVBG(user?.rol, user?.cargo);
   if (detalleVisible) return { ...alerta, detalleVisible: true };
   return {
     ...alerta,
@@ -31,11 +31,9 @@ export function sanitizarAlerta(alerta, user) {
 // que Consultorios Jurídicos, USP y Administración puedan supervisar casos
 // que no registraron ellos mismos.
 export function sanitizarIntervencion(intervencion, user) {
-  const esAutor = user?.id === intervencion.idUsuarioAtendio;
+  const esAutor = Boolean(user?.id && user.id === intervencion.idUsuarioAtendio);
 
   if (!intervencion.esSensibleVBG) {
-    // TODO: acceso total de admin a intervenciones no-VBG ajenas es temporal,
-    // pendiente de confirmar en reunión de equipo .
     if (esAutor || user?.rol === "admin") return { ...intervencion, detalleVisible: true };
     return {
       ...intervencion,
@@ -47,7 +45,7 @@ export function sanitizarIntervencion(intervencion, user) {
     };
   }
 
-  const detalleVisible = esAutor || puedeVerDetalleVBG(user.rol, user.cargo);
+  const detalleVisible = esAutor || puedeVerDetalleVBG(user?.rol, user?.cargo);
   if (detalleVisible) return { ...intervencion, detalleVisible: true };
   return {
     ...intervencion,

@@ -17,9 +17,20 @@ function getActiveUserId() {
   }
 }
 
+async function fetchApi(url, options) {
+  try {
+    return await fetch(url, options);
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error("No se pudo conectar con el servidor. Verifica que la API esté en ejecución y vuelve a intentarlo.", { cause: error });
+    }
+    throw error;
+  }
+}
+
 export async function apiFetch(path, options = {}) {
   const userId = getActiveUserId();
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetchApi(`${API_URL}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -39,7 +50,7 @@ export async function apiFetch(path, options = {}) {
 
 export async function apiDownload(path, options = {}) {
   const userId = getActiveUserId();
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetchApi(`${API_URL}${path}`, {
     ...options,
     headers: {
       ...(userId ? { "x-user-id": userId } : {}),

@@ -273,8 +273,16 @@ export const MOCK_DATA = {
 
 // Regla de Secreto Profesional & Confidencialidad - portada de state.js
 export function puedeVerDetalleVBG(userRole, userCargo = "") {
+  if (!userRole) return false;
   if (userRole === "admin") return true;
-  if (userCargo.includes("Consultorios Jurídicos") || userCargo.includes("USP") || userCargo.includes("Servicios Psicológicos")) {
+  const cargo = String(userCargo || "").toLowerCase();
+  if (
+    cargo.includes("consultorios jurídicos") ||
+    cargo.includes("consultorios juridicos") ||
+    cargo.includes("usp") ||
+    cargo.includes("servicios psicológicos") ||
+    cargo.includes("servicios psicologicos")
+  ) {
     return true;
   }
   return false;

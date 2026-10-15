@@ -53,12 +53,16 @@ export async function ejecutarSincronizacion() {
   console.log("INICIANDO SINCRONIZACIÓN INSTITUCIONAL prod18sep2 -> DataBasePractica");
   console.log("================================================================");
 
+  if (!process.env.ACADEMIC_DB_HOST || !process.env.ACADEMIC_DB_USER || !process.env.ACADEMIC_DB_PASSWORD) {
+    throw new Error("Credenciales de la base de datos institucional no configuradas en variables de entorno (ACADEMIC_DB_*).");
+  }
+
   const academicClient = new Client({
-    host: process.env.ACADEMIC_DB_HOST || "10.10.192.7",
+    host: process.env.ACADEMIC_DB_HOST,
     port: Number(process.env.ACADEMIC_DB_PORT) || 5432,
     database: process.env.ACADEMIC_DB_NAME || "prod18sep2",
-    user: process.env.ACADEMIC_DB_USER || "pruebas_adviser",
-    password: process.env.ACADEMIC_DB_PASSWORD || "REDACTED_PASSWORD"
+    user: process.env.ACADEMIC_DB_USER,
+    password: process.env.ACADEMIC_DB_PASSWORD
   });
 
   const localClient = await pool.connect();
