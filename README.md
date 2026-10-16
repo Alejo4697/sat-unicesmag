@@ -222,9 +222,6 @@ estos pendientes de conexión/datos:
 
 Otros puntos abiertos del proyecto:
 
-- Los **filtros de "Reportes"** (periodo/programa/semestre/riesgo) son
-  visuales — el botón "Generar Informe Filtrado" no recorta todavía el
-  CSV exportado (igual que en el mockup original).
 - **"Editar usuario"** en Administración es un botón de marcador — falta la pantalla de edición de permisos.
 - No hay **autenticación real** (contraseñas/JWT): el login sigue siendo
   "de mockup" por selección de rol, documentado como tal en
@@ -244,6 +241,28 @@ npm run dev           # levanta server (puerto 4000) y client (puerto 5173) junt
 Abre `http://localhost:5173`. El cliente llama al backend en
 `http://localhost:4000/api` (configurable en `client/.env` con
 `VITE_API_URL`).
+
+## Configuración de variables de entorno
+
+Ninguna de las dos carpetas trae un `.env` real versionado (están en
+`.gitignore`, junto con cualquier `.env.*` salvo `.env.example`). Antes de
+correr el proyecto, copia las plantillas y rellénalas con valores reales:
+
+```bash
+cp server/.env.example server/.env
+cp client/.env.example client/.env
+```
+
+- **`server/.env`**:
+  - `PORT`, `CLIENT_ORIGIN` — puerto del backend y origen permitido por CORS. Obligatorias.
+  - `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` — conexión a PostgreSQL (schema `sat`, `shared/db/pool.js`). Obligatorias.
+  - `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASS`/`SMTP_FROM` (o los alias `EMAIL_USER`/`EMAIL_PASS`), y como alternativa `GMAIL_USER`/`GMAIL_PASS` — envío del código OTP a estudiantes (`shared/services/emailService.js`). Opcionales: sin ellas, el OTP solo se imprime en la consola del servidor.
+  - `ACADEMIC_DB_HOST`, `ACADEMIC_DB_PORT`, `ACADEMIC_DB_NAME`, `ACADEMIC_DB_USER`, `ACADEMIC_DB_PASSWORD` — conexión a la base de datos académica institucional para la sincronización (`shared/services/syncService.js`, `autoSyncScheduler.js`). **`ACADEMIC_DB_HOST`, `ACADEMIC_DB_USER` y `ACADEMIC_DB_PASSWORD` son obligatorias**: el código ya no tiene ningún valor de respaldo (antes sí lo tenía, era un riesgo de seguridad ya corregido) — si faltan, la sincronización lanza un error en vez de conectarse con datos incorrectos.
+- **`client/.env`**: solo `VITE_API_URL` (opcional, por defecto `http://localhost:4000/api`).
+
+**No hardcodear credenciales reales en el código como valor de respaldo**
+(`process.env.X || "valor-real"`) — usa siempre la variable de entorno y,
+si hace falta un valor por defecto, que sea uno de desarrollo inofensivo.
 
 Si prefieres correrlos por separado: `npm run dev:server` y
 `npm run dev:client` en dos terminales.
