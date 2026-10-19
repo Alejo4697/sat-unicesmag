@@ -31,13 +31,28 @@ CREATE TABLE IF NOT EXISTS sat.actividades_vec (
     CHECK (fecha_finalizacion >= fecha_inicio)
 );
 
+CREATE TABLE IF NOT EXISTS sat.apoyos_actividades_vec (
+    id_tipos_apoyo uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    numero smallint NOT NULL UNIQUE,
+    nombre varchar(120) NOT NULL,
+    activo boolean NOT NULL DEFAULT true,
+    creado_en timestamptz NOT NULL DEFAULT now(),
+    actualizado_en timestamptz NOT NULL DEFAULT now()
+);
+
+INSERT INTO sat.apoyos_actividades_vec (id_tipos_apoyo, numero, nombre, activo)
+SELECT id_tipos_apoyo, numero, nombre, activo
+FROM sat.tipos_apoyo
+WHERE numero IS NOT NULL
+ON CONFLICT (numero) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS sat.actividades_vec_participantes (
-  id_actividades_vec_participantes uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    id_actividades_vec_participantes uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   id_actividades_vec uuid NOT NULL
     REFERENCES sat.actividades_vec(id_actividades_vec) ON DELETE CASCADE,
   id_participantes_vec uuid NOT NULL
     REFERENCES sat.participantes_vec(id_participantes_vec) ON DELETE RESTRICT,
-  id_tipos_apoyo uuid REFERENCES sat.tipos_apoyo(id_tipos_apoyo),
+  id_tipos_apoyo uuid REFERENCES sat.apoyos_actividades_vec(id_tipos_apoyo),
   creado_en timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT uq_actividades_vec_participante
     UNIQUE (id_actividades_vec, id_participantes_vec)
@@ -125,6 +140,6 @@ LEFT JOIN sat.dependencias d ON d.id_dependencias = a.id_dependencias
 JOIN sat.programas_bienestar pb ON pb.id_programas_bienestar = a.id_programas_bienestar
 JOIN sat.componentes_bienestar cb ON cb.id_componentes_bienestar = pb.id_componentes_bienestar
 JOIN sat.lineas_accion la ON la.id_lineas_accion = cb.id_lineas_accion
-LEFT JOIN sat.tipos_apoyo ta ON ta.id_tipos_apoyo = avp.id_tipos_apoyo;
+LEFT JOIN sat.apoyos_actividades_vec ta ON ta.id_tipos_apoyo = avp.id_tipos_apoyo;
 
 COMMIT;

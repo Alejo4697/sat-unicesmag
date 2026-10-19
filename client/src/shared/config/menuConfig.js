@@ -42,19 +42,17 @@ export const MENU_CONFIG = [
         icon: "fa-bell",
         href: "/alertas",
       },
-      // Fuera del sidebar (hidden): se abren desde la Ficha 360°. RBAC intacto.
+      {
+        id: "remisiones",
+        name: "Remisiones y Casos",
+        icon: "fa-share-nodes",
+        href: "/remisiones",
+      },
       {
         id: "intervenciones",
         name: "Intervenciones",
         icon: "fa-clipboard-check",
         href: "/intervenciones",
-        hidden: true,
-      },
-      {
-        id: "remisiones",
-        name: "Remisiones",
-        icon: "fa-share-nodes",
-        href: "/remisiones",
         hidden: true,
       },
     ],
@@ -71,7 +69,18 @@ export const MENU_CONFIG = [
       },
     ],
   },
-
+  {
+    title: "Actividades VEC",
+    roles: ["admin", "reporte_actividades"],
+    items: [
+      {
+        id: "actividades",
+        name: "Registro de Actividades",
+        icon: "fa-calendar-check",
+        href: "/actividades",
+      },
+    ],
+  },
   {
     title: "Informes & SNIES",
     roles: ["admin", "profesional", "directivo", "reporte_actividades"],
@@ -93,12 +102,6 @@ export const MENU_CONFIG = [
         name: "Usuarios y Parámetros",
         icon: "fa-sliders",
         href: "/administracion",
-      },
-      {
-        id: "actividades",
-        name: "Actividades",
-        icon: "fa-list-check",
-        href: "/actividades",
       },
     ],
   },

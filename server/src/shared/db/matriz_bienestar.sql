@@ -73,7 +73,11 @@ INSERT INTO sat.tipos_apoyo (numero, nombre) VALUES
   (2, 'Apoyos académicos'),
   (3, 'Apoyo psicosocial'),
   (4, 'Atención clínica en psicología'),
-  (5, 'Atención en salud física')
+  (5, 'Atención en salud física'),
+  (6, 'Cultura y Deporte: Grupos institucionales'),
+  (7, 'Cursos cortos o diplomados'),
+  (8, 'Asistencia a actividades'),
+  (9, 'Espacio Académico')
 ON CONFLICT (numero) DO NOTHING;
 
 -- 2) Líneas de acción

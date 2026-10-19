@@ -12,11 +12,13 @@
     "db:matriz": "node src/shared/db/seed.js matriz_bienestar.sql",
     "db:permisos": "node src/shared/db/seed.js permisos_modulos.sql",
     "db:matriculas-codigo": "node src/shared/db/seed.js matriculas_codigo_externo.sql",
+    "db:roles-participantes": "node src/shared/db/seed.js ../../features/actividades/participantes_roles.sql",
     "db:actividades": "node src/features/actividades/aplicarMigracion.js",
     "db:catalogo-actividades": "node src/features/actividades/importarCatalogo.mjs",
     "db:sync": "node src/shared/services/syncService.js"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",

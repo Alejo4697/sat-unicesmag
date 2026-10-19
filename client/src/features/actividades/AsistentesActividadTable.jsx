@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  getSesionesActividad,
   exportarAsistentes,
   getActividadesDisponibles,
   getAsistentes,
@@ -11,10 +10,6 @@ import { useAuth } from "../../shared/context/AuthContext.jsx";
 function fechaCorta(value) {
   if (!value) return "—";
   return String(value).slice(0, 10);
-}
-
-function claveSesion(sesion) {
-  return `${sesion.idPeriodo}|${fechaCorta(sesion.fechaInicio)}|${fechaCorta(sesion.fechaFinalizacion)}`;
 }
 
 const ROL_LABELS = {
@@ -47,9 +42,6 @@ export default function AsistentesActividadTable() {
     .includes(String(user?.rol || "").toLowerCase());
   const [actividades, setActividades] = useState([]);
   const [actividadId, setActividadId] = useState("");
-  const [periodoId, setPeriodoId] = useState("");
-  const [sesiones, setSesiones] = useState([]);
-  const [sesionId, setSesionId] = useState("");
   const [busquedaActividad, setBusquedaActividad] = useState("");
   const [mostrarOpciones, setMostrarOpciones] = useState(false);
   const [opcionActiva, setOpcionActiva] = useState(0);
@@ -59,11 +51,10 @@ export default function AsistentesActividadTable() {
   const [resultadoLote, setResultadoLote] = useState("");
   const [verificandoIds, setVerificandoIds] = useState([]);
   const [cargandoActividades, setCargandoActividades] = useState(true);
-  const [cargandoSesiones, setCargandoSesiones] = useState(false);
   const [cargandoAsistentes, setCargandoAsistentes] = useState(false);
   const [exportando, setExportando] = useState(false);
   const [error, setError] = useState("");
-  const sesionSeleccionada = sesiones.find((sesion) => claveSesion(sesion) === sesionId);
+  const actividadSeleccionada = actividades.find((actividad) => actividad.id === actividadId);
   const asistenciasConfirmadas = asistentes.filter((item) => item.asistenciaVerificada).length;
   const porcentajeAsistencia = asistentes.length
     ? Math.round((asistenciasConfirmadas / asistentes.length) * 100)
@@ -75,7 +66,7 @@ export default function AsistentesActividadTable() {
       .then(setActividades)
       .catch((requestError) => {
         if (!controller.signal.aborted) {
-          setError(requestError.message || "No se pudo cargar el catálogo de actividades.");
+          setError(requestError.message || "No se pudieron cargar las actividades registradas.");
         }
       })
       .finally(() => {
@@ -85,7 +76,7 @@ export default function AsistentesActividadTable() {
   }, []);
 
   useEffect(() => {
-    if (!actividadId || !sesionSeleccionada) {
+    if (!actividadId || !actividadSeleccionada) {
       setAsistentes([]);
       setCargandoAsistentes(false);
       return undefined;
@@ -97,9 +88,9 @@ export default function AsistentesActividadTable() {
     setError("");
     getAsistentes({
       idActividad: actividadId,
-      idPeriodo: sesionSeleccionada.idPeriodo,
-      fechaInicio: fechaCorta(sesionSeleccionada.fechaInicio),
-      fechaFinalizacion: fechaCorta(sesionSeleccionada.fechaFinalizacion),
+      idPeriodo: actividadSeleccionada.idPeriodo,
+      fechaInicio: fechaCorta(actividadSeleccionada.fechaInicio),
+      fechaFinalizacion: fechaCorta(actividadSeleccionada.fechaFinalizacion),
       signal: controller.signal,
     })
       .then((rows) => {
@@ -116,49 +107,10 @@ export default function AsistentesActividadTable() {
     return () => controller.abort();
   }, [
     actividadId,
-    sesionSeleccionada?.idPeriodo,
-    sesionSeleccionada?.fechaInicio,
-    sesionSeleccionada?.fechaFinalizacion,
+    actividadSeleccionada?.idPeriodo,
+    actividadSeleccionada?.fechaInicio,
+    actividadSeleccionada?.fechaFinalizacion,
   ]);
-
-  useEffect(() => {
-    setSesionId("");
-    setSesiones([]);
-    setAsistentes([]);
-    setIdsSeleccionados(new Set());
-    setResultadoLote("");
-    if (!actividadId) {
-      setCargandoSesiones(false);
-      return undefined;
-    }
-
-    const controller = new AbortController();
-    setCargandoSesiones(true);
-    getSesionesActividad({
-      idActividad: actividadId,
-      idPeriodo: periodoId || undefined,
-      signal: controller.signal,
-    })
-      .then((rows) => {
-        if (!controller.signal.aborted) setSesiones(rows);
-      })
-      .catch((requestError) => {
-        if (!controller.signal.aborted) {
-          setError(requestError.message || "No se pudieron consultar las sesiones de la actividad.");
-        }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setCargandoSesiones(false);
-      });
-    return () => controller.abort();
-  }, [actividadId, periodoId]);
-
-  const actividadSeleccionada = actividades.find((actividad) => actividad.id === actividadId);
-  const periodos = useMemo(
-    () => [...(actividadSeleccionada?.periodos || [])]
-      .sort((left, right) => left.nombre.localeCompare(right.nombre, "es")),
-    [actividadSeleccionada],
-  );
   const actividadesFiltradas = useMemo(() => {
     const term = normalizarBusqueda(busquedaActividad);
     return actividades
@@ -191,9 +143,9 @@ export default function AsistentesActividadTable() {
   function seleccionarActividad(actividad) {
     setActividadId(actividad.id);
     setBusquedaActividad(actividad.actividad);
-    setPeriodoId("");
-    setSesionId("");
     setBusquedaAsistente("");
+    setAsistentes([]);
+    setIdsSeleccionados(new Set());
     setResultadoLote("");
     setMostrarOpciones(false);
     setOpcionActiva(0);
@@ -237,9 +189,9 @@ export default function AsistentesActividadTable() {
     try {
       const blob = await exportarAsistentes({
         idActividad: actividadId,
-        idPeriodo: sesionSeleccionada?.idPeriodo || periodoId || undefined,
-        fechaInicio: sesionSeleccionada ? fechaCorta(sesionSeleccionada.fechaInicio) : undefined,
-        fechaFinalizacion: sesionSeleccionada ? fechaCorta(sesionSeleccionada.fechaFinalizacion) : undefined,
+        idPeriodo: actividadSeleccionada?.idPeriodo,
+        fechaInicio: fechaCorta(actividadSeleccionada?.fechaInicio),
+        fechaFinalizacion: fechaCorta(actividadSeleccionada?.fechaFinalizacion),
         busqueda: busquedaAsistente.trim() || undefined,
       });
       const url = URL.createObjectURL(blob);
@@ -281,24 +233,24 @@ export default function AsistentesActividadTable() {
 
   async function confirmarAsistentes() {
     const registros = seleccionadosPendientes.map(({ id }) => id);
-    if (!sesionSeleccionada || registros.length === 0) return;
+    if (!actividadSeleccionada || registros.length === 0) return;
     setVerificandoIds(registros);
     setError("");
     setResultadoLote("");
     try {
       await verificarAsistencia({
         idActividad: actividadId,
-        idPeriodo: sesionSeleccionada.idPeriodo,
-        fechaInicio: fechaCorta(sesionSeleccionada.fechaInicio),
-        fechaFinalizacion: fechaCorta(sesionSeleccionada.fechaFinalizacion),
+        idPeriodo: actividadSeleccionada.idPeriodo,
+        fechaInicio: fechaCorta(actividadSeleccionada.fechaInicio),
+        fechaFinalizacion: fechaCorta(actividadSeleccionada.fechaFinalizacion),
         registros,
         asistenciaVerificada: true,
       });
       const actualizados = await getAsistentes({
         idActividad: actividadId,
-        idPeriodo: sesionSeleccionada.idPeriodo,
-        fechaInicio: fechaCorta(sesionSeleccionada.fechaInicio),
-        fechaFinalizacion: fechaCorta(sesionSeleccionada.fechaFinalizacion),
+        idPeriodo: actividadSeleccionada.idPeriodo,
+        fechaInicio: fechaCorta(actividadSeleccionada.fechaInicio),
+        fechaFinalizacion: fechaCorta(actividadSeleccionada.fechaFinalizacion),
       });
       setAsistentes(actualizados);
       setIdsSeleccionados(new Set());
@@ -315,12 +267,12 @@ export default function AsistentesActividadTable() {
       <div className="card-header">
         <h2 className="card-title">
           <i className="fas fa-users" aria-hidden="true"></i>
-          Buscar asistentes por actividad
+          Asistencia por actividad registrada
         </h2>
       </div>
       <p className="text-muted">
-        Selecciona una actividad para consultar sus asistentes registrados y descargar el listado
-        con el formato institucional.
+        Selecciona una actividad registrada para consultar y confirmar sus participantes, o descargar
+        el reporte de esa actividad.
       </p>
 
       {error && <div className="auth-error" role="alert">{error}</div>}
@@ -343,16 +295,17 @@ export default function AsistentesActividadTable() {
                 ? `vec-activity-option-${opcionActiva}`
                 : undefined}
               autoComplete="off"
-              placeholder="Buscar actividad por nombre"
+              placeholder="Buscar actividad por nombre o proyecto"
               onFocus={() => setMostrarOpciones(true)}
               onBlur={() => setMostrarOpciones(false)}
               onKeyDown={manejarTecladoActividad}
               onChange={(event) => {
                 setBusquedaActividad(event.target.value);
                 setActividadId("");
-                setPeriodoId("");
-                setSesionId("");
                 setBusquedaAsistente("");
+                setAsistentes([]);
+                setIdsSeleccionados(new Set());
+                setResultadoLote("");
                 setOpcionActiva(0);
                 setMostrarOpciones(true);
               }}
@@ -367,9 +320,10 @@ export default function AsistentesActividadTable() {
                 onClick={() => {
                   setBusquedaActividad("");
                   setActividadId("");
-                  setPeriodoId("");
-                  setSesionId("");
                   setBusquedaAsistente("");
+                  setAsistentes([]);
+                  setIdsSeleccionados(new Set());
+                  setResultadoLote("");
                   setMostrarOpciones(true);
                 }}
               >
@@ -381,7 +335,11 @@ export default function AsistentesActividadTable() {
                 {cargandoActividades ? (
                   <div className="vec-activity-empty">Cargando actividades...</div>
                 ) : opcionesVisibles.length === 0 ? (
-                  <div className="vec-activity-empty">No se encontraron actividades con ese texto.</div>
+                  <div className="vec-activity-empty">
+                    {actividades.length === 0
+                      ? "No hay actividades registradas disponibles para asistencia."
+                      : "No se encontraron actividades con ese texto."}
+                  </div>
                 ) : (
                   <>
                     {opcionesVisibles.map((actividad, index) => (
@@ -397,7 +355,9 @@ export default function AsistentesActividadTable() {
                       >
                         <span className="vec-activity-option-name">{actividad.actividad}</span>
                         <span className="vec-activity-option-meta">
-                          {actividad.hojaOrigen} · {actividad.totalAsistentes} asistentes
+                          {[actividad.periodo, fechaCorta(actividad.fechaInicio), fechaCorta(actividad.fechaFinalizacion)]
+                            .filter(Boolean).join(" · ")}
+                          {" · "}{actividad.totalAsistentes} participantes · {actividad.estado}
                         </span>
                       </div>
                     ))}
@@ -413,58 +373,10 @@ export default function AsistentesActividadTable() {
           </div>
           <span className="vec-activity-hint">
             {cargandoActividades
-              ? "Cargando catálogo..."
-              : `${actividades.length} actividades disponibles`}
+              ? "Cargando actividades registradas..."
+              : `${actividades.length} actividades registradas disponibles`}
           </span>
         </div>
-        {actividadSeleccionada && (
-          <div className="form-group vec-period-filter">
-            <label className="form-label" htmlFor="vec-periodo-asistentes">Periodo</label>
-            <select
-              className="form-select"
-              id="vec-periodo-asistentes"
-              value={periodoId}
-              onChange={(event) => setPeriodoId(event.target.value)}
-              disabled={periodos.length === 0}
-            >
-              <option value="">Todos los periodos</option>
-              {periodos.map((periodo) => (
-                <option key={periodo.id} value={periodo.id}>{periodo.nombre}</option>
-              ))}
-            </select>
-          </div>
-        )}
-        {actividadSeleccionada && (
-          <div className="form-group vec-period-filter">
-            <label className="form-label" htmlFor="vec-sesion-asistentes">Jornada / fechas</label>
-            <select
-              className="form-select"
-              id="vec-sesion-asistentes"
-              value={sesionId}
-              onChange={(event) => {
-                setSesionId(event.target.value);
-                setBusquedaAsistente("");
-                setResultadoLote("");
-                setIdsSeleccionados(new Set());
-              }}
-              disabled={cargandoSesiones || sesiones.length === 0}
-            >
-              <option value="">
-                {cargandoSesiones
-                  ? "Cargando jornadas..."
-                  : sesiones.length === 0
-                    ? "No hay jornadas registradas"
-                    : "Selecciona fechas para revisar la lista"}
-              </option>
-              {sesiones.map((sesion) => (
-                <option key={claveSesion(sesion)} value={claveSesion(sesion)}>
-                  {sesion.periodo} · {fechaCorta(sesion.fechaInicio)} – {fechaCorta(sesion.fechaFinalizacion)}
-                  {" · "}{sesion.totalInscritos} inscritos, {sesion.totalVerificados} verificados
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
       </div>
 
       {actividadSeleccionada && (
@@ -474,7 +386,8 @@ export default function AsistentesActividadTable() {
               <h3 className="card-title">{actividadSeleccionada.actividad}</h3>
               <p className="text-muted" style={{ margin: "0.25rem 0 0" }}>
                 {[
-                  actividadSeleccionada.hojaOrigen,
+                  actividadSeleccionada.periodo,
+                  `${fechaCorta(actividadSeleccionada.fechaInicio)} – ${fechaCorta(actividadSeleccionada.fechaFinalizacion)}`,
                   actividadSeleccionada.proyecto,
                   actividadSeleccionada.programa,
                 ].filter(Boolean).join(" · ")}
@@ -484,22 +397,22 @@ export default function AsistentesActividadTable() {
               className="btn btn-primary"
               type="button"
               onClick={descargarExcel}
-              disabled={cargandoSesiones || (Boolean(sesionSeleccionada) && cargandoAsistentes) || exportando}
+              disabled={cargandoAsistentes || exportando}
             >
               <i className={`fas ${exportando ? "fa-spinner fa-spin" : "fa-file-excel"}`} aria-hidden="true"></i>
               {exportando ? "Generando reporte..." : "Descargar reporte Excel"}
             </button>
           </div>
 
-          {sesionSeleccionada ? (
-            <>
               <div className="vec-attendance-summary" role="status">
                 <div>
-                  <strong>Jornada: {fechaCorta(sesionSeleccionada.fechaInicio)} – {fechaCorta(sesionSeleccionada.fechaFinalizacion)}</strong>
+                  <strong>Jornada: {fechaCorta(actividadSeleccionada.fechaInicio)} – {fechaCorta(actividadSeleccionada.fechaFinalizacion)}</strong>
                   <span>{actividadSeleccionada.actividad}</span>
                 </div>
                 <div className="vec-attendance-progress">
-                  <strong>{asistenciasConfirmadas} de {asistentes.length} asistencias confirmadas ({porcentajeAsistencia}%)</strong>
+                  <strong>{cargandoAsistentes
+                    ? "Consultando asistentes..."
+                    : `${asistenciasConfirmadas} de ${asistentes.length} asistencias confirmadas (${porcentajeAsistencia}%)`}</strong>
                   <progress value={asistenciasConfirmadas} max={Math.max(asistentes.length, 1)} aria-label="Progreso de verificación de asistencia" />
                   <span>{Math.max(asistentes.length - asistenciasConfirmadas, 0)} pendientes</span>
                 </div>
@@ -613,14 +526,6 @@ export default function AsistentesActividadTable() {
                   </table>
                 </div>
               )}
-            </>
-          ) : cargandoSesiones ? (
-            <p className="text-muted" role="status">Consultando jornadas disponibles...</p>
-          ) : sesiones.length > 0 ? (
-            <p className="text-muted">Selecciona las fechas de la jornada que estás verificando.</p>
-          ) : (
-            <p className="text-muted">No hay jornadas registradas para esta actividad. Primero registra la actividad con su periodo y fechas.</p>
-          )}
         </>
       )}
     </section>

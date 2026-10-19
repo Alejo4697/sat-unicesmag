@@ -141,6 +141,6 @@ LEFT JOIN sat.programas_bienestar pb
 LEFT JOIN sat.componentes_bienestar cb
   ON cb.id_componentes_bienestar = pb.id_componentes_bienestar
 LEFT JOIN sat.lineas_accion la ON la.id_lineas_accion = cb.id_lineas_accion
-LEFT JOIN sat.tipos_apoyo ta ON ta.id_tipos_apoyo = avp.id_tipos_apoyo;
+LEFT JOIN sat.apoyos_actividades_vec ta ON ta.id_tipos_apoyo = avp.id_tipos_apoyo;
 
 COMMIT;

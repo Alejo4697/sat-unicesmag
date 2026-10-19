@@ -5,7 +5,7 @@ const SECTION_CONTENT = {
   registros: {
     title: "Asistencia y reportes",
     icon: "fa-clipboard-check",
-    message: "Elige una actividad y su jornada para revisar asistentes, confirmar manualmente la asistencia y descargar el reporte.",
+    message: "Selecciona una actividad registrada para revisar sus participantes, confirmar la asistencia y descargar el reporte correspondiente.",
   },
   apoyos: {
     title: "Consultar apoyos",
@@ -47,9 +47,9 @@ export default function SectionPlaceholder({ section }) {
           </div>
           <p className="text-muted">{content.message}</p>
           <ol className="vec-workflow-steps" aria-label="Pasos para verificar asistencia">
-            <li><strong>1.</strong> Busca y selecciona la actividad.</li>
-            <li><strong>2.</strong> Elige el periodo y las fechas de la jornada.</li>
-            <li><strong>3.</strong> Marca a las personas presentes y confirma la selección para guardar la asistencia.</li>
+            <li><strong>1.</strong> Busca y selecciona la actividad registrada por su nombre, periodo y fechas.</li>
+            <li><strong>2.</strong> Revisa la lista de participantes inscritos en esa actividad.</li>
+            <li><strong>3.</strong> Confirma quiénes asistieron o descarga el reporte de la actividad.</li>
           </ol>
         </section>
         <AsistentesActividadTable />

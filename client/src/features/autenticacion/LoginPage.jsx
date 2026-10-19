@@ -1,6 +1,8 @@
 /* ==========================================================================
    Feature: Autenticación - LoginPage
-   Diseño institucional moderno y profesional para SAT-UNICESMAG.
+   SAT-UNICESMAG - Sistema de Alertas Tempranas Institucional
+   Inicio de sesión seguro mediante credenciales institucionales y redirección
+   estricta a la vista asignada según el rol obtenido de la base de datos.
    ========================================================================== */
 
 import { useEffect, useState } from "react";
@@ -8,73 +10,79 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../shared/context/AuthContext.jsx";
 import { login } from "./api.js";
 
-const ROLES_INFO = [
-  {
-    value: "admin",
-    label: "Rol Administrativo",
-    sublabel: "Coordinación de Acompañamiento / Vicerrectoría",
-    icon: "fa-shield-halved",
-    badgeColor: "#002855"
-  },
-  {
-    value: "profesional",
-    label: "Rol Profesional Asistencial",
-    sublabel: "USP, Salud, Consultorios Jurídicos, Trabajo Social",
-    icon: "fa-user-doctor",
-    badgeColor: "#0891b2"
-  },
-  {
-    value: "directivo",
-    label: "Rol Directivo / Docente",
-    sublabel: "Directores de Programa y Docentes Acompañantes",
-    icon: "fa-chalkboard-user",
-    badgeColor: "#2563eb"
-  },
-  {
-    value: "reporte_actividades",
-    label: "Rol Reporte de Actividades",
-    sublabel: "Secretarías, Bienestar, Deporte y Cultura",
-    icon: "fa-clipboard-list",
-    badgeColor: "#d97706"
-  },
-  {
-    value: "estudiante",
-    label: "Rol Estudiante",
-    sublabel: "Diligenciamiento de Encuesta de Caracterización",
-    icon: "fa-graduation-cap",
-    badgeColor: "#059669"
+/**
+ * Determina la vista principal asignada según el rol oficial del usuario.
+ */
+function rutaPorRol(rol) {
+  switch (rol) {
+    case "admin":
+      return "/dashboard";
+    case "profesional":
+      return "/remisiones"; // Vista de atención asistencial y casos remitidos
+    case "directivo":
+      return "/dashboard"; // Vista de monitoreo y permanencia por programa
+    case "reporte_actividades":
+      return "/actividades"; // Módulo de registro de actividades VEC
+    case "estudiante":
+      return "/estudiante/portal";
+    default:
+      return "/dashboard";
   }
-];
+}
 
 export default function LoginPage() {
-  const { user, usuariosDisponibles, iniciarSesionComo } = useAuth();
+  const { user, iniciarSesionComo } = useAuth();
   const navigate = useNavigate();
-  const [rol, setRol] = useState("admin");
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [error, setError] = useState("");
   const [enviando, setEnviando] = useState(false);
 
-  const usuarioSeleccionado = usuariosDisponibles.find((u) => u.rol === rol);
-  const rolConfig = ROLES_INFO.find((r) => r.value === rol) || ROLES_INFO[0];
-
+  // Si ya hay una sesión activa, redirigir a su vista autorizada
   useEffect(() => {
-    if (user) navigate("/dashboard", { replace: true });
+    if (user) {
+      navigate(rutaPorRol(user.rol), { replace: true });
+    }
   }, [user, navigate]);
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!usuarioSeleccionado) {
-      setError("No hay un usuario de ejemplo configurado para ese rol.");
+    const correoLimpio = email.trim().toLowerCase();
+
+    if (!correoLimpio || !password) {
+      setError("Por favor ingrese su correo institucional y su contraseña.");
       return;
     }
+
+    if (!correoLimpio.endsWith("@unicesmag.edu.co")) {
+      setError("Debe ingresar un correo institucional válido (@unicesmag.edu.co).");
+      return;
+    }
+
     setError("");
     setEnviando(true);
+
     try {
-      const usuario = await login(usuarioSeleccionado.id);
-      iniciarSesionComo(usuario);
-      navigate("/dashboard");
+      // 1. Envío de credenciales a la API para validación contra PostgreSQL
+      const resp = await login({ email: correoLimpio, password });
+      const usuario = resp.user || resp;
+      const token = resp.token || null;
+
+      if (!usuario || !usuario.rol) {
+        throw new Error("No se pudo determinar el rol asignado en la base de datos.");
+      }
+
+      // 2. Almacenamiento seguro de sesión
+      iniciarSesionComo(usuario, token);
+
+      // 3. Redirección estricta a la vista correspondiente
+      const destino = rutaPorRol(usuario.rol);
+      navigate(destino, { replace: true });
+
     } catch (err) {
-      setError(err.message || "No se pudo iniciar sesión.");
+      setError(err.message || "Credenciales incorrectas. Verifique su correo y contraseña.");
     } finally {
       setEnviando(false);
     }
@@ -82,26 +90,27 @@ export default function LoginPage() {
 
   return (
     <div className="login-wrapper">
-      {/* Barra superior con colores institucionales */}
       <div className="login-top-bar"></div>
 
-      <div className="login-container">
-        <div className="login-card">
-          {/* Encabezado con Logo y Branding */}
-          <div className="login-header">
-            <div className="login-logo-container">
+      <div className="login-container" style={{ maxWidth: "460px" }}>
+        <div className="login-card" style={{ padding: "2.25rem 2rem" }}>
+          {/* Encabezado Institucional */}
+          <div className="login-header" style={{ marginBottom: "1.5rem", textAlign: "center" }}>
+            <div className="login-logo-container" style={{ marginBottom: "0.75rem" }}>
               <img
                 src="/img/escudo_unicesmag.png"
                 alt="Escudo Universidad CESMAG"
                 className="login-escudo"
               />
             </div>
-            <h1 className="login-title">SAT-UNICESMAG</h1>
-            <p className="login-subtitle">
-              Sistema de Alertas Tempranas y Seguimiento a la Permanencia Estudiantil
+            <h1 className="login-title" style={{ fontSize: "1.35rem", fontWeight: "800", color: "#002855" }}>
+              SAT-UNICESMAG
+            </h1>
+            <p className="login-subtitle" style={{ fontSize: "0.85rem", color: "#64748b" }}>
+              Sistema de Alertas Tempranas y Acompañamiento Integral
             </p>
 
-            {/* Pestañas de Acceso Rápido */}
+            {/* Alternador de portal */}
             <div style={{ display: "flex", background: "#f1f5f9", padding: "4px", borderRadius: "8px", marginTop: "1rem" }}>
               <button
                 type="button"
@@ -113,13 +122,13 @@ export default function LoginPage() {
                   background: "#ffffff",
                   color: "#002855",
                   fontWeight: "700",
-                  fontSize: "0.8rem",
+                  fontSize: "0.825rem",
                   boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
                   cursor: "default"
                 }}
               >
-                <i className="fas fa-user-shield" style={{ marginRight: "6px" }}></i>
-                Docentes / Personal
+                <i className="fas fa-id-badge" style={{ marginRight: "6px", color: "#002855" }}></i>
+                Funcionarios y Docentes
               </button>
               <button
                 type="button"
@@ -132,7 +141,7 @@ export default function LoginPage() {
                   background: "transparent",
                   color: "#059669",
                   fontWeight: "600",
-                  fontSize: "0.8rem",
+                  fontSize: "0.825rem",
                   cursor: "pointer",
                   display: "flex",
                   alignItems: "center",
@@ -146,82 +155,59 @@ export default function LoginPage() {
             </div>
           </div>
 
-          {/* Formulario */}
+          {/* Formulario de Login */}
           <form onSubmit={handleSubmit} className="login-form">
             {error && (
-              <div className="login-error-alert">
-                <i className="fas fa-circle-exclamation"></i>
+              <div className="login-error-alert" style={{ marginBottom: "1.25rem" }}>
+                <i className="fas fa-triangle-exclamation"></i>
                 <span>{error}</span>
               </div>
             )}
 
-            {/* Selector de Rol */}
-            <div className="login-form-group">
-              <label htmlFor="login-role" className="login-label">
-                <i className="fas fa-user-shield" style={{ color: "var(--brand-primary)" }}></i>
-                Perfil de Acceso
-              </label>
-              <div className="login-select-wrapper">
-                <select
-                  id="login-role"
-                  className="login-select"
-                  value={rol}
-                  onChange={(e) => {
-                    if (e.target.value === "estudiante") {
-                      navigate("/estudiante/login");
-                    } else {
-                      setRol(e.target.value);
-                    }
-                  }}
-                >
-                  {ROLES_INFO.map((r) => (
-                    <option key={r.value} value={r.value}>
-                      {r.label}
-                    </option>
-                  ))}
-                </select>
-                <i className="fas fa-chevron-down login-select-arrow"></i>
-              </div>
-            </div>
-
-
             {/* Campo: Correo Institucional */}
-            <div className="login-form-group">
+            <div className="login-form-group" style={{ marginBottom: "1.25rem" }}>
               <label htmlFor="login-email" className="login-label">
-                Correo Institucional
+                <i className="fas fa-envelope" style={{ color: "#002855" }}></i>
+                Correo Electrónico Institucional
               </label>
               <div className="login-input-wrapper">
-                <i className="fas fa-envelope login-input-icon"></i>
                 <input
                   id="login-email"
                   type="email"
+                  required
+                  autoFocus
+                  autoComplete="username"
                   className="login-input"
-                  value={usuarioSeleccionado?.email || ""}
-                  readOnly
-                  placeholder="nombre.apellido@unicesmag.edu.co"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="usuario@unicesmag.edu.co"
                 />
               </div>
             </div>
 
             {/* Campo: Contraseña */}
-            <div className="login-form-group">
+            <div className="login-form-group" style={{ marginBottom: "1.5rem" }}>
               <label htmlFor="login-password" className="login-label">
+                <i className="fas fa-lock" style={{ color: "#002855" }}></i>
                 Contraseña
               </label>
               <div className="login-input-wrapper">
-                <i className="fas fa-lock login-input-icon"></i>
                 <input
                   id="login-password"
                   type={passwordVisible ? "text" : "password"}
+                  required
+                  autoComplete="current-password"
                   className="login-input"
-                  value="cesmag2026*"
-                  readOnly
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Ingrese su contraseña"
                 />
                 <button
                   type="button"
                   className="login-password-toggle"
                   onClick={() => setPasswordVisible(!passwordVisible)}
                   title={passwordVisible ? "Ocultar contraseña" : "Ver contraseña"}
+                  tabIndex={-1}
                 >
                   <i className={`fas ${passwordVisible ? "fa-eye-slash" : "fa-eye"}`}></i>
                 </button>
@@ -229,32 +215,37 @@ export default function LoginPage() {
             </div>
 
             {/* Botón de Ingreso */}
-            <button type="submit" className="login-btn-submit" disabled={enviando}>
+            <button
+              type="submit"
+              className="login-btn-submit"
+              disabled={enviando}
+              style={{ width: "100%", padding: "0.75rem", fontWeight: "700" }}
+            >
               {enviando ? (
                 <>
                   <i className="fas fa-spinner fa-spin"></i>
-                  <span>Autenticando...</span>
+                  <span>Validando en base de datos...</span>
                 </>
               ) : (
                 <>
                   <span>Ingresar al Sistema</span>
-                  <i className="fas fa-arrow-right-to-bracket"></i>
+                  <i className="fas fa-arrow-right-to-bracket" style={{ marginLeft: "8px" }}></i>
                 </>
               )}
             </button>
           </form>
 
-          {/* Micro-información de seguridad */}
-          <div className="login-security-notice">
-            <i className="fas fa-lock-keyhole"></i>
-            <span>Acceso seguro con control de confidencialidad y secreto profesional</span>
+          {/* Aviso de Confidencialidad y Seguridad */}
+          <div className="login-security-notice" style={{ marginTop: "1.5rem" }}>
+            <i className="fas fa-shield-halved"></i>
+            <span>Acceso controlado por RBAC y secreto profesional según perfil institucional</span>
           </div>
 
-          {/* Footer institucional */}
-          <div className="login-footer">
-            <span>Universidad CESMAG • San Juan de Pasto, Nariño</span>
-            <span style={{ display: "block", marginTop: "0.2rem", fontSize: "0.725rem", color: "var(--text-subtle)" }}>
-              Vicerrectoría de Evangelización de las Culturas • Acompañamiento Integral
+          {/* Footer Institucional */}
+          <div className="login-footer" style={{ marginTop: "1.25rem", textAlign: "center" }}>
+            <span>Universidad CESMAG • San Juan de Pasto</span>
+            <span style={{ display: "block", marginTop: "0.25rem", fontSize: "0.725rem", color: "#64748b" }}>
+              Vicerrectoría de Evangelización de las Culturas • Permanencia Estudiantil
             </span>
           </div>
         </div>

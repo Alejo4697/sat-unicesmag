@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS sat.participantes_vec (
   dependencia varchar(250),
   cargo varchar(250),
   fecha_egreso date,
+  lugar_nacimiento varchar(250),
   etnia varchar(150),
   municipio varchar(150),
   discapacidad text,

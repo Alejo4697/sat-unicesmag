@@ -1,23 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import JSZip from "jszip";
+import * as XLSX from "@e965/xlsx";
 import {
-  getCatalogoMaestroActividades,
   getEventosProximos,
+  registrarNoEncontradoMasivo,
   registrarParticipantesMasivo,
   validarParticipantesMasivo,
 } from "./participantesApi.js";
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_ROWS = 500;
-const ROLE_ALIASES = new Map([
-  ["ESTUDIANTE", "ESTUDIANTE"],
-  ["COLABORADOR", "COLABORADOR"],
-  ["DOCENTE", "COLABORADOR"],
-  ["ADMINISTRATIVO", "COLABORADOR"],
-  ["DIRECTIVO", "COLABORADOR"],
-  ["PROFESIONAL", "COLABORADOR"],
-  ["EGRESADO", "EGRESADO"],
-  ["EXTERNO", "EXTERNO"],
-]);
+const ROLE_OPTIONS = [
+  { value: "ESTUDIANTE", label: "Estudiante" },
+  { value: "EGRESADO", label: "Egresado" },
+  { value: "COLABORADOR", label: "Colaborador" },
+  { value: "EXTERNO", label: "Externo" },
+];
 
 function normalizeText(value) {
   return String(value || "")
@@ -28,15 +26,441 @@ function normalizeText(value) {
     .toLocaleUpperCase("es");
 }
 
+function normalizeRole(value) {
+  const role = normalizeText(value).replace(/[^A-Z]/g, "");
+  if (["ESTUDIANTE", "ESTUDIANTES", "ALUMNO", "ALUMNA"].includes(role)) return "ESTUDIANTE";
+  if (["EGRESADO", "EGRESADOS", "GRADUADO", "GRADUADA"].includes(role)) return "EGRESADO";
+  if (["COLABORADOR", "COLABORADORES", "DOCENTE", "FUNCIONARIO", "EMPLEADO"].includes(role)) return "COLABORADOR";
+  if (["EXTERNO", "EXTERNOS"].includes(role)) return "EXTERNO";
+  return "";
+}
+
+function validarBorradorNoEncontrado(draft) {
+  const errors = {};
+  const setRequired = (field, label, value) => {
+    if (!String(value || "").trim()) errors[field] = `${label} es obligatorio.`;
+  };
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const namePattern = /^[\p{L}\p{M}][\p{L}\p{M}\s'.-]*$/u;
+  const student = draft.tipo === "ESTUDIANTE";
+
+  if (!ROLE_OPTIONS.some((role) => role.value === draft.tipo)) {
+    errors.tipo = "Selecciona el rol de la persona.";
+  }
+  if (!["CC", "TI", "CE", "PA", "RC", "NIT", "PPT", "PEP", "CD", "SC", "NUIP", "OTRO"].includes(draft.tipoDocumento)) {
+    errors.tipoDocumento = "Selecciona un tipo de documento válido.";
+  }
+  setRequired("identificacion", "El número de documento", draft.identificacion);
+  if (draft.identificacion && (!/^[\p{L}\p{N}._-]{1,64}$/u.test(draft.identificacion.trim()))) {
+    errors.identificacion = "Usa máximo 64 letras o números; también se permiten punto, guion y guion bajo.";
+  }
+  if (student) {
+    setRequired("codigoInstitucional", "El código institucional", draft.codigoInstitucional);
+    if (draft.codigoInstitucional && !/^[\p{L}\p{N}._-]{1,64}$/u.test(draft.codigoInstitucional.trim())) {
+      errors.codigoInstitucional = "El código debe tener máximo 64 letras o números.";
+    }
+  }
+
+  for (const [field, label] of [["nombres", "Los nombres"], ["apellidos", "Los apellidos"]]) {
+    setRequired(field, label, draft[field]);
+    if (draft[field] && (draft[field].trim().length < 2
+      || draft[field].trim().length > 120
+      || !namePattern.test(draft[field].trim()))) {
+      errors[field] = "Escribe un nombre válido de 2 a 120 caracteres.";
+    }
+  }
+  setRequired("fechaNacimiento", "La fecha de nacimiento", draft.fechaNacimiento);
+  if (draft.fechaNacimiento) {
+    const date = new Date(`${draft.fechaNacimiento}T00:00:00.000Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.fechaNacimiento)
+      || Number.isNaN(date.getTime())
+      || date.toISOString().slice(0, 10) !== draft.fechaNacimiento
+      || draft.fechaNacimiento > new Date().toISOString().slice(0, 10)) {
+      errors.fechaNacimiento = "Ingresa una fecha real que no sea posterior a hoy.";
+    }
+  }
+  setRequired("lugarNacimiento", "El lugar de nacimiento", draft.lugarNacimiento);
+  if (draft.lugarNacimiento?.length > 250) errors.lugarNacimiento = "Usa máximo 250 caracteres.";
+  setRequired("genero", "El género", draft.genero);
+  if (draft.genero && !["Femenino", "Masculino", "No binario", "Otro", "Prefiero no responder"].includes(draft.genero)) {
+    errors.genero = "Selecciona una opción válida.";
+  }
+
+  setRequired("correo", "El correo personal", draft.correo);
+  if (draft.correo && (!emailPattern.test(draft.correo.trim()) || draft.correo.length > 254)) {
+    errors.correo = "Escribe un correo válido de máximo 254 caracteres.";
+  }
+  if (student) {
+    setRequired("correoInstitucional", "El correo institucional", draft.correoInstitucional);
+    if (draft.correoInstitucional
+      && (!emailPattern.test(draft.correoInstitucional.trim()) || draft.correoInstitucional.length > 254)) {
+      errors.correoInstitucional = "Escribe un correo institucional válido.";
+    }
+  }
+  for (const [field, label] of [
+    ["celular", "El teléfono móvil"],
+    ["telefono", "El teléfono alternativo"],
+  ]) {
+    setRequired(field, label, draft[field]);
+    if (draft[field]) {
+      const digits = draft[field].replace(/\D/g, "");
+      if (!/^\+?[\d\s().-]+$/.test(draft[field].trim()) || digits.length < 7 || digits.length > 15) {
+        errors[field] = "Ingresa un teléfono válido de 7 a 15 dígitos.";
+      }
+    }
+  }
+  setRequired("direccion", "La dirección", draft.direccion);
+  if (draft.direccion && draft.direccion.trim().length > 250) errors.direccion = "Usa máximo 250 caracteres.";
+  setRequired("municipio", "La ciudad o municipio", draft.municipio);
+  if (draft.municipio && draft.municipio.trim().length > 150) errors.municipio = "Usa máximo 150 caracteres.";
+  return errors;
+}
+
+function UnknownParticipantDialog({ row, draft, busy, serverError, onChange, onClose, onSubmit }) {
+  const dialogRef = useRef(null);
+  const bodyRef = useRef(null);
+  const [step, setStep] = useState(0);
+  const [attemptedSteps, setAttemptedSteps] = useState([]);
+  const steps = [
+    { title: "Identificación", subtitle: "Documento y rol", icon: "fa-id-card" },
+    { title: "Datos personales", subtitle: "Información básica", icon: "fa-user" },
+    { title: "Contacto", subtitle: "Residencia y comunicación", icon: "fa-address-book" },
+  ];
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialog && !dialog.open) dialog.showModal();
+    return () => {
+      if (dialog?.open) dialog.close();
+    };
+  }, []);
+  useEffect(() => {
+    if (attemptedSteps.includes(step)) {
+      bodyRef.current?.querySelector('[aria-invalid="true"]')?.focus();
+    }
+  }, [attemptedSteps, step]);
+
+  if (!row || !draft) return null;
+
+  const student = draft.tipo === "ESTUDIANTE";
+  const validationErrors = validarBorradorNoEncontrado(draft);
+  const stepFields = [
+    ["tipo", "tipoDocumento", "identificacion", ...(student ? ["codigoInstitucional"] : [])],
+    ["nombres", "apellidos", "fechaNacimiento", "lugarNacimiento", "genero"],
+    [...(student ? ["correoInstitucional"] : []), "correo", "celular", "telefono", "direccion", "municipio"],
+  ];
+  const currentErrors = stepFields[step].filter((name) => validationErrors[name]);
+  const showFieldError = (name) => attemptedSteps.includes(step) ? validationErrors[name] : "";
+  const fieldError = (name) => showFieldError(name)
+    ? (
+      <small id={`unknown-${name}-error`} className="vec-bulk-unregistered-modal__error">
+        {showFieldError(name)}
+      </small>
+    )
+    : null;
+  const selectClass = (name) => `form-select${showFieldError(name) ? " is-invalid" : ""}`;
+
+  const field = (name, label, type = "text") => (
+    <label className="vec-bulk-unregistered-modal__field" key={name}>
+      <span>{label} *</span>
+      <input
+        className={`form-control${showFieldError(name) ? " is-invalid" : ""}`}
+        type={type}
+        value={draft[name] || ""}
+        onChange={(event) => onChange(name, event.target.value)}
+        maxLength={{
+          identificacion: 64,
+          codigoInstitucional: 64,
+          nombres: 120,
+          apellidos: 120,
+          lugarNacimiento: 250,
+          correo: 254,
+          correoInstitucional: 254,
+          celular: 30,
+          telefono: 30,
+          direccion: 250,
+          municipio: 150,
+        }[name]}
+        aria-invalid={Boolean(showFieldError(name))}
+        aria-describedby={showFieldError(name) ? `unknown-${name}-error` : undefined}
+        required
+      />
+      {fieldError(name)}
+    </label>
+  );
+
+  function goToNextStep() {
+    setAttemptedSteps((current) => [...new Set([...current, step])]);
+    if (currentErrors.length) {
+      return;
+    }
+    setStep((current) => Math.min(current + 1, steps.length - 1));
+    bodyRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function submitForm() {
+    const incompleteStep = stepFields.findIndex((fields) => (
+      fields.some((name) => validationErrors[name])
+    ));
+    if (incompleteStep >= 0) {
+      setAttemptedSteps([0, 1, 2]);
+      setStep(incompleteStep);
+      bodyRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    onSubmit();
+  }
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="vec-bulk-unregistered-modal"
+      aria-labelledby="vec-bulk-unregistered-title"
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="vec-bulk-unregistered-modal__header">
+        <span className="vec-bulk-unregistered-modal__icon" aria-hidden="true">
+          <i className="fas fa-user-plus"></i>
+        </span>
+        <div>
+          <span className="vec-bulk-registration__eyebrow">REGISTRO DE PARTICIPANTE</span>
+          <h3 id="vec-bulk-unregistered-title">Registrar persona no encontrada</h3>
+          <p>Ingresa la información para crear el perfil y agregarlo a la actividad.</p>
+        </div>
+        <button className="activity-modal__close" type="button" onClick={onClose} aria-label="Cerrar ventana">
+          <i className="fas fa-times" aria-hidden="true"></i>
+        </button>
+      </div>
+      <nav className="vec-bulk-unregistered-modal__steps" aria-label="Progreso del registro">
+        {steps.map((item, index) => (
+          <div
+            className={`vec-bulk-unregistered-modal__step${index === step ? " is-current" : ""}${index < step ? " is-complete" : ""}`}
+            key={item.title}
+            aria-current={index === step ? "step" : undefined}
+          >
+            <span className="vec-bulk-unregistered-modal__step-marker">
+              {index < step
+                ? <i className="fas fa-check" aria-hidden="true"></i>
+                : <i className={`fas ${item.icon}`} aria-hidden="true"></i>}
+            </span>
+            <span className="vec-bulk-unregistered-modal__step-copy">
+              <strong>{item.title}</strong>
+              <small>{item.subtitle}</small>
+            </span>
+          </div>
+        ))}
+      </nav>
+      <div className="vec-bulk-unregistered-modal__body" ref={bodyRef}>
+        <div className="vec-bulk-unregistered-modal__page-heading">
+          <span>PASO {step + 1} DE {steps.length}</span>
+          <h4>{steps[step].title}</h4>
+          <p>{step === 0
+            ? "Define el rol y registra el documento de identidad."
+            : step === 1
+              ? "Completa la información personal de la persona."
+              : "Añade los datos de contacto y residencia."}</p>
+        </div>
+        <div className="vec-bulk-unregistered__form">
+          {step === 0 && (
+            <section className="vec-bulk-unregistered-modal__group">
+              <div className="vec-bulk-unregistered-modal__grid">
+                <label className="vec-bulk-unregistered-modal__field">
+                  <span>Rol de participante *</span>
+                  <select
+                    className={selectClass("tipo")}
+                    value={draft.tipo || ""}
+                    onChange={(event) => onChange("tipo", event.target.value)}
+                    aria-invalid={Boolean(showFieldError("tipo"))}
+                    aria-describedby={showFieldError("tipo") ? "unknown-tipo-error" : undefined}
+                    required
+                  >
+                    <option value="">Selecciona el rol</option>
+                    {ROLE_OPTIONS.map((role) => (
+                      <option key={role.value} value={role.value}>{role.label}</option>
+                    ))}
+                  </select>
+                  {fieldError("tipo")}
+                </label>
+                <label className="vec-bulk-unregistered-modal__field">
+                  <span>Tipo de documento *</span>
+                  <select
+                    className={selectClass("tipoDocumento")}
+                    value={draft.tipoDocumento || "CC"}
+                    onChange={(event) => onChange("tipoDocumento", event.target.value)}
+                    aria-invalid={Boolean(showFieldError("tipoDocumento"))}
+                    aria-describedby={showFieldError("tipoDocumento") ? "unknown-tipoDocumento-error" : undefined}
+                    required
+                  >
+                    {[
+                      ["CC", "Cédula de ciudadanía"],
+                      ["TI", "Tarjeta de identidad"],
+                      ["CE", "Cédula de extranjería"],
+                      ["PA", "Pasaporte"],
+                      ["RC", "Registro civil"],
+                      ["NIT", "NIT"],
+                      ["PPT", "Permiso por Protección Temporal"],
+                      ["PEP", "Permiso Especial de Permanencia"],
+                      ["CD", "Carné diplomático"],
+                      ["SC", "Salvoconducto"],
+                      ["NUIP", "Número Único de Identificación Personal"],
+                      ["OTRO", "Otro documento"],
+                    ].map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </select>
+                  {fieldError("tipoDocumento")}
+                </label>
+                {field("identificacion", "Número de documento")}
+                {student && field("codigoInstitucional", "Código institucional / estudiantil")}
+              </div>
+              {draft.tipo === "EXTERNO" && (
+                <p className="vec-bulk-unregistered-modal__notice" role="note">
+                  El rol Externo es exclusivo y no se puede combinar con otro rol VEC.
+                </p>
+              )}
+            </section>
+          )}
+          {step === 1 && (
+            <section className="vec-bulk-unregistered-modal__group">
+              <div className="vec-bulk-unregistered-modal__grid">
+                {field("nombres", "Nombres completos")}
+                {field("apellidos", "Apellidos completos")}
+                {field("fechaNacimiento", "Fecha de nacimiento", "date")}
+                {field("lugarNacimiento", "Lugar de nacimiento")}
+                <label className="vec-bulk-unregistered-modal__field">
+                  <span>Género *</span>
+                  <select
+                    className={selectClass("genero")}
+                    value={draft.genero || ""}
+                    onChange={(event) => onChange("genero", event.target.value)}
+                    aria-invalid={Boolean(showFieldError("genero"))}
+                    aria-describedby={showFieldError("genero") ? "unknown-genero-error" : undefined}
+                    required
+                  >
+                    <option value="">Selecciona el género</option>
+                    <option value="Femenino">Femenino</option>
+                    <option value="Masculino">Masculino</option>
+                    <option value="No binario">No binario</option>
+                    <option value="Otro">Otro</option>
+                    <option value="Prefiero no responder">Prefiero no responder</option>
+                  </select>
+                  {fieldError("genero")}
+                </label>
+              </div>
+            </section>
+          )}
+          {step === 2 && (
+            <section className="vec-bulk-unregistered-modal__group">
+              <div className="vec-bulk-unregistered-modal__grid">
+                {student && field("correoInstitucional", "Correo institucional", "email")}
+                {field("correo", "Correo personal", "email")}
+                {field("celular", "Teléfono móvil / celular", "tel")}
+                {field("telefono", "Teléfono alternativo", "tel")}
+                {field("direccion", "Dirección de residencia")}
+                {field("municipio", "Ciudad / municipio de residencia")}
+              </div>
+            </section>
+          )}
+        </div>
+      </div>
+      {attemptedSteps.includes(step) && currentErrors.length > 0 && (
+        <div className="vec-bulk-unregistered-modal__validation-summary" role="alert">
+          Revisa {currentErrors.length === 1 ? "el campo señalado" : `los ${currentErrors.length} campos señalados`} antes de continuar.
+        </div>
+      )}
+      {serverError && (
+        <div className="vec-bulk-unregistered-modal__server-error" role="alert">
+          <i className="fas fa-circle-exclamation" aria-hidden="true"></i>
+          <span>{serverError}</span>
+        </div>
+      )}
+      <div className="vec-bulk-unregistered-modal__footer">
+        <div className="vec-bulk-unregistered-modal__footer-meta">
+          <span>{step + 1} / {steps.length}</span>
+          <div className="vec-bulk-unregistered-modal__progress" aria-hidden="true">
+            <span style={{ width: `${((step + 1) / steps.length) * 100}%` }}></span>
+          </div>
+        </div>
+        <div className="vec-bulk-unregistered-modal__footer-actions">
+          {step === 0
+            ? <button className="btn btn-outline" type="button" onClick={onClose} disabled={busy}>Cancelar</button>
+            : <button
+              className="btn btn-outline"
+              type="button"
+              onClick={() => {
+                setStep((current) => Math.max(current - 1, 0));
+                bodyRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+              disabled={busy}
+            >
+              <i className="fas fa-arrow-left" aria-hidden="true"></i> Anterior
+            </button>}
+          {step < steps.length - 1
+            ? <button
+              className="btn btn-primary"
+              type="button"
+              onClick={goToNextStep}
+              disabled={busy}
+            >
+              Continuar <i className="fas fa-arrow-right" aria-hidden="true"></i>
+            </button>
+            : <button
+              className="btn btn-primary"
+              type="button"
+              onClick={submitForm}
+              disabled={busy}
+            >
+              <i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-user-plus"}`} aria-hidden="true"></i>
+              {busy ? "Guardando perfil..." : "Crear perfil e inscribir"}
+            </button>}
+        </div>
+      </div>
+    </dialog>
+  );
+}
+
 function cellText(cell) {
-  const value = cell?.value;
+  const value = cell && typeof cell === "object" && "value" in cell ? cell.value : cell;
   if (value == null) return "";
   if (typeof value === "object" && !Array.isArray(value)) {
     if ("text" in value) return String(value.text || "").trim();
     if ("result" in value) return String(value.result ?? "").trim();
-    if ("richText" in value) return value.richText.map((part) => part.text || "").join("").trim();
+    if (Array.isArray(value.richText)) return value.richText.map((part) => part?.text || "").join("").trim();
   }
   return String(value).trim().replace(/\.0$/, "");
+}
+
+async function sanitizeSharedStringReferences(buffer) {
+  const archive = await JSZip.loadAsync(buffer);
+  const sharedStringsFile = archive.file("xl/sharedStrings.xml");
+  const sharedStringsXml = sharedStringsFile ? await sharedStringsFile.async("string") : "";
+  const sharedStringCount = (sharedStringsXml.match(/<si(?:\s|>)/g) || []).length;
+  let changed = false;
+
+  for (const [name, file] of Object.entries(archive.files)) {
+    if (file.dir || !/^xl\/worksheets\/sheet\d+\.xml$/.test(name)) continue;
+    const worksheetXml = await file.async("string");
+    const sanitizedXml = worksheetXml.replace(
+      /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g,
+      (cell, attributes, content = "") => {
+        if (!/\bt=(["'])s\1/.test(attributes)) return cell;
+        const sharedStringMatch = content.match(/<v>(\d+)<\/v>/);
+        const sharedStringIndex = sharedStringMatch ? Number(sharedStringMatch[1]) : -1;
+        if (sharedStringIndex >= 0 && sharedStringIndex < sharedStringCount) return cell;
+
+        changed = true;
+        const cellAttributes = attributes.replace(/\s+t=(["'])s\1/, "");
+        return `<c${cellAttributes}/>`;
+      },
+    );
+    if (sanitizedXml !== worksheetXml) archive.file(name, sanitizedXml);
+  }
+
+  return changed ? archive.generateAsync({ type: "uint8array" }) : buffer;
 }
 
 function normalizeHeader(value) {
@@ -49,11 +473,7 @@ function findColumn(headers, aliases, matchesHeader) {
   const matches = [...headers.entries()]
     .filter(([header]) => aliases.includes(header) || matchesHeader(header))
     .map(([, column]) => column);
-  const uniqueMatches = [...new Set(matches)];
-  if (uniqueMatches.length > 1) {
-    throw new Error("El archivo tiene más de una columna posible para el mismo dato. Deja solo una columna de cada dato requerido.");
-  }
-  return uniqueMatches[0] || null;
+  return [...new Set(matches)][0] || null;
 }
 
 function modalityLabel(modality) {
@@ -70,119 +490,155 @@ function displayDate(value) {
   }).format(new Date(`${date}T12:00:00`));
 }
 
-function eventLabel(event) {
-  return [
-    event.actividad,
-    event.periodo,
-    `${displayDate(event.fechaInicio)} – ${displayDate(event.fechaFinalizacion)}`,
-  ].filter(Boolean).join(" · ");
+const COLUMN_DEFINITIONS = {
+  identificacion: {
+    aliases: [
+      "CEDULA", "CEDULADECIUDADANIA", "NUMERODECEDULA", "NUMEROCEDULA",
+      "NUMERODEIDENTIFICACION", "NUMEROIDENTIFICACION", "NOIDENTIFICACION",
+      "NROIDENTIFICACION", "IDENTIFICACION", "NUMERODOCUMENTO",
+      "NDEIDENTIFICACION", "NIDENTIFICACION", "DOCUMENTOIDENTIDAD",
+      "DOCUMENTODEIDENTIDAD", "DOCUMENTO", "NODOCUMENTO",
+      "IDENTIFICACIONOCODIGO", "IDENTIFICACIONOCODIGOINSTITUCIONAL",
+      "DOCUMENTOOCODIGOINSTITUCIONAL",
+    ],
+    matches: (header) => /(?:NUMERO|NO|NRO|N)(?:DE)?(?:IDENTIFICACION|DOCUMENTO)/.test(header)
+      || /CEDULA/.test(header)
+      || /DOCUMENTO(?:DE)?IDENTIDAD/.test(header),
+  },
+  codigo: {
+    aliases: [
+      "CODIGO", "CODIGOESTUDIANTE", "CODIGOESTUDIANTIL", "CODIGOINSTITUCIONAL",
+      "CODIGOACADEMICO", "CODIGOMATRICULA", "CODIGOALUMNO", "CODIGOALUMNA",
+    ],
+    matches: (header) => /CODIGO.*(?:ESTUDIANTE|ESTUDIANTIL|INSTITUCIONAL|ACADEMICO|MATRICULA|ALUMN[AO])/.test(header),
+  },
+  rol: {
+    aliases: ["ROL", "TIPODEPARTICIPANTE", "ROLDELPARTICIPANTE"],
+    matches: (header) => /(?:ROL|TIPO).*(?:PARTICIPANTE|PERSONA)/.test(header),
+  },
+  nombres: {
+    aliases: ["NOMBRES", "NOMBRE", "PRIMERNOMBRE"],
+    matches: (header) => /^(?:NOMBRES?|PRIMERNOMBRE)$/.test(header),
+  },
+  nombreCompleto: {
+    aliases: ["NOMBRECOMPLETO", "NOMBRESYAPELLIDOS", "NOMBREYAPELLIDO"],
+    matches: (header) => /^(?:NOMBRECOMPLETO|NOMBRESYAPELLIDOS|NOMBREYAPELLIDO)$/.test(header),
+  },
+  apellidos: {
+    aliases: ["APELLIDOS", "APELLIDO", "PRIMERAPELLIDO"],
+    matches: (header) => /^(?:APELLIDOS?|PRIMERAPELLIDO)$/.test(header),
+  },
+};
+
+function isIdentifierCandidate(value) {
+  const candidate = String(value || "").trim().replace(/\.0$/, "");
+  return candidate.length >= 4 && candidate.length <= 64 && /\d/.test(candidate)
+    && /^[\p{L}\p{N}._-]+$/u.test(candidate);
 }
 
-function parseWorkbook(workbook, activity) {
-  const sheet = workbook.worksheets.find((worksheet) => worksheet.actualRowCount > 0);
-  if (!sheet) throw new Error("El archivo no contiene una hoja con participantes.");
-  const headerRow = sheet.getRow(1);
-  const headers = new Map();
-  headerRow.eachCell((cell, column) => {
-    const header = normalizeHeader(cellText(cell));
-    if (header && headers.has(header)) {
-      throw new Error(`El encabezado "${cellText(cell)}" aparece más de una vez. Revisa la primera fila del archivo.`);
-    }
-    if (header) headers.set(header, column);
-  });
+function parseWorkbook(workbook) {
+  const sheets = workbook.SheetNames
+    .map((name) => ({
+      name,
+      rows: XLSX.utils.sheet_to_json(workbook.Sheets[name], {
+        header: 1,
+        defval: "",
+        raw: false,
+        blankrows: true,
+      }),
+    }))
+    .filter((sheet) => sheet.rows.some((row) => row.some((cell) => cellText(cell))));
+  if (!sheets.length) throw new Error("El archivo no contiene hojas con datos.");
 
-  const columnDefinitions = {
-    identificacion: {
-      aliases: [
-        "CEDULA", "CEDULADECIUDADANIA", "NUMERODECEDULA", "NUMEROCEDULA",
-        "NUMERODEIDENTIFICACION", "NUMEROIDENTIFICACION", "NOIDENTIFICACION",
-        "NROIDENTIFICACION", "IDENTIFICACION", "NUMERODOCUMENTO",
-        "NDEIDENTIFICACION", "NIDENTIFICACION", "DOCUMENTOIDENTIDAD",
-        "DOCUMENTODEIDENTIDAD", "DOCUMENTO",
-      ],
-      matches: (header) => /(?:NUMERO|NO|NRO|N)(?:DE)?(?:IDENTIFICACION|DOCUMENTO)/.test(header)
-        || /CEDULA/.test(header)
-        || /DOCUMENTO(?:DE)?IDENTIDAD/.test(header),
-    },
-    rol: {
-      aliases: ["ROL", "TIPO", "TIPODEPARTICIPANTE", "ROLDELPARTICIPANTE"],
-      matches: (header) => /(?:ROL|TIPO).*(?:PARTICIPANTE|PERSONA)/.test(header),
-    },
-    nombres: {
-      aliases: ["NOMBRES", "NOMBRE", "PRIMERNOMBRE"],
-      matches: (header) => /^(?:NOMBRES?|PRIMERNOMBRE)$/.test(header),
-    },
-    apellidos: {
-      aliases: ["APELLIDOS", "APELLIDO", "PRIMERAPELLIDO"],
-      matches: (header) => /^(?:APELLIDOS?|PRIMERAPELLIDO)$/.test(header),
-    },
-    modalidad: {
-      aliases: ["MODALIDADVARIABLE", "VARIABLEMODALIDAD", "MODALIDAD", "VARIABLE"],
-      matches: (header) => /(?:MODALIDAD|VARIABLE)/.test(header),
-    },
-  };
-  const columns = Object.fromEntries(Object.entries(columnDefinitions).map(([key, definition]) => [
-    key,
-    findColumn(headers, definition.aliases, definition.matches),
-  ]));
-  const requiredColumns = ["identificacion", "rol", "nombres", "apellidos"];
-  if (activity.variablesModalidades?.length) requiredColumns.push("modalidad");
-  const columnLabels = {
-    identificacion: "Cédula",
-    rol: "Rol",
-    nombres: "Nombres",
-    apellidos: "Apellidos",
-    modalidad: "Modalidad / Variable",
-  };
-  const missing = requiredColumns.filter((key) => !columns[key]);
-  if (missing.length) {
-    throw new Error(`Faltan columnas requeridas: ${missing.map((key) => columnLabels[key]).join(", ")}.`);
+  for (const sheet of sheets) {
+    for (let headerNumber = 1; headerNumber <= Math.min(sheet.rows.length, 20); headerNumber += 1) {
+      const headers = new Map();
+      (sheet.rows[headerNumber - 1] || []).forEach((cell, index) => {
+        const header = normalizeHeader(cellText(cell));
+        if (header) headers.set(header, index + 1);
+      });
+      const columns = Object.fromEntries(Object.entries(COLUMN_DEFINITIONS).map(([key, definition]) => [
+        key,
+        findColumn(headers, definition.aliases, definition.matches),
+      ]));
+      if (!columns.identificacion && !columns.codigo) continue;
+
+      const rows = [];
+      sheet.rows.forEach((row, index) => {
+        const rowNumber = index + 1;
+        if (rowNumber <= headerNumber) return;
+        const identificacion = columns.identificacion ? cellText(row[columns.identificacion - 1]) : "";
+        const codigoInstitucional = columns.codigo ? cellText(row[columns.codigo - 1]) : "";
+        const entry = {
+          rowNumber,
+          identificacion,
+          codigoInstitucional,
+          nombres: columns.nombres ? cellText(row[columns.nombres - 1]) : "",
+          nombreCompleto: columns.nombreCompleto ? cellText(row[columns.nombreCompleto - 1]) : "",
+          apellidos: columns.apellidos ? cellText(row[columns.apellidos - 1]) : "",
+          rolOriginal: columns.rol ? cellText(row[columns.rol - 1]) : "",
+        };
+        if (identificacion || codigoInstitucional) rows.push(entry);
+      });
+      if (rows.length) return prepareRows(rows);
+    }
   }
 
-  const rows = [];
-  sheet.eachRow((row, rowNumber) => {
-    if (rowNumber === 1) return;
-    const entry = {
-      rowNumber,
-      identificacion: columns.identificacion ? cellText(row.getCell(columns.identificacion)) : "",
-      rolOriginal: columns.rol ? cellText(row.getCell(columns.rol)) : "",
-      nombres: columns.nombres ? cellText(row.getCell(columns.nombres)) : "",
-      apellidos: columns.apellidos ? cellText(row.getCell(columns.apellidos)) : "",
-      modalidad: columns.modalidad ? cellText(row.getCell(columns.modalidad)) : "",
+  const candidates = [];
+  for (const sheet of sheets) {
+    const countsByColumn = new Map();
+    sheet.rows.forEach((row) => row.forEach((cell, index) => {
+      if (isIdentifierCandidate(cellText(cell))) {
+        const column = index + 1;
+        countsByColumn.set(column, (countsByColumn.get(column) || 0) + 1);
+      }
+    }));
+    const identifierColumn = [...countsByColumn.entries()]
+      .sort((left, right) => right[1] - left[1])[0]?.[0];
+    if (!identifierColumn) continue;
+    sheet.rows.forEach((row, index) => {
+      const rowNumber = index + 1;
+      const value = cellText(row[identifierColumn - 1]);
+      if (isIdentifierCandidate(value)) {
+        candidates.push({
+          rowNumber,
+          identificacion: value,
+          codigoInstitucional: "",
+          nombres: "",
+          nombreCompleto: "",
+          apellidos: "",
+          rolOriginal: "",
+        });
+      }
+    });
+    if (candidates.length) return prepareRows(candidates);
+  }
+  throw new Error("No se encontró una columna de documentos o códigos institucionales.");
+}
+
+function prepareRows(entries) {
+  const rows = entries.map((entry) => {
+    const identifier = entry.identificacion || entry.codigoInstitucional;
+    const base = {
+      ...entry,
+      id: `${entry.rowNumber}-${identifier}`,
+      identificador: identifier,
+      tipo: entry.rolOriginal ? normalizeRole(entry.rolOriginal) : "ESTUDIANTE",
+      status: "waiting",
+      message: "Pendiente de validar.",
     };
-    if (Object.values(entry).some((value) => String(value || "").trim())) rows.push(entry);
+    if (entry.rolOriginal && !base.tipo) {
+      return { ...base, status: "invalid", message: `El rol "${entry.rolOriginal}" no es compatible. Usa estudiante, egresado, colaborador o externo.` };
+    }
+    if (!identifier) return { ...base, status: "invalid", message: "No se encontró documento ni código institucional." };
+    if ((entry.identificacion || entry.codigoInstitucional) && !isIdentifierCandidate(entry.identificacion || entry.codigoInstitucional)) {
+      return { ...base, status: "invalid", message: "El documento o código no tiene un formato válido." };
+    }
+    return base;
   });
-
-  if (!rows.length) throw new Error("El archivo no contiene filas de participantes.");
+  if (!rows.length) throw new Error("No se encontraron identificaciones o códigos institucionales en el Excel.");
   if (rows.length > MAX_ROWS) throw new Error(`El archivo supera el máximo de ${MAX_ROWS} participantes.`);
-
-  return rows.map((entry) => {
-    const role = ROLE_ALIASES.get(normalizeText(entry.rolOriginal)) || "";
-    const base = { ...entry, id: `${entry.rowNumber}-${entry.identificacion}`, tipo: role };
-    if (!entry.identificacion || !entry.nombres || !entry.apellidos) {
-      return { ...base, status: "invalid", message: "Completa cédula, nombres y apellidos." };
-    }
-    if (!role) {
-      return { ...base, status: "invalid", message: "Rol no válido. Usa Estudiante, Colaborador, Egresado o Externo." };
-    }
-    if (entry.identificacion.length > 64) {
-      return { ...base, status: "invalid", message: "La cédula supera el máximo de 64 caracteres." };
-    }
-    const modality = (activity.variablesModalidades || []).find((item) => (
-      normalizeText(modalityLabel(item)) === normalizeText(entry.modalidad)
-      || normalizeText(item.programaCompleto) === normalizeText(entry.modalidad)
-    ));
-    if (activity.variablesModalidades?.length && !modality) {
-      return { ...base, status: "invalid", message: "La modalidad no coincide con las opciones de esta actividad." };
-    }
-    if (modality && !modality.idTipoApoyo) {
-      return { ...base, status: "invalid", message: "La modalidad no tiene un apoyo activo asociado." };
-    }
-    if (!activity.variablesModalidades?.length && entry.modalidad) {
-      return { ...base, status: "invalid", message: "Esta actividad no tiene modalidades configuradas; deja esa celda vacía." };
-    }
-    return { ...base, modalidadSeleccionada: modality || null, status: "waiting", message: "Pendiente de validar." };
-  });
+  return rows;
 }
 
 async function createWorkbook() {
@@ -190,24 +646,30 @@ async function createWorkbook() {
   return new ExcelJS.Workbook();
 }
 
-export default function BulkParticipantImport() {
+export default function BulkParticipantImport({ onPendingChange }) {
+  const confirmedNavigationRef = useRef(false);
+  const restoringHistoryRef = useRef(false);
+  const historyIndexRef = useRef(window.history.state?.idx);
   const [events, setEvents] = useState([]);
-  const [catalog, setCatalog] = useState([]);
   const [selectedEventId, setSelectedEventId] = useState("");
+  const [selectedModality, setSelectedModality] = useState("");
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [validating, setValidating] = useState(false);
   const [registering, setRegistering] = useState(false);
+  const [creatingRowId, setCreatingRowId] = useState("");
+  const [editingUnknownId, setEditingUnknownId] = useState("");
+  const [unknownDrafts, setUnknownDrafts] = useState({});
+  const [unknownSubmitError, setUnknownSubmitError] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
     let active = true;
-    Promise.all([getEventosProximos(), getCatalogoMaestroActividades()])
-      .then(([availableEvents, masterCatalog]) => {
+    getEventosProximos()
+      .then((availableEvents) => {
         if (!active) return;
         setEvents(availableEvents);
-        setCatalog(masterCatalog);
       })
       .catch(() => active && setError("Hubo un error al cargar las actividades disponibles."))
       .finally(() => active && setLoading(false));
@@ -215,16 +677,171 @@ export default function BulkParticipantImport() {
   }, []);
 
   const selectedEvent = events.find((event) => event.id === selectedEventId);
-  const selectedCatalog = catalog.find((item) => item.id === selectedEvent?.idCatalogoActividad);
+  const selectedModalityData = selectedEvent?.variablesModalidades?.find(
+    (item) => item.programaCompleto === selectedModality,
+  );
   const validCount = rows.filter((row) => ["valid", "registered"].includes(row.status)).length;
   const invalidCount = rows.filter((row) => row.status === "invalid").length;
+  const notFoundRows = rows.filter((row) => row.status === "not_found");
+  const editingUnknownRow = notFoundRows.find((row) => row.id === editingUnknownId);
+  const duplicateCount = rows.filter((row) => row.status === "duplicate").length;
+  const reviewRows = rows.filter((row) => !["not_found", "duplicate"].includes(row.status));
   const completedCount = rows.filter((row) => row.status === "registered").length;
-  const readyToRegister = rows.length > 0 && rows.every((row) => row.status === "valid");
-  const allRegistered = rows.length > 0 && completedCount === rows.length;
+  const registerableRows = rows.filter((row) => ["valid", "failed"].includes(row.status));
+  const pendingValidCount = registerableRows.length;
+  const readyToRegister = pendingValidCount > 0;
+  const previouslyRegisterableCount = rows.filter(
+    (row) => ["valid", "registered", "failed"].includes(row.status),
+  ).length;
+  const allRegistered = previouslyRegisterableCount > 0
+    && completedCount === previouslyRegisterableCount;
+  const hasPendingParticipants = rows.some((row) => (
+    ["waiting", "valid", "invalid", "not_found", "failed"].includes(row.status)
+  ));
+
+  useEffect(() => {
+    onPendingChange?.(hasPendingParticipants);
+  }, [hasPendingParticipants, onPendingChange]);
+
+  useEffect(() => {
+    if (!hasPendingParticipants) return undefined;
+
+    const warning = "Hay participantes cargados que todavía no se han registrado. Si sales o recargas esta ventana, se perderá la carga.";
+    const confirmNavigation = (event) => {
+      const link = event.target instanceof Element ? event.target.closest("a[href]") : null;
+      if (!link || link.hasAttribute("download")) return;
+      const destination = new URL(link.href, window.location.href);
+      if (destination.href === window.location.href) return;
+      if (!window.confirm(warning)) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+      } else {
+        confirmedNavigationRef.current = true;
+        window.setTimeout(() => {
+          confirmedNavigationRef.current = false;
+        }, 0);
+      }
+    };
+    const confirmUnload = (event) => {
+      if (confirmedNavigationRef.current) {
+        confirmedNavigationRef.current = false;
+        return;
+      }
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    const confirmHistoryNavigation = (event) => {
+      if (restoringHistoryRef.current) {
+        restoringHistoryRef.current = false;
+        historyIndexRef.current = window.history.state?.idx;
+        return;
+      }
+      const nextIndex = window.history.state?.idx;
+      if (window.confirm(warning)) {
+        historyIndexRef.current = nextIndex;
+        return;
+      }
+      event.stopImmediatePropagation?.();
+      const currentIndex = historyIndexRef.current;
+      const delta = Number.isInteger(currentIndex) && Number.isInteger(nextIndex)
+        ? nextIndex - currentIndex
+        : -1;
+      restoringHistoryRef.current = true;
+      window.history.go(-delta);
+    };
+
+    document.addEventListener("click", confirmNavigation, true);
+    window.addEventListener("beforeunload", confirmUnload);
+    window.addEventListener("popstate", confirmHistoryNavigation, true);
+    return () => {
+      document.removeEventListener("click", confirmNavigation, true);
+      window.removeEventListener("beforeunload", confirmUnload);
+      window.removeEventListener("popstate", confirmHistoryNavigation, true);
+    };
+  }, [hasPendingParticipants]);
+
   function resetImport() {
     setRows([]);
+    setUnknownDrafts({});
+    setEditingUnknownId("");
+    setUnknownSubmitError("");
     setMessage("");
     setError("");
+  }
+
+  function editUnknownParticipant(row) {
+    setUnknownDrafts((current) => ({
+      ...current,
+      [row.id]: current[row.id] || {
+        identificacion: row.identificacion || "",
+        codigoInstitucional: row.codigoInstitucional || "",
+        nombres: row.nombres || "",
+        apellidos: row.apellidos || "",
+        tipoDocumento: "CC",
+        tipo: row.tipo || "",
+        fechaNacimiento: "",
+        lugarNacimiento: "",
+        genero: "",
+        correoInstitucional: "",
+        correo: "",
+        celular: "",
+        telefono: "",
+        direccion: "",
+        municipio: "",
+      },
+    }));
+    setEditingUnknownId((current) => current === row.id ? "" : row.id);
+    setUnknownSubmitError("");
+    setError("");
+  }
+
+  function updateUnknownDraft(row, name, value) {
+    setUnknownSubmitError("");
+    setUnknownDrafts((current) => ({
+      ...current,
+      [row.id]: {
+        ...current[row.id],
+        [name]: value,
+        ...(name === "tipo" && value !== "ESTUDIANTE"
+          ? { codigoInstitucional: "", correoInstitucional: "" }
+          : {}),
+      },
+    }));
+  }
+
+  async function registerUnknownParticipant(row) {
+    const draft = unknownDrafts[row.id];
+    if (!selectedEvent || !draft) return;
+    setCreatingRowId(row.id);
+    setUnknownSubmitError("");
+    setError("");
+    setMessage("");
+    try {
+      const result = await registrarNoEncontradoMasivo({
+        idActividad: selectedEvent.id,
+        participante: {
+          ...draft,
+          fila: row.rowNumber,
+          tipo: draft.tipo,
+          modalidadVariable: selectedModalityData?.programaCompleto || "",
+        },
+      });
+      if (result?.registrado !== true || !result.idInscripcion) {
+        throw new Error("El servidor no confirmó la inscripción. Verifica el resultado antes de volver a intentarlo.");
+      }
+      setRows((current) => current.map((item) => (
+        item.id === row.id
+          ? { ...item, status: "registered", message: `Creado e inscrito como ${ROLE_OPTIONS.find((role) => role.value === result.rol)?.label || result.rol}.` }
+          : item
+      )));
+      setEditingUnknownId("");
+      setMessage(`La persona de la fila ${row.rowNumber} se creó y quedó inscrita como ${ROLE_OPTIONS.find((role) => role.value === result.rol)?.label || result.rol}.`);
+    } catch (requestError) {
+      setUnknownSubmitError(requestError.message || "No se pudo crear e inscribir a la persona. Revisa los datos e inténtalo de nuevo.");
+    } finally {
+      setCreatingRowId("");
+    }
   }
 
   async function handleFile(event) {
@@ -236,8 +853,9 @@ export default function BulkParticipantImport() {
       setError("Selecciona primero la actividad a la que se registrarán los participantes.");
       return;
     }
-    if (!file.name.toLowerCase().endsWith(".xlsx")) {
-      setError("Carga un archivo Excel con formato .xlsx.");
+    const extension = file.name.split(".").pop()?.toLocaleLowerCase("es");
+    if (!["xlsx", "xls", "xlsm", "xlsb", "ods", "csv", "tsv"].includes(extension)) {
+      setError("Formato no compatible. Sube una hoja de cálculo .xlsx, .xls, .xlsm, .xlsb, .ods, .csv o .tsv.");
       return;
     }
     if (file.size > MAX_FILE_BYTES) {
@@ -247,9 +865,16 @@ export default function BulkParticipantImport() {
 
     setValidating(true);
     try {
-      const workbook = await createWorkbook();
-      await workbook.xlsx.load(await file.arrayBuffer());
-      const parsedRows = parseWorkbook(workbook, selectedEvent);
+      const fileBuffer = await file.arrayBuffer();
+      const fileData = extension === "xlsx"
+        ? await sanitizeSharedStringReferences(fileBuffer)
+        : fileBuffer;
+      const spreadsheet = XLSX.read(fileData, {
+        type: "array",
+        cellDates: false,
+        codepage: 65001,
+      });
+      const parsedRows = parseWorkbook(spreadsheet);
       setRows(parsedRows.map((row) => ({
         ...row,
         status: "waiting",
@@ -261,12 +886,13 @@ export default function BulkParticipantImport() {
           participantes: parsedRows.map((row) => ({
             fila: row.rowNumber,
             identificacion: row.identificacion,
+            codigoInstitucional: row.codigoInstitucional,
             tipo: row.tipo,
             tipoDocumento: "CC",
             nombres: row.nombres,
+            nombreCompleto: row.nombreCompleto,
             apellidos: row.apellidos,
-            modalidadVariable: row.modalidadSeleccionada?.programaCompleto || row.modalidad,
-            idTipoApoyo: selectedCatalog?.idTipoApoyoSugerido || "",
+            modalidadVariable: selectedModalityData?.programaCompleto || "",
           })),
         });
         const validationsByRow = new Map(validation.filas.map((row) => [row.fila, row]));
@@ -276,14 +902,29 @@ export default function BulkParticipantImport() {
             ...row,
             status: validated?.status || "invalid",
             message: validated?.message || "No se recibió el resultado de validación.",
+            identificacion: validated?.identificacion || row.identificacion,
+            codigoInstitucional: row.codigoInstitucional,
+            nombres: validated?.nombres || row.nombres,
+            nombreCompleto: row.nombreCompleto,
+            apellidos: validated?.apellidos || row.apellidos,
             idTipoApoyo: validated?.idTipoApoyo || "",
           };
         });
         setRows(prepared);
-        if (prepared.every((row) => row.status === "valid")) {
-          setMessage(`${prepared.length} participantes validados. Puedes confirmar el registro.`);
-        } else {
-          setError("Hay filas con errores. Corrige el archivo y vuelve a cargarlo; no se registrará ningún participante mientras haya errores.");
+        const validRows = prepared.filter((row) => row.status === "valid");
+        const duplicateRows = prepared.filter((row) => row.status === "duplicate");
+        const missingRows = prepared.filter((row) => row.status === "not_found");
+        if (validRows.length > 0) {
+          setMessage(
+            `${validRows.length} estudiantes únicos listos para registrar.`
+            + (duplicateRows.length ? ` Se omitieron ${duplicateRows.length} duplicados o ya inscritos.` : "")
+            + (missingRows.length ? ` ${missingRows.length} no encontrados se muestran por separado.` : ""),
+          );
+        } else if (missingRows.length || duplicateRows.length) {
+          setMessage("No hay estudiantes nuevos listos para registrar; revisa las tablas de omitidos.");
+        }
+        if (prepared.some((row) => row.status === "invalid")) {
+          setError("Hay filas con otros errores de validación. Corrígelas y vuelve a cargar el archivo.");
         }
       } catch (validationError) {
         const messageText = validationError.message || "No se pudo validar la carga en el servidor.";
@@ -305,29 +946,47 @@ export default function BulkParticipantImport() {
     try {
       const result = await registrarParticipantesMasivo({
         idActividad: selectedEvent.id,
-        participantes: rows.map((row) => ({
+        participantes: registerableRows.map((row) => ({
           fila: row.rowNumber,
           identificacion: row.identificacion,
+          codigoInstitucional: row.codigoInstitucional,
           tipo: row.tipo,
           tipoDocumento: "CC",
           nombres: row.nombres,
+          nombreCompleto: row.nombreCompleto,
           apellidos: row.apellidos,
-          modalidadVariable: row.modalidadSeleccionada?.programaCompleto || "",
-          idTipoApoyo: row.idTipoApoyo || selectedCatalog?.idTipoApoyoSugerido || "",
+          modalidadVariable: selectedModalityData?.programaCompleto || "",
         })),
       });
-      setRows(rows.map((row) => ({
-        ...row,
-        status: "registered",
-        message: "Registro completado.",
-      })));
-      setMessage(`${result.registrados} participantes registrados correctamente.`);
+      const outcomes = result.participantes || [];
+      const outcomesByRow = new Map(outcomes.map((participant) => [participant.fila, participant]));
+      setRows((current) => current.map((row) => {
+        const outcome = outcomesByRow.get(row.rowNumber);
+        if (!outcome) return row;
+        return {
+          ...row,
+          status: outcome.status,
+          message: outcome.message,
+        };
+      }));
+      const failedCount = outcomes.filter(
+        (participant) => participant.status === "failed" || participant.status === "invalid",
+      ).length;
+      const missingCount = outcomes.filter((participant) => participant.status === "not_found").length
+        + notFoundRows.length;
+      setMessage(
+        `${result.registrados} participantes registrados correctamente.`
+        + (failedCount ? ` ${failedCount} requieren revisión; los demás continúan disponibles.` : "")
+        + (missingCount ? ` ${missingCount} personas no encontradas siguen disponibles para crear su perfil.` : ""),
+      );
     } catch (requestError) {
       const messageText = requestError.message || "No se pudo completar el registro masivo.";
-      setRows(rows.map((row) => ({
+      setRows((current) => current.map((row) => ({
         ...row,
-        status: "invalid",
-        message: messageText,
+        ...(registerableRows.some((candidate) => candidate.id === row.id) ? {
+          status: "failed",
+          message: messageText,
+        } : {}),
       })));
       setError(messageText);
     } finally {
@@ -342,11 +1001,9 @@ export default function BulkParticipantImport() {
       views: [{ state: "frozen", ySplit: 1 }],
     });
     sheet.columns = [
-      { header: "Cédula", key: "cedula", width: 20 },
-      { header: "Rol", key: "rol", width: 22 },
+      { header: "Documento o código institucional", key: "identificador", width: 34 },
       { header: "Nombres", key: "nombres", width: 26 },
       { header: "Apellidos", key: "apellidos", width: 26 },
-      { header: "Modalidad / Variable", key: "modalidad", width: 42 },
     ];
     const header = sheet.getRow(1);
     header.height = 26;
@@ -355,37 +1012,15 @@ export default function BulkParticipantImport() {
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF002855" } };
       cell.alignment = { vertical: "middle" };
     });
-    sheet.autoFilter = { from: "A1", to: "E1" };
-    sheet.dataValidations.add("B2:B501", {
-      type: "list",
-      allowBlank: false,
-      formulae: ['"ESTUDIANTE,COLABORADOR,EGRESADO,EXTERNO"'],
-    });
-    if (selectedEvent.variablesModalidades?.length) {
-      const optionsSheet = workbook.addWorksheet("Opciones");
-      selectedEvent.variablesModalidades.forEach((item, index) => {
-        optionsSheet.getCell(index + 1, 1).value = modalityLabel(item);
-      });
-      optionsSheet.state = "veryHidden";
-      const end = selectedEvent.variablesModalidades.length;
-      workbook.definedNames.add(`'Opciones'!$A$1:$A$${end}`, "ModalidadesActividad");
-      sheet.dataValidations.add("E2:E501", {
-        type: "list",
-        allowBlank: false,
-        formulae: ["ModalidadesActividad"],
-      });
-    } else {
-      sheet.getCell("E2").note = "Deja esta columna vacía. Esta actividad no tiene variables/modalidades.";
-    }
+    sheet.autoFilter = { from: "A1", to: "C1" };
     const instructions = workbook.addWorksheet("Instrucciones");
     instructions.addRows([
       ["Plantilla para registrar participantes"],
-      ["Completa una fila por participante. No cambies los encabezados."],
-      ["Cédula: documento de identidad sin puntos ni espacios."],
-      ["Rol: usa ESTUDIANTE, COLABORADOR, EGRESADO o EXTERNO."],
-      ["Nombres y Apellidos: deben coincidir con los datos institucionales."],
-      ["Modalidad / Variable: selecciona la opción exacta correspondiente a esta actividad."],
-      ["No se registrará ninguna fila si hay errores de formato, identidad, rol o modalidad."],
+      ["Completa una fila por estudiante usando documento o código institucional."],
+      ["Solo necesitas el identificador. Nombres y apellidos son opcionales y se consultan en la base institucional."],
+      ["La modalidad se elige una sola vez en el formulario y se aplica a toda la carga; también puedes dejarla vacía."],
+      ["Se admiten archivos .xlsx, .xls, .xlsm, .xlsb, .ods, .csv y .tsv; encabezados en distintas filas o una columna identificable sin encabezados."],
+      ["Las personas no encontradas se muestran aparte. Si la hoja incluye documento, nombres y apellidos, puedes crear su perfil de estudiante e inscribirla; los duplicados o ya inscritos se omiten."],
       ["Actividad", eventLabel(selectedEvent)],
     ]);
     instructions.getColumn(1).width = 28;
@@ -409,6 +1044,7 @@ export default function BulkParticipantImport() {
 
   function onActivityChange(value) {
     setSelectedEventId(value);
+    setSelectedModality("");
     setRows([]);
     setError("");
     setMessage("");
@@ -426,21 +1062,26 @@ export default function BulkParticipantImport() {
       </header>
 
       <div className="vec-bulk-registration__section">
-        <label className="form-label" htmlFor="bulk-activity">1. Actividad disponible o pendiente</label>
+        <label className="form-label" htmlFor="bulk-activity">1. Actividad</label>
         <select
           className="form-select"
           id="bulk-activity"
           value={selectedEventId}
           onChange={(event) => onActivityChange(event.target.value)}
-          disabled={loading || registering}
+          disabled={loading || validating || registering}
         >
           <option value="">{loading ? "Cargando actividades..." : "Selecciona una actividad"}</option>
           {events.map((event) => (
-            <option key={event.id} value={event.id}>{eventLabel(event)}</option>
+            <option key={event.id} value={event.id} disabled={event.estado === "CANCELADA"}>
+              {event.actividad}
+            </option>
           ))}
         </select>
         {!loading && !events.length && (
           <p className="vec-bulk-registration__hint">No hay actividades disponibles para registrar participantes.</p>
+        )}
+        {events.some((event) => event.estado === "CANCELADA") && (
+          <p className="vec-bulk-registration__hint">Las actividades canceladas aparecen en la lista, pero no se pueden seleccionar.</p>
         )}
       </div>
 
@@ -449,11 +1090,13 @@ export default function BulkParticipantImport() {
           <div>
             <span className="vec-bulk-registration__eyebrow">ACTIVIDAD SELECCIONADA</span>
             <strong>{selectedEvent.actividad}</strong>
-            <span>{selectedEvent.periodo} · {selectedEvent.ubicacion || "Ubicación no especificada"}</span>
+            <span>{selectedEvent.periodo}</span>
+            <span>{displayDate(selectedEvent.fechaInicio)} – {displayDate(selectedEvent.fechaFinalizacion)}</span>
+            <span>{selectedEvent.tipoActividad || "Tipo de actividad no especificado"} · {selectedEvent.ubicacion || "Ubicación no especificada"}</span>
           </div>
-          {selectedEvent.variablesModalidades?.length > 0 ? (
-            <div className="vec-bulk-registration__modalities">
-              <span>Modalidades que deben asignarse en cada fila del Excel</span>
+          <div className="vec-bulk-registration__modalities">
+            <label className="form-label" htmlFor="bulk-modality">2. Variable / modalidad (opcional)</label>
+            {selectedEvent.variablesModalidades?.length > 0 && (
               <div>
                 {selectedEvent.variablesModalidades.map((item) => (
                   <span className="vec-bulk-registration__chip" key={item.programaCompleto}>
@@ -462,18 +1105,36 @@ export default function BulkParticipantImport() {
                   </span>
                 ))}
               </div>
-            </div>
-          ) : (
-            <span className="vec-bulk-registration__no-modalities">Sin variables / modalidades configuradas</span>
-          )}
+            )}
+            <select
+              className="form-select"
+              id="bulk-modality"
+              value={selectedModality}
+              onChange={(event) => {
+                setSelectedModality(event.target.value);
+                resetImport();
+              }}
+              disabled={!selectedEvent.variablesModalidades?.length || validating || registering}
+            >
+              <option value="">Sin modalidad ni apoyo</option>
+              {(selectedEvent.variablesModalidades || []).map((item) => (
+                <option key={item.programaCompleto} value={item.programaCompleto}>
+                  {modalityLabel(item)}{item.tipoApoyo ? ` · ${item.tipoApoyo}` : ""}
+                </option>
+              ))}
+            </select>
+            {!selectedEvent.variablesModalidades?.length && (
+              <span className="vec-bulk-registration__no-modalities">Esta actividad no tiene modalidades configuradas.</span>
+            )}
+          </div>
         </div>
       )}
 
       <div className="vec-bulk-registration__section">
         <div className="vec-bulk-registration__file-heading">
           <div>
-            <label className="form-label" htmlFor="bulk-file">2. Archivo de participantes (.xlsx)</label>
-            <p>También acepta Excel descargado de Google Forms: reconoce variantes comunes de los encabezados (como “Cédula” o “Número de identificación”).</p>
+            <label className="form-label" htmlFor="bulk-file">3. Archivo de participantes</label>
+            <p>Valida los datos y roles contra los registros disponibles. Las personas no encontradas se pueden crear con su rol y datos personales.</p>
           </div>
           <button
             className="btn btn-outline btn-sm"
@@ -490,11 +1151,11 @@ export default function BulkParticipantImport() {
         <label className={`vec-bulk-registration__dropzone${!selectedEvent ? " is-disabled" : ""}`} htmlFor="bulk-file">
           <i className="fas fa-cloud-arrow-up" aria-hidden="true"></i>
           <strong>{validating ? "Leyendo y verificando archivo..." : "Selecciona el archivo Excel"}</strong>
-          <span>Máximo {MAX_ROWS} participantes y 5 MB. Solo formato .xlsx.</span>
+          <span>Máximo {MAX_ROWS} participantes y 5 MB. Excel, ODS, CSV o TSV.</span>
           <input
             id="bulk-file"
             type="file"
-            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            accept=".xlsx,.xls,.xlsm,.xlsb,.ods,.csv,.tsv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
             onChange={handleFile}
             disabled={!selectedEvent || validating || registering}
           />
@@ -508,14 +1169,16 @@ export default function BulkParticipantImport() {
         <div className="vec-bulk-preview">
           <div className="vec-bulk-preview__header">
             <div>
-              <span className="vec-bulk-registration__eyebrow">REVISIÓN</span>
-              <h3>Participantes cargados</h3>
-              <p>Se debe corregir cualquier fila marcada con error antes de iniciar el registro.</p>
+              <span className="vec-bulk-registration__eyebrow">REVISIÓN DE LA CARGA</span>
+              <h3>Resumen de participantes</h3>
+              <p>Verifica los registros antes de confirmar. Los duplicados se omiten y las personas no encontradas se pueden crear por separado.</p>
             </div>
             <div className="vec-bulk-preview__counts" aria-label="Resumen de validación">
-              <span><strong>{rows.length}</strong> total</span>
-              <span className="is-valid"><strong>{validCount}</strong> válidos</span>
-              <span className="is-invalid"><strong>{invalidCount}</strong> con error</span>
+              <span className="vec-bulk-preview__count"><strong>{rows.length}</strong><small>Total</small></span>
+              <span className="vec-bulk-preview__count is-valid"><strong>{validCount}</strong><small>Válidos</small></span>
+              <span className="vec-bulk-preview__count is-invalid"><strong>{invalidCount}</strong><small>Con error</small></span>
+              {duplicateCount > 0 && <span className="vec-bulk-preview__count is-duplicate"><strong>{duplicateCount}</strong><small>Omitidos</small></span>}
+              {notFoundRows.length > 0 && <span className="vec-bulk-preview__count is-not-found"><strong>{notFoundRows.length}</strong><small>No encontrados</small></span>}
             </div>
           </div>
 
@@ -526,43 +1189,116 @@ export default function BulkParticipantImport() {
             </div>
           )}
 
-          <div className="table-responsive vec-bulk-preview__table">
-            <table className="table">
-              <thead>
-                <tr><th>Fila</th><th>Cédula</th><th>Participante</th><th>Rol</th><th>Modalidad / Variable</th><th>Validación</th></tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr key={row.id}>
-                    <td>{row.rowNumber}</td>
-                    <td>{row.identificacion || "—"}</td>
-                    <td>{[row.nombres, row.apellidos].filter(Boolean).join(" ") || "—"}</td>
-                    <td>{row.tipo || row.rolOriginal || "—"}</td>
-                    <td>{row.modalidadSeleccionada ? modalityLabel(row.modalidadSeleccionada) : row.modalidad || "—"}</td>
-                    <td>
-                      <span className={`vec-bulk-row-status vec-bulk-row-status--${row.status}`}>
-                        {row.status === "valid" ? "Válido" : row.status === "invalid" ? "Corregir" : row.status === "registered" ? "Registrado" : row.status === "failed" ? "Falló" : row.status === "registering" ? "Registrando" : "Validando"}
-                      </span>
-                      <small className="vec-bulk-row-message">{row.message}</small>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {reviewRows.length > 0 && (
+            <section className="vec-bulk-preview__section">
+              <div className="vec-bulk-preview__section-heading">
+                <div className="vec-bulk-preview__section-icon is-review" aria-hidden="true">
+                  <i className="fas fa-clipboard-check"></i>
+                </div>
+                <div>
+                  <h4>Registros para revisar</h4>
+                  <p>Participantes encontrados y validados contra los registros disponibles.</p>
+                </div>
+                <span className="vec-bulk-preview__section-total">{reviewRows.length} registros</span>
+              </div>
+              <div className="table-responsive vec-bulk-preview__table">
+                <table className="table vec-bulk-preview__data-table">
+                  <thead>
+                    <tr><th>Fila</th><th>Documento / código</th><th>Persona</th><th>Modalidad / apoyo</th><th>Estado de validación</th></tr>
+                  </thead>
+                  <tbody>
+                    {reviewRows.map((row) => (
+                      <tr key={row.id}>
+                        <td><span className="vec-bulk-preview__row-number">{row.rowNumber}</span></td>
+                        <td><span className="vec-bulk-preview__identifier">{row.identificacion || row.codigoInstitucional || "—"}</span></td>
+                        <td><span className="vec-bulk-preview__person-name">{[row.nombres, row.apellidos].filter(Boolean).join(" ") || "—"}</span></td>
+                        <td>{selectedModalityData ? modalityLabel(selectedModalityData) : "Sin modalidad"}</td>
+                        <td>
+                          <span className={`vec-bulk-row-status vec-bulk-row-status--${row.status}`}>
+                            {row.status === "valid" ? "Válido" : row.status === "invalid" ? "Corregir" : row.status === "registered" ? "Registrado" : row.status === "failed" ? "Falló" : row.status === "registering" ? "Registrando" : "Validando"}
+                          </span>
+                          <small className="vec-bulk-row-message">{row.message}</small>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {notFoundRows.length > 0 && (
+            <section className="vec-bulk-preview__section vec-bulk-preview__section--unregistered">
+              <div className="vec-bulk-preview__section-heading">
+                <div className="vec-bulk-preview__section-icon is-unregistered" aria-hidden="true">
+                  <i className="fas fa-user-plus"></i>
+                </div>
+                <div>
+                  <h4>Personas no registradas</h4>
+                  <p>Completa sus datos y selecciona el rol correcto. Se guardarán para futuras actividades. El rol Externo es exclusivo.</p>
+                </div>
+                <span className="vec-bulk-preview__section-total">{notFoundRows.length} pendientes</span>
+              </div>
+              <div className="table-responsive vec-bulk-preview__table">
+                <table className="table vec-bulk-preview__data-table">
+                  <thead><tr><th>Fila</th><th>Documento / código</th><th>Nombre en Excel</th><th>Estado y acción</th></tr></thead>
+                  <tbody>
+                    {notFoundRows.map((row) => (
+                      <tr key={row.id}>
+                        <td><span className="vec-bulk-preview__row-number">{row.rowNumber}</span></td>
+                        <td><span className="vec-bulk-preview__identifier">{row.identificacion || row.codigoInstitucional || "—"}</span></td>
+                        <td><span className="vec-bulk-preview__person-name">{[row.nombres, row.apellidos].filter(Boolean).join(" ") || row.nombreCompleto || "Sin nombre en el archivo"}</span></td>
+                        <td className="vec-bulk-unregistered__action">
+                          <span className="vec-bulk-row-status vec-bulk-row-status--not-found">Persona no registrada</span>
+                          <small className="vec-bulk-row-message">{row.message}</small>
+                          <button
+                            className="btn btn-outline btn-sm"
+                            type="button"
+                            onClick={() => editUnknownParticipant(row)}
+                            disabled={registering || creatingRowId === row.id}
+                          >
+                            <i className="fas fa-user-plus" aria-hidden="true"></i>
+                            {editingUnknownId === row.id ? "Cerrar formulario" : "Crear perfil e inscribir"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {editingUnknownRow && (
+            <UnknownParticipantDialog
+              row={editingUnknownRow}
+              draft={unknownDrafts[editingUnknownRow.id]}
+              busy={creatingRowId === editingUnknownRow.id}
+              serverError={unknownSubmitError}
+              onChange={(name, value) => updateUnknownDraft(editingUnknownRow, name, value)}
+              onClose={() => setEditingUnknownId("")}
+              onSubmit={() => registerUnknownParticipant(editingUnknownRow)}
+            />
+          )}
+
+          {duplicateCount > 0 && (
+            <p className="vec-bulk-registration__hint">
+              Se omitieron {duplicateCount} fila(s) duplicada(s) o ya inscritas; cada persona se conserva una sola vez.
+            </p>
+          )}
 
           <div className="vec-bulk-preview__actions">
-            {completedCount > 0 && completedCount === rows.length && (
+            {allRegistered && (
               <span className="vec-bulk-preview__complete"><i className="fas fa-check-circle" aria-hidden="true"></i> Proceso finalizado</span>
             )}
             <button
               className="btn btn-primary"
               type="button"
               onClick={registerParticipants}
-              disabled={registering || validating || invalidCount > 0 || !readyToRegister}
+              disabled={registering || validating || !readyToRegister}
             >
               <i className={`fas ${registering ? "fa-spinner fa-spin" : "fa-users"}`} aria-hidden="true"></i>
-              {allRegistered ? "Participantes registrados" : registering ? "Registrando lista..." : `Registrar ${validCount} participantes`}
+              {allRegistered ? "Participantes registrados" : registering ? "Registrando lista..." : `Registrar ${pendingValidCount} participantes pendientes`}
             </button>
           </div>
         </div>

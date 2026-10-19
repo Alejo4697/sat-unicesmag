@@ -64,6 +64,12 @@ export function cambiarEstadoActividad(id, estado) {
   });
 }
 
+export function eliminarActividad(id) {
+  return apiFetch(`/actividades/participantes/eventos/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
 export function getParticipantesActividad(id) {
   return apiFetch(`/actividades/participantes/eventos/${encodeURIComponent(id)}/participantes`);
 }
@@ -113,6 +119,13 @@ export function registrarParticipantesMasivo({ idActividad, participantes }) {
   return apiFetch("/actividades/participantes/registro-actividad/masivo", {
     method: "POST",
     body: { idActividad, participantes },
+  });
+}
+
+export function registrarNoEncontradoMasivo({ idActividad, participante }) {
+  return apiFetch("/actividades/participantes/registro-actividad/masivo/registrar-no-encontrado", {
+    method: "POST",
+    body: { idActividad, participante },
   });
 }
 

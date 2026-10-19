@@ -5,6 +5,7 @@ import {
   buscarPersonasActividades,
   corregirTipoApoyoInscripcion,
   crearActividad,
+  eliminarActividad,
   getAuditoriaInscripcion,
   getActividades,
   getCatalogosEstudiante,
@@ -21,13 +22,12 @@ const EMPTY_FORM = {
   estrategiaPoliticaEducacionInclusiva: "", tipoActividadOtra: "",
 };
 const ESTADOS = ["PROGRAMADA", "EN_CURSO", "FINALIZADA", "CANCELADA"];
-
-function fechaLocalActual() {
-  const hoy = new Date();
-  const mes = String(hoy.getMonth() + 1).padStart(2, "0");
-  const dia = String(hoy.getDate()).padStart(2, "0");
-  return `${hoy.getFullYear()}-${mes}-${dia}`;
-}
+const ETIQUETAS_ESTADO = {
+  PROGRAMADA: "Programadas",
+  EN_CURSO: "En curso",
+  FINALIZADA: "Finalizadas",
+  CANCELADA: "Canceladas",
+};
 
 function formatoFecha(value) {
   const fecha = String(value || "").slice(0, 10);
@@ -114,7 +114,6 @@ export default function ActividadesAdminView() {
   const [programasBienestar, setProgramasBienestar] = useState([]);
   const [tiposApoyo, setTiposApoyo] = useState([]);
   const [busqueda, setBusqueda] = useState("");
-  const [mostrarArchivadas, setMostrarArchivadas] = useState(false);
   const [form, setForm] = useState(null);
   const [participantes, setParticipantes] = useState(null);
   const [historial, setHistorial] = useState(null);
@@ -127,6 +126,7 @@ export default function ActividadesAdminView() {
   const [edicionApoyo, setEdicionApoyo] = useState(null);
   const [auditoriaApoyo, setAuditoriaApoyo] = useState(null);
   const [guardandoApoyo, setGuardandoApoyo] = useState(false);
+  const [eliminandoActividadId, setEliminandoActividadId] = useState("");
   const [buscandoPersonas, setBuscandoPersonas] = useState(false);
 
   const cargarActividades = useCallback(async () => {
@@ -136,26 +136,34 @@ export default function ActividadesAdminView() {
 
   useEffect(() => {
     let mounted = true;
-    Promise.all([getActividades(), getCatalogosEstudiante()])
-      .then(([rows, refs]) => {
+    getCatalogosEstudiante()
+      .then((refs) => {
         if (!mounted) return;
-        setActividades(rows);
         setPeriodos(refs.periodos || []);
         setProgramasBienestar(refs.programasBienestar || []);
         setTiposApoyo(refs.tiposApoyo || []);
       })
-      .catch(() => mounted && setError("Hubo un error."))
-      .finally(() => mounted && setCargando(false));
+      .catch((requestError) => mounted && setError(
+        requestError.message || "No se pudieron cargar los catálogos de administración."
+      ));
     return () => { mounted = false; };
   }, []);
 
   useEffect(() => {
+    let active = true;
+    setCargando(true);
     const timeout = setTimeout(() => {
       getActividades({ busqueda })
-        .then(setActividades)
-        .catch(() => setError("Hubo un error."));
+        .then((rows) => active && setActividades(rows))
+        .catch((requestError) => active && setError(
+          requestError.message || "No se pudieron cargar las actividades."
+        ))
+        .finally(() => active && setCargando(false));
     }, 250);
-    return () => clearTimeout(timeout);
+    return () => {
+      active = false;
+      clearTimeout(timeout);
+    };
   }, [busqueda]);
 
   useEffect(() => {
@@ -167,7 +175,9 @@ export default function ActividadesAdminView() {
       setBuscandoPersonas(true);
       buscarPersonasActividades(personaTerm.trim())
         .then(setPersonas)
-        .catch(() => setError("Hubo un error."))
+        .catch((requestError) => setError(
+          requestError.message || "No se pudo buscar la persona."
+        ))
         .finally(() => setBuscandoPersonas(false));
     }, 250);
     return () => clearTimeout(timeout);
@@ -191,20 +201,11 @@ export default function ActividadesAdminView() {
     .sort((a, b) => a.subdivision.localeCompare(b.subdivision, "es"));
   const modalidadesSeleccionadas = subdivisionesPrograma
     .filter((item) => form?.subdivisionProgramas?.includes(item.programaCompleto));
-  const fechaMinima = fechaLocalActual();
-  const fechaFinalMinima = form?.fechaInicio && form.fechaInicio > fechaMinima
-    ? form.fechaInicio
-    : fechaMinima;
-  const actividadesVisibles = actividades.filter((activity) => (
-    (activity.estado === "CANCELADA") === mostrarArchivadas
-  ));
-  const totalParticipantesVisibles = actividadesVisibles.reduce(
-    (total, activity) => total + Number(activity.totalParticipantes || 0),
-    0
-  );
-  const actividadesEnCurso = actividadesVisibles.filter(
-    (activity) => activity.estado === "EN_CURSO"
-  ).length;
+  const actividadesPorEstado = ESTADOS.map((estado) => ({
+    estado,
+    etiqueta: ETIQUETAS_ESTADO[estado],
+    actividades: actividades.filter((activity) => activity.estado === estado),
+  }));
 
   async function save(event) {
     event.preventDefault();
@@ -218,15 +219,9 @@ export default function ActividadesAdminView() {
       setError("La fecha final no puede ser anterior a la fecha inicial.");
       return;
     }
-    if (!form.idEventoExistente && (
-      form.fechaInicio < fechaMinima || form.fechaFinalizacion < fechaMinima
-    )) {
-      setError("Las fechas deben ser iguales o posteriores a hoy.");
-      return;
-    }
     if (subdivisionesPrograma.length > 0) {
       if (!form.subdivisionProgramas?.length) {
-        setError("Selecciona al menos una variable o modalidad del programa de Bienestar.");
+        setError("Selecciona el apoyo que se asignará. Puedes marcar solo uno aunque el programa tenga varias opciones.");
         return;
       }
       if (form.subdivisionProgramas.some((value) => (
@@ -237,18 +232,18 @@ export default function ActividadesAdminView() {
       }
     }
     setGuardando(true);
+    let saved = false;
     try {
       if (form.idEventoExistente) await actualizarActividad(form.idEventoExistente, form);
       else await crearActividad(form);
+      saved = true;
       setMensaje(form.idEventoExistente ? "Actividad actualizada." : "Actividad guardada.");
       setForm(null);
-      try {
-        await cargarActividades();
-      } catch {
-        setError("Hubo un error.");
-      }
-    } catch {
-      setError("Hubo un error.");
+      await cargarActividades();
+    } catch (requestError) {
+      setError(saved
+        ? `La actividad se guardó, pero no se pudo actualizar la lista. ${requestError.message || ""}`.trim()
+        : requestError.message || "No se pudo guardar la actividad.");
     } finally {
       setGuardando(false);
     }
@@ -261,8 +256,8 @@ export default function ActividadesAdminView() {
       await cargarActividades();
       setMensaje("Estado de actividad actualizado.");
       return true;
-    } catch {
-      setError("Hubo un error.");
+    } catch (requestError) {
+      setError(requestError.message || "No se pudo actualizar el estado de la actividad.");
       return false;
     }
   }
@@ -277,8 +272,34 @@ export default function ActividadesAdminView() {
       await cambiarEstadoActividad(activity.id, "CANCELADA");
       await cargarActividades();
       setMensaje("Actividad archivada. Se conservaron sus participantes e historial.");
-    } catch {
-      setError("Hubo un error.");
+    } catch (requestError) {
+      setError(requestError.message || "No se pudo archivar la actividad.");
+    }
+  }
+
+  async function deleteActivity(activity) {
+    const participantCount = Number(activity.totalParticipantes || 0);
+    const impact = participantCount
+      ? ` También se eliminarán sus ${participantCount} inscripciones, las modalidades y la auditoría asociadas. Los perfiles de estudiantes no se eliminan.`
+      : " También se eliminarán las modalidades y la auditoría asociadas.";
+    const confirmed = window.confirm(
+      `¿Eliminar permanentemente "${activity.actividad}"? Esta acción no se puede deshacer.${impact}`
+    );
+    if (!confirmed) return;
+
+    setError("");
+    setMensaje("");
+    setEliminandoActividadId(activity.id);
+    try {
+      const result = await eliminarActividad(activity.id);
+      setActividades((current) => current.filter((item) => item.id !== activity.id));
+      setParticipantes((current) => current?.actividadId === activity.id ? null : current);
+      setForm((current) => current?.idEventoExistente === activity.id ? null : current);
+      setMensaje(result.mensaje || `Se eliminó "${activity.actividad}" y sus datos asociados.`);
+    } catch (requestError) {
+      setError(requestError.message || "No se pudo eliminar la actividad.");
+    } finally {
+      setEliminandoActividadId("");
     }
   }
 
@@ -288,11 +309,11 @@ export default function ActividadesAdminView() {
     try {
       const filas = await getParticipantesActividad(activity.id);
       setParticipantes({ actividadId: activity.id, actividad: activity.actividad, filas, cargando: false, error: "" });
-    } catch {
+    } catch (requestError) {
       setParticipantes((current) => current ? {
         ...current,
         cargando: false,
-        error: "Hubo un error.",
+        error: requestError.message || "No se pudieron cargar los participantes de la actividad.",
       } : current);
     }
   }
@@ -302,8 +323,8 @@ export default function ActividadesAdminView() {
     try {
       const rows = await getHistorialParticipacion(person.identificacion);
       setHistorial({ person, rows });
-    } catch {
-      setError("Hubo un error.");
+    } catch (requestError) {
+      setError(requestError.message || "No se pudo consultar el historial de participación.");
     }
   }
 
@@ -321,8 +342,8 @@ export default function ActividadesAdminView() {
       setParticipantes((current) => current ? { ...current, filas } : current);
       setMensaje("Corrección de apoyo guardada con motivo y auditoría.");
       setEdicionApoyo(null);
-    } catch {
-      setError("Hubo un error.");
+    } catch (requestError) {
+      setError(requestError.message || "No se pudo guardar la corrección del tipo de apoyo.");
     } finally {
       setGuardandoApoyo(false);
     }
@@ -333,8 +354,8 @@ export default function ActividadesAdminView() {
     try {
       const rows = await getAuditoriaInscripcion(row.id);
       setAuditoriaApoyo({ persona: row.apellidosNombres, rows });
-    } catch {
-      setError("Hubo un error.");
+    } catch (requestError) {
+      setError(requestError.message || "No se pudo consultar la auditoría del apoyo.");
     }
   }
 
@@ -365,48 +386,45 @@ export default function ActividadesAdminView() {
               />
             </div>
           </div>
-          <div className="activity-toolbar__filter">
-            <label className="form-label" htmlFor="activity-archive-filter">Vista</label>
-            <select
-              className="form-select"
-              id="activity-archive-filter"
-              value={mostrarArchivadas ? "archivadas" : "activas"}
-              onChange={(event) => setMostrarArchivadas(event.target.value === "archivadas")}
-            >
-              <option value="activas">Actividades activas</option>
-              <option value="archivadas">Actividades archivadas</option>
-            </select>
-          </div>
         </div>
         {!cargando && (
-          <div className="activity-overview" aria-label="Resumen de actividades visibles">
-            <div className="activity-overview__item">
-              <span className="activity-overview__icon activity-overview__icon--blue"><i className="fas fa-calendar-alt" aria-hidden="true"></i></span>
-              <span><strong>{actividadesVisibles.length}</strong><small>{mostrarArchivadas ? "Actividades archivadas" : "Actividades activas"}</small></span>
-            </div>
-            <div className="activity-overview__item">
-              <span className="activity-overview__icon activity-overview__icon--green"><i className="fas fa-users" aria-hidden="true"></i></span>
-              <span><strong>{totalParticipantesVisibles}</strong><small>Participaciones registradas</small></span>
-            </div>
-            {!mostrarArchivadas && (
-              <div className="activity-overview__item">
-                <span className="activity-overview__icon activity-overview__icon--gold"><i className="fas fa-bolt" aria-hidden="true"></i></span>
-                <span><strong>{actividadesEnCurso}</strong><small>En curso</small></span>
+          <div className="activity-overview" aria-label="Resumen de actividades por estado">
+            {actividadesPorEstado.map((grupo) => (
+              <div className="activity-overview__item" key={grupo.estado}>
+                <span className={`activity-overview__icon activity-overview__icon--${grupo.estado.toLowerCase()}`}>
+                  <i className="fas fa-calendar-alt" aria-hidden="true"></i>
+                </span>
+                <span><strong>{grupo.actividades.length}</strong><small>{grupo.etiqueta}</small></span>
               </div>
-            )}
+            ))}
           </div>
         )}
         {error && <div className="auth-error" role="alert">{error}</div>}
         {mensaje && <div className="autosave-banner" role="status">{mensaje}</div>}
-        {cargando ? <p className="text-muted" role="status">Consultando actividades de PostgreSQL...</p> : actividadesVisibles.length === 0 ? (
+        {cargando ? <p className="text-muted" role="status">Consultando actividades de PostgreSQL...</p> : actividades.length === 0 ? (
           <div className="activity-empty" role="status">
             <span className="activity-empty__icon"><i className="fas fa-calendar-day" aria-hidden="true"></i></span>
             <strong>No hay actividades para mostrar</strong>
-            <span>Prueba otra búsqueda o cambia la vista seleccionada.</span>
+            <span>{busqueda ? "No se encontraron actividades con esa búsqueda." : "Cuando registres actividades, aparecerán organizadas aquí por estado."}</span>
           </div>
         ) : (
-          <div className="activity-card-grid">
-            {actividadesVisibles.map((activity) => {
+          <div className="activity-status-groups">
+            {actividadesPorEstado.map((grupo) => (
+            <details
+              className={`activity-status-group activity-status-group--${grupo.estado.toLowerCase()}`}
+              key={grupo.estado}
+              open={grupo.actividades.length > 0}
+            >
+              <summary className="activity-status-group__header">
+                <span className="activity-status-group__heading">
+                  <span className={claseEstado(grupo.estado)}>{grupo.etiqueta}</span>
+                  <span className="activity-status-group__count">{grupo.actividades.length}</span>
+                </span>
+                <i className="fas fa-chevron-down activity-status-group__chevron" aria-hidden="true"></i>
+              </summary>
+              {grupo.actividades.length ? (
+              <div className="activity-card-grid">
+            {grupo.actividades.map((activity) => {
               const bienestar = programasBienestar
                 .find((item) => item.programaCompleto === activity.programaBienestar);
               const modalidades = Array.isArray(activity.variablesModalidades)
@@ -440,9 +458,13 @@ export default function ActividadesAdminView() {
                         <div className="activity-card__tags">
                           {modalidades.map((modalidad) => {
                             const detalle = programasBienestar.find((item) => item.programaCompleto === modalidad);
+                            const apoyoModalidad = activity.apoyosModalidades?.find(
+                              (item) => item.programaCompleto === modalidad
+                            );
                             return (
                               <span className="activity-chip" key={modalidad}>
                                 {detalle?.subdivision || modalidad}
+                                {apoyoModalidad?.tipoApoyo && <small>{apoyoModalidad.tipoApoyo}</small>}
                               </span>
                             );
                           })}
@@ -474,11 +496,25 @@ export default function ActividadesAdminView() {
                       {activity.estado !== "CANCELADA" && (
                         <button className="btn btn-outline btn-sm activity-card__archive" type="button" onClick={() => archiveActivity(activity)}>Archivar</button>
                       )}
+                      <button
+                        className="btn btn-outline btn-sm activity-card__archive"
+                        type="button"
+                        onClick={() => deleteActivity(activity)}
+                        disabled={Boolean(eliminandoActividadId)}
+                      >
+                        {eliminandoActividadId === activity.id ? "Eliminando..." : "Eliminar"}
+                      </button>
                     </div>
                   </div>
                 </article>
               );
-            })}
+                    })}
+                  </div>
+                ) : (
+                  <p className="activity-status-group__empty">No hay actividades {grupo.etiqueta.toLowerCase()}.</p>
+                )}
+              </details>
+            ))}
           </div>
         )}
       </section>
@@ -546,8 +582,8 @@ export default function ActividadesAdminView() {
                   </div>
                   {subdivisionesPrograma.length > 0 && (
                     <div className="form-group activity-form-field--wide activity-modalities-field" role="group" aria-labelledby="activity-subdivision-label">
-                      <span className="form-label" id="activity-subdivision-label">Variables / Modalidades</span>
-                      <p className="activity-modalities__hint">Selecciona las opciones disponibles para los participantes. Cada modalidad conserva su apoyo correspondiente.</p>
+                      <span className="form-label" id="activity-subdivision-label">Apoyos disponibles</span>
+                      <p className="activity-modalities__hint">Marca únicamente los apoyos que manejará esta actividad. Puedes seleccionar uno solo aunque el programa tenga varias opciones.</p>
                       <div className="activity-modalities">
                         {subdivisionesPrograma.map((item) => {
                           const seleccionada = form.subdivisionProgramas.includes(item.programaCompleto);
@@ -590,8 +626,8 @@ export default function ActividadesAdminView() {
                   <span><h3>Fecha y lugar</h3><p>Define cuándo se realizará y en qué modalidad y sede.</p></span>
                 </div>
                 <div className="activity-form-grid">
-                  <div className="form-group"><label className="form-label" htmlFor="activity-start">Fecha inicial</label><input className="form-control" id="activity-start" type="date" min={form.idEventoExistente ? undefined : fechaMinima} value={form.fechaInicio} onChange={(event) => update("fechaInicio", event.target.value)} required /></div>
-                  <div className="form-group"><label className="form-label" htmlFor="activity-end">Fecha final</label><input className="form-control" id="activity-end" type="date" min={form.idEventoExistente ? undefined : fechaFinalMinima} value={form.fechaFinalizacion} onChange={(event) => update("fechaFinalizacion", event.target.value)} required /></div>
+                  <div className="form-group"><label className="form-label" htmlFor="activity-start">Fecha inicial</label><input className="form-control" id="activity-start" type="date" value={form.fechaInicio} onChange={(event) => update("fechaInicio", event.target.value)} required /></div>
+                  <div className="form-group"><label className="form-label" htmlFor="activity-end">Fecha final</label><input className="form-control" id="activity-end" type="date" value={form.fechaFinalizacion} onChange={(event) => update("fechaFinalizacion", event.target.value)} required /></div>
                   <div className="form-group"><label className="form-label" htmlFor="activity-mode">Modalidad</label><select className="form-select" id="activity-mode" value={form.modalidad} onChange={(event) => update("modalidad", event.target.value)}><option value="">Selecciona la modalidad</option>{["Presencial", "Virtual", "Híbrida"].map((item) => <option key={item}>{item}</option>)}</select></div>
                   <div className="form-group"><label className="form-label" htmlFor="activity-location">Campus</label><select className="form-select" id="activity-location" value={form.ubicacion} onChange={(event) => update("ubicacion", event.target.value)} required><option value="">Selecciona el campus</option>{["Campus Centro", "Campus San Damián", "Campus Santiago"].map((campus) => <option key={campus} value={campus}>{campus}</option>)}</select></div>
                 </div>
