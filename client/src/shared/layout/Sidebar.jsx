@@ -4,13 +4,17 @@
    El listado de módulos reemplaza a renderDynamicMenu() de menu.js.
    ========================================================================== */
 
+import { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
 import { menuForRole } from "../config/menuConfig.js";
+import CambiarPasswordModal from "./CambiarPasswordModal.jsx";
 
-export default function Sidebar() {
+export default function Sidebar({ onCambiarPassword }) {
   const { user, cerrarSesion, permisos } = useAuth();
   const navigate = useNavigate();
+  const [modalLocalAbierto, setModalLocalAbierto] = useState(false);
+
   // `permisos` = matriz editable desde Administración (null -> por defecto).
   const secciones = user ? menuForRole(user.rol, permisos) : [];
   const iniciales = user ? user.nombre.split(" ").map((n) => n[0]).slice(0, 2).join("") : "";
@@ -19,6 +23,14 @@ export default function Sidebar() {
     e.preventDefault();
     cerrarSesion();
     navigate("/");
+  }
+
+  function handleAbrirCambioPassword() {
+    if (onCambiarPassword) {
+      onCambiarPassword();
+    } else {
+      setModalLocalAbierto(true);
+    }
   }
 
   return (
@@ -56,7 +68,11 @@ export default function Sidebar() {
               <li className="nav-section-title">{section.title}</li>
               {section.items.map((item) => (
                 <li className="nav-item" key={item.id}>
-                  <NavLink to={item.href} className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
+                  <NavLink
+                    to={item.href}
+                    onClick={() => document.getElementById("sidebar")?.classList.remove("show")}
+                    className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}
+                  >
                     <i className={`fas ${item.icon}`}></i>
                     <span>{item.name}</span>
                   </NavLink>
@@ -67,7 +83,22 @@ export default function Sidebar() {
         ))}
       </ul>
 
-      <div className="sidebar-footer">
+      <div className="sidebar-footer" style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+        {user && user.rol !== "estudiante" && (
+          <button
+            type="button"
+            onClick={handleAbrirCambioPassword}
+            className="btn btn-outline btn-sm"
+            style={{
+              width: "100%",
+              color: "#E2E8F0",
+              borderColor: "var(--sidebar-border)",
+              background: "rgba(255, 255, 255, 0.04)"
+            }}
+          >
+            <i className="fas fa-key"></i> Cambiar Contraseña
+          </button>
+        )}
         <a
           href="/"
           onClick={handleCerrarSesion}
@@ -77,6 +108,10 @@ export default function Sidebar() {
           <i className="fas fa-arrow-right-from-bracket"></i> Cerrar Sesión
         </a>
       </div>
+
+      {!onCambiarPassword && (
+        <CambiarPasswordModal abierto={modalLocalAbierto} onClose={() => setModalLocalAbierto(false)} />
+      )}
     </aside>
   );
 }

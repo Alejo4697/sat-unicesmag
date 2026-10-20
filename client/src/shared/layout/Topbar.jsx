@@ -1,4 +1,8 @@
-export default function Topbar({ titulo, breadcrumb }) {
+import { useAuth } from "../context/AuthContext.jsx";
+
+export default function Topbar({ titulo, breadcrumb, onCambiarPassword }) {
+  const { user } = useAuth();
+
   return (
     <header className="topbar">
       <div className="topbar-left">
@@ -11,7 +15,18 @@ export default function Topbar({ titulo, breadcrumb }) {
         </div>
       </div>
 
-      <div className="topbar-right">{/* TODO: acciones específicas de cada página (filtros, botones) van aquí */}</div>
+      <div className="topbar-right">
+        {user && user.rol !== "estudiante" && onCambiarPassword && (
+          <button
+            type="button"
+            className="btn btn-outline btn-sm"
+            onClick={onCambiarPassword}
+            title="Actualizar mi contraseña de acceso"
+          >
+            <i className="fas fa-key"></i> Cambiar Contraseña
+          </button>
+        )}
+      </div>
     </header>
   );
 }

@@ -52,6 +52,71 @@ function mapTipoFrontend(tipoRespuesta) {
   return "likert";
 }
 
+// Garantiza que exista una encuesta activa y sus preguntas base en BD para edición real
+async function asegurarInstrumentoEnBD() {
+  try {
+    let encRes = await query(
+      `SELECT id_encuestas_caracterizacion AS id FROM sat.encuestas_caracterizacion ORDER BY creado_en DESC LIMIT 1`
+    );
+    let idEncuesta = encRes.rows[0]?.id;
+
+    if (!idEncuesta) {
+      const insEnc = await query(
+        `INSERT INTO sat.encuestas_caracterizacion (nombre, version, vigente_desde, activo)
+         VALUES ('Formulario caracterización permanencia', 1, '2026-01-01', true)
+         RETURNING id_encuestas_caracterizacion AS id`
+      );
+      idEncuesta = insEnc.rows[0]?.id;
+    }
+
+    const countRes = await query(`SELECT COUNT(*)::int AS total FROM sat.preguntas_caracterizacion`);
+    if (idEncuesta && (countRes.rows[0]?.total || 0) === 0) {
+      for (const item of INSTRUMENTO_ITEMS) {
+        const tipoFinal = item.tipo === "sino" ? "BOOLEANO" : item.tipo === "likert_inverso" ? "LIKERT_INVERSO" : "ESCALA_LIKERT";
+        const catFinal = mapCategoria(item.dim);
+        const pRes = await query(
+          `INSERT INTO sat.preguntas_caracterizacion
+            (id_encuestas_caracterizacion, texto, tipo_respuesta, categoria, orden, obligatoria, activo)
+           VALUES ($1, $2, $3, $4, $5, true, true)
+           RETURNING id_preguntas_caracterizacion AS id`,
+          [idEncuesta, item.texto, tipoFinal, catFinal, item.id]
+        );
+        const pregId = pRes.rows[0]?.id;
+        if (pregId) {
+          if (tipoFinal === "BOOLEANO") {
+            await query(
+              `INSERT INTO sat.opciones_pregunta (id_preguntas_caracterizacion, texto, valor_riesgo, orden)
+               VALUES ($1, 'No', 4.00, 1), ($1, 'Sí', 1.00, 2)`,
+              [pregId]
+            );
+          } else if (tipoFinal === "LIKERT_INVERSO") {
+            await query(
+              `INSERT INTO sat.opciones_pregunta (id_preguntas_caracterizacion, texto, valor_riesgo, orden)
+               VALUES ($1, 'Muy en desacuerdo', 1.00, 1),
+                      ($1, 'En desacuerdo', 2.00, 2),
+                      ($1, 'De acuerdo', 3.00, 3),
+                      ($1, 'Muy de acuerdo', 4.00, 4)`,
+              [pregId]
+            );
+          } else {
+            await query(
+              `INSERT INTO sat.opciones_pregunta (id_preguntas_caracterizacion, texto, valor_riesgo, orden)
+               VALUES ($1, 'Muy en desacuerdo', 4.00, 1),
+                      ($1, 'En desacuerdo', 3.00, 2),
+                      ($1, 'De acuerdo', 2.00, 3),
+                      ($1, 'Muy de acuerdo', 1.00, 4)`,
+              [pregId]
+            );
+          }
+        }
+      }
+    }
+    return idEncuesta;
+  } catch {
+    return null;
+  }
+}
+
 // --------------------------------------------------------------------------
 // 1. GET /encuesta - Metadatos de la encuesta y resumen por dimensiones
 // --------------------------------------------------------------------------
@@ -61,6 +126,7 @@ router.get("/encuesta", async (req, res, next) => {
     let preguntas = [];
 
     try {
+      await asegurarInstrumentoEnBD();
       const encRes = await query(
         `SELECT id_encuestas_caracterizacion AS id, nombre, version, vigente_desde, vigente_hasta, activo
          FROM sat.encuestas_caracterizacion
@@ -137,6 +203,9 @@ router.put("/encuesta/:id", async (req, res, next) => {
   }
 
   try {
+    const idEnBd = await asegurarInstrumentoEnBD();
+    const targetId = isUuid(id) ? id : idEnBd;
+
     const { rows } = await query(
       `UPDATE sat.encuestas_caracterizacion
        SET nombre = $1,
@@ -146,7 +215,7 @@ router.put("/encuesta/:id", async (req, res, next) => {
            activo = COALESCE($5, activo)
        WHERE id_encuestas_caracterizacion = $6
        RETURNING id_encuestas_caracterizacion AS id, nombre, version, vigente_desde, vigente_hasta, activo`,
-      [nombre.trim(), version ? Number(version) : 1, vigente_desde || null, vigente_hasta || null, activo ?? true, id]
+      [nombre.trim(), version ? Number(version) : 1, vigente_desde || null, vigente_hasta || null, activo ?? true, targetId]
     );
 
     if (rows.length === 0) {
@@ -165,6 +234,7 @@ router.put("/encuesta/:id", async (req, res, next) => {
 router.get("/preguntas", async (req, res, next) => {
   try {
     try {
+      await asegurarInstrumentoEnBD();
       const { rows } = await query(
         `SELECT p.id_preguntas_caracterizacion AS id,
                 p.id_encuestas_caracterizacion AS "idEncuesta",
@@ -231,6 +301,7 @@ router.post("/preguntas", async (req, res, next) => {
   const tipoFinal = mapTipoRespuesta(tipoRespuesta);
 
   try {
+    await asegurarInstrumentoEnBD();
     // Obtener ID de la encuesta activa
     const encRes = await query(
       `SELECT id_encuestas_caracterizacion FROM sat.encuestas_caracterizacion WHERE activo = true LIMIT 1`
@@ -315,18 +386,33 @@ router.put("/preguntas/:id", async (req, res, next) => {
   const tipoFinal = mapTipoRespuesta(tipoRespuesta);
 
   try {
+    await asegurarInstrumentoEnBD();
+    const esIdOrden = String(id).startsWith("item_");
+    const ordenBuscar = esIdOrden ? Number(String(id).replace("item_", "")) : null;
+
     const { rows } = await query(
-      `UPDATE sat.preguntas_caracterizacion
-       SET texto = $1,
-           categoria = $2,
-           tipo_respuesta = $3,
-           orden = COALESCE($4, orden),
-           obligatoria = COALESCE($5, obligatoria),
-           activo = COALESCE($6, activo)
-       WHERE id_preguntas_caracterizacion = $7
-       RETURNING id_preguntas_caracterizacion AS id, id_encuestas_caracterizacion AS "idEncuesta",
-                 orden, categoria, tipo_respuesta AS "tipoRespuesta", texto, obligatoria, activo`,
-      [texto.trim(), catFinal, tipoFinal, orden ? Number(orden) : null, obligatoria, activo, id]
+      esIdOrden
+        ? `UPDATE sat.preguntas_caracterizacion
+           SET texto = $1,
+               categoria = $2,
+               tipo_respuesta = $3,
+               orden = COALESCE($4, orden),
+               obligatoria = COALESCE($5, obligatoria),
+               activo = COALESCE($6, activo)
+           WHERE orden = $7
+           RETURNING id_preguntas_caracterizacion AS id, id_encuestas_caracterizacion AS "idEncuesta",
+                     orden, categoria, tipo_respuesta AS "tipoRespuesta", texto, obligatoria, activo`
+        : `UPDATE sat.preguntas_caracterizacion
+           SET texto = $1,
+               categoria = $2,
+               tipo_respuesta = $3,
+               orden = COALESCE($4, orden),
+               obligatoria = COALESCE($5, obligatoria),
+               activo = COALESCE($6, activo)
+           WHERE id_preguntas_caracterizacion = $7
+           RETURNING id_preguntas_caracterizacion AS id, id_encuestas_caracterizacion AS "idEncuesta",
+                     orden, categoria, tipo_respuesta AS "tipoRespuesta", texto, obligatoria, activo`,
+      [texto.trim(), catFinal, tipoFinal, orden ? Number(orden) : null, obligatoria, activo, esIdOrden ? ordenBuscar : id]
     );
 
     if (rows.length === 0) {
@@ -357,12 +443,21 @@ router.patch("/preguntas/:id/toggle", async (req, res, next) => {
   const { id } = req.params;
 
   try {
+    await asegurarInstrumentoEnBD();
+    const esIdOrden = String(id).startsWith("item_");
+    const valorFiltro = esIdOrden ? Number(String(id).replace("item_", "")) : id;
+
     const { rows } = await query(
-      `UPDATE sat.preguntas_caracterizacion
-       SET activo = NOT activo
-       WHERE id_preguntas_caracterizacion = $1
-       RETURNING id_preguntas_caracterizacion AS id, orden, categoria, texto, activo`,
-      [id]
+      esIdOrden
+        ? `UPDATE sat.preguntas_caracterizacion
+           SET activo = NOT activo
+           WHERE orden = $1
+           RETURNING id_preguntas_caracterizacion AS id, orden, categoria, texto, activo`
+        : `UPDATE sat.preguntas_caracterizacion
+           SET activo = NOT activo
+           WHERE id_preguntas_caracterizacion = $1
+           RETURNING id_preguntas_caracterizacion AS id, orden, categoria, texto, activo`,
+      [valorFiltro]
     );
 
     if (rows.length === 0) {
@@ -386,17 +481,25 @@ router.delete("/preguntas/:id", async (req, res, next) => {
   const { id } = req.params;
 
   try {
+    await asegurarInstrumentoEnBD();
+    let targetId = id;
+    if (String(id).startsWith("item_")) {
+      const ordenNum = Number(String(id).replace("item_", ""));
+      const r = await query(`SELECT id_preguntas_caracterizacion AS id FROM sat.preguntas_caracterizacion WHERE orden = $1 LIMIT 1`, [ordenNum]);
+      targetId = r.rows[0]?.id || id;
+    }
+
     // Verificar si ya tiene respuestas asociadas
     const respCheck = await query(
       `SELECT COUNT(*) FROM sat.respuestas_detalle WHERE id_preguntas_caracterizacion = $1`,
-      [id]
+      [targetId]
     );
 
     if (Number(respCheck.rows[0].count) > 0) {
       // Inhabilitar para proteger integridad histórica
       await query(
         `UPDATE sat.preguntas_caracterizacion SET activo = false WHERE id_preguntas_caracterizacion = $1`,
-        [id]
+        [targetId]
       );
       return res.json({
         ok: true,
@@ -405,10 +508,10 @@ router.delete("/preguntas/:id", async (req, res, next) => {
     }
 
     // Si no tiene respuestas asociadas, eliminar opciones y pregunta
-    await query(`DELETE FROM sat.opciones_pregunta WHERE id_preguntas_caracterizacion = $1`, [id]);
+    await query(`DELETE FROM sat.opciones_pregunta WHERE id_preguntas_caracterizacion = $1`, [targetId]);
     const { rowCount } = await query(
       `DELETE FROM sat.preguntas_caracterizacion WHERE id_preguntas_caracterizacion = $1`,
-      [id]
+      [targetId]
     );
 
     if (rowCount === 0) {
@@ -426,6 +529,7 @@ router.delete("/preguntas/:id", async (req, res, next) => {
 // --------------------------------------------------------------------------
 router.get("/instrumento", async (req, res) => {
   try {
+    await asegurarInstrumentoEnBD();
     const { rows } = await query(
       `SELECT p.id_preguntas_caracterizacion AS "dbId",
               p.orden AS id,
@@ -462,7 +566,7 @@ router.get("/instrumento", async (req, res) => {
   res.json(INSTRUMENTO_ITEMS);
 });
 
-/// --------------------------------------------------------------------------
+// --------------------------------------------------------------------------
 // 9. GET /estudiante-info/:codigo - Consultar datos de solo lectura del estudiante
 // --------------------------------------------------------------------------
 router.get("/estudiante-info/:codigo", async (req, res, next) => {
@@ -780,7 +884,7 @@ router.post("/", async (req, res, next) => {
 
     // 1. Obtener todas las preguntas activas
     let itemsActivos = INSTRUMENTO_ITEMS;
-    let opcionesMap = new Map(); // `idPregunta_valorNumerico` -> `idOpcion`
+    let opcionesMap = new Map();
     try {
       const { rows: pregRows } = await query(
         `SELECT p.id_preguntas_caracterizacion AS "dbId", p.orden AS id, p.orden, p.categoria, p.tipo_respuesta, p.texto
@@ -910,7 +1014,7 @@ router.post("/", async (req, res, next) => {
             estudianteDb.id_estudiantes,
             idRespuestaCaracterizacion,
             idPeriodo,
-            resultado.promedioGlobal * 25, // Escala 0-100 o escala promedio
+            resultado.promedioGlobal * 25,
             resultado.porDimension.ACA?.suma || 0,
             resultado.porDimension.SOC?.suma || 0,
             resultado.porDimension.INS?.suma || 0,
@@ -918,7 +1022,10 @@ router.post("/", async (req, res, next) => {
             idRangoRiesgo,
             JSON.stringify({
               semestre: estudianteDb.semestre_actual || 1,
-              dimensiones: resultado.porDimension
+              dimensiones: resultado.porDimension,
+              nivelPermanencia: resultado.nivelPermanencia,
+              mensajePermanencia: resultado.mensajePermanencia,
+              conceptosPorDimension: resultado.conceptosPorDimension
             })
           ]
         );

@@ -4962,13 +4962,27 @@
   }
 }
 
+@media (max-width: 1200px) {
+  .kpi-card {
+    grid-column: span 6;
+  }
+}
+
 @media (max-width: 992px) {
   .dashboard-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) !important;
   }
 
-  .kpi-card, .chart-card {
-    grid-column: span 12;
+  .dashboard-grid > *,
+  .kpi-card,
+  .chart-card {
+    grid-column: 1 / -1 !important;
+    min-width: 0;
+  }
+
+  .vec-activity-filters {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.75rem;
   }
 
   .student-header-card {

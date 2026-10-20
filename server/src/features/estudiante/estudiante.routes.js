@@ -4,8 +4,9 @@
    Endpoints:
      POST /api/estudiante/solicitar-otp      -> Valida cédula y correo, despacha OTP
      POST /api/estudiante/verificar-otp      -> Valida OTP, emite sesión de estudiante
-     GET  /api/estudiante/estado             -> Consulta elegibilidad (semestre 1, 4, 7) y estado de encuesta
-     POST /api/estudiante/guardar-encuesta   -> Guarda respuestas de caracterización con confirmación y evalúa riesgo
+     GET  /api/estudiante/instrumento        -> Obtiene preguntas activas actualizadas del instrumento
+     GET  /api/estudiante/estado             -> Consulta elegibilidad (semestre 1, 4, 7) y estado/resultado de encuesta
+     POST /api/estudiante/guardar-encuesta   -> Guarda respuestas de caracterización con confirmación y devuelve diagnóstico completo
    ========================================================================== */
 
 import { Router } from "express";
@@ -20,6 +21,19 @@ const router = Router();
 // Semestres institucionales habilitados para caracterización obligatoria
 const SEMESTRES_ELEGIBLES = [1, 4, 7];
 
+function mapCategoria(cat) {
+  if (!cat) return "IND";
+  const upper = String(cat).toUpperCase().trim();
+  if (upper === "GEST PROG" || upper === "GEST_PROG") return "GEST_PROG";
+  return upper;
+}
+
+function mapTipoFrontend(tipoRespuesta) {
+  if (tipoRespuesta === "BOOLEANO" || tipoRespuesta === "sino") return "sino";
+  if (tipoRespuesta === "LIKERT_INVERSO") return "likert_inverso";
+  return "likert";
+}
+
 // Helper para ofuscar correo (ej. santiagovillota@unicesmag.edu.co -> s***a@unicesmag.edu.co)
 function ofuscarCorreo(email) {
   if (!email || !email.includes("@")) return email || "";
@@ -27,6 +41,67 @@ function ofuscarCorreo(email) {
   if (local.length <= 2) return `${local[0]}*@${dominio}`;
   return `${local[0]}${"*".repeat(local.length - 2)}${local[local.length - 1]}@${dominio}`;
 }
+
+async function obtenerDocenteAcompanante() {
+  try {
+    const docRes = await query(
+      `SELECT CONCAT(d.nombres, ' ', d.apellidos) AS nombre_completo
+       FROM sat.docentes d
+       LIMIT 1`
+    );
+    if (docRes.rows.length > 0 && docRes.rows[0].nombre_completo?.trim()) {
+      return docRes.rows[0].nombre_completo.trim();
+    }
+  } catch {
+    // Fallback
+  }
+  return "Equipo de Permanencia y Acompañamiento Institucional";
+}
+
+async function obtenerPreguntasActivas() {
+  try {
+    const { rows } = await query(
+      `SELECT p.id_preguntas_caracterizacion AS "dbId",
+              p.orden AS id,
+              p.orden,
+              p.categoria,
+              p.tipo_respuesta AS "tipoRespuesta",
+              p.texto,
+              p.obligatoria
+       FROM sat.preguntas_caracterizacion p
+       WHERE p.activo = true
+       ORDER BY p.orden ASC`
+    );
+
+    if (rows.length > 0) {
+      return rows.map((r) => {
+        const dimKey = mapCategoria(r.categoria);
+        return {
+          id: r.id,
+          dbId: r.dbId,
+          orden: r.orden,
+          dim: dimKey,
+          dimNombre: DIM_NOMBRES[dimKey] || DIM_NOMBRES[r.categoria] || r.categoria,
+          texto: r.texto,
+          tipo: mapTipoFrontend(r.tipoRespuesta),
+          tipo_respuesta: r.tipoRespuesta,
+          obligatoria: r.obligatoria
+        };
+      });
+    }
+  } catch {
+    // Fallback a INSTRUMENTO_ITEMS
+  }
+  return INSTRUMENTO_ITEMS;
+}
+
+// --------------------------------------------------------------------------
+// 0. GET /instrumento - Preguntas activas actualizadas para el estudiante
+// --------------------------------------------------------------------------
+router.get("/instrumento", async (req, res) => {
+  const items = await obtenerPreguntasActivas();
+  res.json(items);
+});
 
 // --------------------------------------------------------------------------
 // 1. POST /solicitar-otp - Solicitar código OTP sin contraseña
@@ -108,7 +183,6 @@ router.post("/solicitar-otp", async (req, res, next) => {
     // 3. Guardar en sat.otp_codigos si el estudiante tiene ID UUID
     const esUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(estudiante.id_estudiantes);
     if (esUuid) {
-      // Inhabilitar códigos anteriores no usados
       await query(
         `UPDATE sat.otp_codigos 
          SET usado = true 
@@ -116,7 +190,6 @@ router.post("/solicitar-otp", async (req, res, next) => {
         [estudiante.id_estudiantes]
       );
 
-      // Insertar nuevo OTP
       await query(
         `INSERT INTO sat.otp_codigos
           (id_estudiantes, codigo, correo_destino, expira_en, intentos_fallidos, max_intentos, usado, ip_origen)
@@ -145,8 +218,6 @@ router.post("/solicitar-otp", async (req, res, next) => {
     next(err);
   }
 });
-
-
 
 // --------------------------------------------------------------------------
 // 2. POST /verificar-otp - Validar código OTP e iniciar sesión de estudiante
@@ -239,7 +310,6 @@ router.post("/verificar-otp", async (req, res, next) => {
         });
       }
 
-      // Validar coincidencia de código
       if (otpRegistro.codigo !== codigoLimpio) {
         await query(
           `UPDATE sat.otp_codigos
@@ -253,7 +323,6 @@ router.post("/verificar-otp", async (req, res, next) => {
         });
       }
 
-      // Código correcto: marcar como usado
       await query(
         `UPDATE sat.otp_codigos
          SET usado = true, usado_en = NOW()
@@ -294,7 +363,7 @@ router.post("/verificar-otp", async (req, res, next) => {
 });
 
 // --------------------------------------------------------------------------
-// 3. GET /estado - Consultar elegibilidad y estado de encuesta para el estudiante
+// 3. GET /estado - Consultar elegibilidad y estado/resultado de encuesta para el estudiante
 // --------------------------------------------------------------------------
 router.get("/estado", async (req, res, next) => {
   const userId = req.headers["x-user-id"];
@@ -371,6 +440,9 @@ router.get("/estado", async (req, res, next) => {
     let fechaCompletado = null;
     let idRespuesta = null;
     let resumenResultado = null;
+    let resultadoCompleto = null;
+
+    const docenteAcompanante = await obtenerDocenteAcompanante();
 
     try {
       const respRes = await query(
@@ -395,6 +467,44 @@ router.get("/estado", async (req, res, next) => {
           riesgoGlobal: row.riesgoGlobal || "Medio",
           puntajeGlobal: row.puntaje_global
         };
+
+        let factoresParsed = {};
+        try {
+          factoresParsed = typeof row.factores === "string" ? JSON.parse(row.factores) : row.factores || {};
+        } catch {
+          factoresParsed = {};
+        }
+
+        if (factoresParsed.nivelPermanencia && factoresParsed.conceptosPorDimension) {
+          resultadoCompleto = {
+            porDimension: factoresParsed.dimensiones || factoresParsed.porDimension,
+            nivelPermanencia: factoresParsed.nivelPermanencia,
+            mensajePermanencia: factoresParsed.mensajePermanencia,
+            conceptosPorDimension: factoresParsed.conceptosPorDimension,
+            riesgoGlobal: row.riesgoGlobal || factoresParsed.riesgoGlobal || "Medio",
+            promedioGlobal: factoresParsed.promedioGlobal || (row.puntaje_global ? Number((Number(row.puntaje_global) / 25).toFixed(2)) : 2.5),
+            docenteAcompanante: factoresParsed.docenteAcompanante || docenteAcompanante
+          };
+        } else {
+          // Reconstruir evaluando respuestas_detalle guardadas
+          const detRes = await query(
+            `SELECT p.orden, rd.valor_numerico
+             FROM sat.respuestas_detalle rd
+             JOIN sat.preguntas_caracterizacion p ON rd.id_preguntas_caracterizacion = p.id_preguntas_caracterizacion
+             WHERE rd.id_respuestas_caracterizacion = $1`,
+            [idRespuesta]
+          );
+          const respuestasMap = {};
+          detRes.rows.forEach((r) => {
+            respuestasMap[`item_${r.orden}`] = Number(r.valor_numerico) || 2;
+          });
+          const itemsActivos = await obtenerPreguntasActivas();
+          const evalRec = evaluarInstrumento(respuestasMap, itemsActivos);
+          resultadoCompleto = {
+            ...evalRec,
+            docenteAcompanante
+          };
+        }
       }
     } catch {
       // Fallback a MOCK_DATA
@@ -406,6 +516,12 @@ router.get("/estado", async (req, res, next) => {
         resumenResultado = {
           riesgoGlobal: envioMock.riesgoGlobal,
           puntajeGlobal: envioMock.promedioGlobal
+        };
+        const itemsActivos = await obtenerPreguntasActivas();
+        const evalRec = evaluarInstrumento(envioMock.respuestas || {}, itemsActivos);
+        resultadoCompleto = {
+          ...evalRec,
+          docenteAcompanante
         };
       }
     }
@@ -430,6 +546,7 @@ router.get("/estado", async (req, res, next) => {
       fechaCompletado,
       idRespuesta,
       resumenResultado,
+      resultado: resultadoCompleto,
       mensaje: !esElegible
         ? `La Encuesta de Caracterización no aplica para tu periodo lectivo actual (Semestre ${semestre}). La encuesta institucional está dirigida a estudiantes de 1.º, 4.º y 7.º semestre.`
         : encuestaCompletada
@@ -502,25 +619,9 @@ router.post("/guardar-encuesta", async (req, res, next) => {
     }
 
     // 2. Obtener preguntas activas para evaluar y persistir
-    let itemsActivos = INSTRUMENTO_ITEMS;
+    const itemsActivos = await obtenerPreguntasActivas();
     let opcionesMap = new Map();
     try {
-      const { rows: pregRows } = await query(
-        `SELECT p.id_preguntas_caracterizacion AS "dbId", p.orden AS id, p.orden, p.categoria, p.tipo_respuesta, p.texto
-         FROM sat.preguntas_caracterizacion p WHERE p.activo = true ORDER BY p.orden ASC`
-      );
-      if (pregRows.length > 0) {
-        itemsActivos = pregRows.map((r) => ({
-          id: r.id,
-          dbId: r.dbId,
-          orden: r.orden,
-          dim: r.categoria === "GEST PROG" ? "GEST_PROG" : r.categoria,
-          dimNombre: DIM_NOMBRES[r.categoria] || r.categoria,
-          tipo: r.tipo_respuesta === "BOOLEANO" ? "sino" : r.tipo_respuesta === "LIKERT_INVERSO" ? "likert_inverso" : "likert",
-          texto: r.texto
-        }));
-      }
-
       const { rows: opcRows } = await query(
         `SELECT id_opciones_pregunta, id_preguntas_caracterizacion, valor_numerico FROM sat.opciones_pregunta`
       );
@@ -568,6 +669,7 @@ router.post("/guardar-encuesta", async (req, res, next) => {
 
     // 5. Evaluar instrumento con matriz de cálculo
     const evaluacion = evaluarInstrumento(respuestas, itemsActivos);
+    const docenteAcompanante = await obtenerDocenteAcompanante();
 
     // 6. Inserción en PostgreSQL
     let idRespuestaCaracterizacion = null;
@@ -612,7 +714,7 @@ router.post("/guardar-encuesta", async (req, res, next) => {
         idRangoRiesgo = fallbackRango.rows[0]?.id_rangos_riesgo;
       }
 
-      // Persistir calificación de riesgo
+      // Persistir calificación de riesgo con todos los datos del diagnóstico para el estudiante
       await query(
         `INSERT INTO sat.calificaciones_riesgo
           (id_estudiantes, id_respuestas_caracterizacion, id_periodos_academicos, tipo_origen,
@@ -631,7 +733,13 @@ router.post("/guardar-encuesta", async (req, res, next) => {
           idRangoRiesgo,
           JSON.stringify({
             semestre: estudianteDb.semestre_actual,
-            dimensiones: evaluacion.porDimension
+            dimensiones: evaluacion.porDimension,
+            nivelPermanencia: evaluacion.nivelPermanencia,
+            mensajePermanencia: evaluacion.mensajePermanencia,
+            conceptosPorDimension: evaluacion.conceptosPorDimension,
+            promedioGlobal: evaluacion.promedioGlobal,
+            riesgoGlobal: evaluacion.riesgoGlobal,
+            docenteAcompanante
           })
         ]
       );
@@ -639,6 +747,11 @@ router.post("/guardar-encuesta", async (req, res, next) => {
 
     const comprobanteId = idRespuestaCaracterizacion || `CAR-2026-${Math.floor(1000 + Math.random() * 9000)}`;
     const fechaEnvio = new Date().toISOString().replace("T", " ").substring(0, 16);
+
+    const resultadoCompleto = {
+      ...evaluacion,
+      docenteAcompanante
+    };
 
     res.status(201).json({
       ok: true,
@@ -651,7 +764,8 @@ router.post("/guardar-encuesta", async (req, res, next) => {
         semestre: estudianteDb.semestre_actual,
         promedioGlobal: evaluacion.promedioGlobal,
         riesgoGlobal: evaluacion.riesgoGlobal
-      }
+      },
+      resultado: resultadoCompleto
     });
   } catch (err) {
     next(err);

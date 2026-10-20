@@ -418,7 +418,7 @@ export default function AdministracionPage() {
           <h3 className="card-title">Configuración de Umbrales de Riesgo</h3>
         </div>
 
-        <form onSubmit={handleUmbrales} style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "1.5rem", alignItems: "flex-end" }}>
+        <form onSubmit={handleUmbrales} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: "1.25rem", alignItems: "flex-end" }}>
           <div>
             <label className="form-label">Puntaje Mínimo Riesgo Alto</label>
             <input

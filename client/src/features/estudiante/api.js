@@ -32,10 +32,10 @@ export async function getEstadoEstudiante() {
 }
 
 /**
- * Obtiene las 34 preguntas activas del instrumento oficial.
+ * Obtiene las preguntas activas y actualizadas del instrumento oficial.
  */
 export async function getInstrumentoPreguntas() {
-  return apiFetch("/caracterizacion/instrumento");
+  return apiFetch("/estudiante/instrumento");
 }
 
 /**

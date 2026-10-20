@@ -619,7 +619,7 @@ export default function FichaEstudiantePage() {
 
           {/* Navegación por pestañas */}
           <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-            <div style={{ display: "flex", borderBottom: "1px solid var(--border-light)" }}>
+            <div style={{ display: "flex", borderBottom: "1px solid var(--border-light)", overflowX: "auto", flexWrap: "nowrap" }}>
               {TABS.map((t) => {
                 const habilitada =
                   t.id === "resumen" || (t.id === "intervenciones" ? puedeIntervenciones : puedeRemisiones);
@@ -722,7 +722,7 @@ export default function FichaEstudiantePage() {
                       display: "grid",
                       gridTemplateColumns:
                         estudiante.programasMatriculados && estudiante.programasMatriculados.length > 1
-                          ? "repeat(auto-fit, minmax(320px, 1fr))"
+                          ? "repeat(auto-fit, minmax(min(100%, 280px), 1fr))"
                           : "1fr",
                       gap: "1rem"
                     }}
@@ -1148,7 +1148,7 @@ export default function FichaEstudiantePage() {
                   </div>
 
                   {/* Bloques de Semaforización en las 5 Dimensiones */}
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8, textAlign: "center", marginTop: "0.75rem" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 115px), 1fr))", gap: 8, textAlign: "center", marginTop: "0.75rem" }}>
                     {Object.entries(DIMENSIONES_INFO).map(([key, info]) => {
                       const nivel = semaforizacion5D[key] || "Medio";
                       return (

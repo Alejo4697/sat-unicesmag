@@ -319,9 +319,21 @@ router.post("/logout", async (req, res) => {
 router.post("/cambiar-password", identifyUser, async (req, res) => {
   const { passwordActual, nuevoPassword } = req.body;
 
-  if (!nuevoPassword || nuevoPassword.length < 8) {
+  if (!passwordActual) {
+    return res.status(400).json({
+      error: "Debe ingresar su contraseña actual para confirmar su identidad."
+    });
+  }
+
+  if (!nuevoPassword || String(nuevoPassword).length < 8) {
     return res.status(400).json({
       error: "La nueva contraseña debe tener al menos 8 caracteres."
+    });
+  }
+
+  if (passwordActual === nuevoPassword) {
+    return res.status(400).json({
+      error: "La nueva contraseña debe ser diferente a la contraseña actual."
     });
   }
 
@@ -329,18 +341,19 @@ router.post("/cambiar-password", identifyUser, async (req, res) => {
     const { rows } = await query(`
       SELECT id_usuarios, password_hash
       FROM sat.usuarios
-      WHERE id_usuarios = $1
-    `, [req.user.id]);
+      WHERE id_usuarios::text = $1 OR LOWER(correo_institucional) = LOWER($2)
+      LIMIT 1
+    `, [String(req.user.id || ""), String(req.user.email || "")]);
 
     if (rows.length === 0) {
-      return res.status(404).json({ error: "Usuario no encontrado." });
+      return res.status(404).json({ error: "Usuario no encontrado en la base de datos." });
     }
 
     const u = rows[0];
-    if (u.password_hash && passwordActual) {
+    if (u.password_hash && u.password_hash.startsWith("$2")) {
       const match = await bcrypt.compare(passwordActual, u.password_hash);
       if (!match) {
-        return res.status(400).json({ error: "La contraseña actual no es correcta." });
+        return res.status(400).json({ error: "La contraseña actual ingresada no es correcta." });
       }
     }
 
@@ -348,14 +361,16 @@ router.post("/cambiar-password", identifyUser, async (req, res) => {
     await query(`
       UPDATE sat.usuarios
       SET password_hash = $1,
-          debe_cambiar_password = false
+          debe_cambiar_password = false,
+          intentos_fallidos = 0,
+          bloqueado_hasta = NULL
       WHERE id_usuarios = $2
-    `, [nuevoHash, req.user.id]);
+    `, [nuevoHash, u.id_usuarios]);
 
     res.json({ ok: true, message: "Contraseña actualizada exitosamente." });
   } catch (err) {
     console.error("Error al cambiar contraseña:", err);
-    res.status(500).json({ error: "Error al actualizar la contraseña." });
+    res.status(500).json({ error: "Error interno al actualizar la contraseña." });
   }
 });
 

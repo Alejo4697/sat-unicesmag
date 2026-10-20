@@ -1,27 +1,23 @@
 /* ==========================================================================
-   Feature: Caracterización
-   Instrumento oficial de permanencia estudiantil UNICESMAG (34 ítems).
-   Incluye:
-     - Panel de administración para el rol Administrador:
+   Feature: Caracterización (Gestión del Instrumento y Modo Lectura)
+   Instrumento oficial de permanencia estudiantil UNICESMAG (34 ítems base).
+   Incluye exclusivamente:
+     - Modo Edición del Instrumento:
        * Visualización y métricas por dimensión (IND, INS, ACA, SOC, GEST PROG).
        * Agregar nueva pregunta.
        * Modificar preguntas existentes (texto, dimensión, tipo de respuesta, orden).
        * Inhabilitar / activar preguntas.
        * Modificar datos generales de la encuesta.
-     - Formulario interactivo de diligenciamiento con evaluación multidimensional
-       en tiempo real y barra de progreso.
+     - Modo Lectura (Vista Previa de cómo queda para el estudiante):
+       * Previsualización de solo lectura del instrumento actualizado tal como
+         le aparecerá al estudiante en su portal exclusivo (/estudiante/portal).
    ========================================================================== */
 
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import AppLayout from "../../shared/layout/AppLayout.jsx";
 import { useAuth } from "../../shared/context/AuthContext.jsx";
-import { riskBoxStyle } from "../../shared/utils/risk.js";
 import {
   getInstrumento,
-  getEstudianteInfo,
-  enviarCaracterizacion,
-  listEstudiantesParaSelector,
   getEncuestaInfo,
   updateEncuesta,
   listPreguntasAdmin,
@@ -48,7 +44,7 @@ const FORM_PREGUNTA_VACIO = {
   activo: true
 };
 
-function renderOpciones(item, valor, onChange) {
+function renderOpcionesLectura(item) {
   const opciones =
     item.tipo === "sino" || item.tipoRespuesta === "BOOLEANO"
       ? [
@@ -63,57 +59,59 @@ function renderOpciones(item, valor, onChange) {
         ];
 
   return opciones.map((op) => (
-    <label className="option-pill" key={op.value}>
+    <span
+      className="option-pill"
+      key={op.value}
+      style={{
+        cursor: "default",
+        userSelect: "none",
+        opacity: 0.9,
+        background: "#F8FAFC",
+        border: "1px solid #CBD5E1",
+        color: "#334155"
+      }}
+    >
       <input
         type="radio"
-        name={`item_${item.id}`}
+        name={`preview_item_${item.id}`}
         value={op.value}
-        checked={valor === op.value}
-        onChange={() => onChange(item.id, op.value)}
-        required
+        disabled
+        style={{ pointerEvents: "none" }}
       />
       <span>
         {op.icon && <i className={`fas ${op.icon}`}></i>} {op.label}
       </span>
-    </label>
+    </span>
   ));
 }
 
 export default function CaracterizacionPage() {
   const { user } = useAuth();
   const esAdmin = user?.rol === "admin";
-  const esEstudiante = user?.rol === "estudiante";
 
-  // Pestaña activa para el administrador
-  const [tabAdmin, setTabAdmin] = useState("formulario"); // Por defecto vista de encuesta
+  // Modo activo: "gestion" (Edición) o "lectura" (Modo Lectura de cómo queda)
+  const [modoVista, setModoVista] = useState(esAdmin ? "gestion" : "lectura");
 
-  // Estado para el formulario de respuestas
+  // Estado del instrumento
   const [items, setItems] = useState([]);
-  const [estudiantes, setEstudiantes] = useState([]);
-  const [codigoEstudiante, setCodigoEstudiante] = useState(
-    esEstudiante ? user?.codigoEstudiante || user?.codigo || "202510045" : "202510045"
-  );
-  const [estudiantePerfil, setEstudiantePerfil] = useState(null);
-  const [cargandoEstudiante, setCargandoEstudiante] = useState(false);
-  const [respuestas, setRespuestas] = useState({});
-  const [resultado, setResultado] = useState(null);
-  const [enviando, setEnviando] = useState(false);
-  const [modalPortafolio, setModalPortafolio] = useState(false);
-
-  // Estado para administración
   const [encuestaInfo, setEncuestaInfo] = useState(null);
   const [preguntasAdmin, setPreguntasAdmin] = useState([]);
   const [filtroDim, setFiltroDim] = useState("TODAS");
   const [filtroEstado, setFiltroEstado] = useState("TODAS");
   const [busqueda, setBusqueda] = useState("");
 
-  // Modales
+  // Modales de edición
   const [modalPreguntaAbierto, setModalPreguntaAbierto] = useState(false);
   const [preguntaEditando, setPreguntaEditando] = useState(null);
   const [formPregunta, setFormPregunta] = useState(FORM_PREGUNTA_VACIO);
 
   const [modalEncuestaAbierto, setModalEncuestaAbierto] = useState(false);
-  const [formEncuesta, setFormEncuesta] = useState({ nombre: "", version: 1, vigente_desde: "", vigente_hasta: "" });
+  const [formEncuesta, setFormEncuesta] = useState({
+    nombre: "",
+    version: 1,
+    vigente_desde: "",
+    vigente_hasta: ""
+  });
 
   const [notificacion, setNotificacion] = useState(null);
   const [error, setError] = useState("");
@@ -124,36 +122,11 @@ export default function CaracterizacionPage() {
     setTimeout(() => setNotificacion(null), 4500);
   }
 
-  // Cargar datos del estudiante seleccionado / activo
-  useEffect(() => {
-    if (!codigoEstudiante) {
-      setEstudiantePerfil(null);
-      return;
-    }
-    setCargandoEstudiante(true);
-    getEstudianteInfo(codigoEstudiante)
-      .then((info) => {
-        setEstudiantePerfil(info);
-      })
-      .catch((err) => {
-        console.warn("No se pudo cargar el perfil detallado del estudiante:", err.message);
-      })
-      .finally(() => setCargandoEstudiante(false));
-  }, [codigoEstudiante]);
-
-  // Cargar datos generales
+  // Cargar datos de la encuesta y preguntas
   const cargarDatos = () => {
-    const pedidos = [getInstrumento()];
-    if (!esEstudiante) pedidos.push(listEstudiantesParaSelector());
-    if (esAdmin) {
-      pedidos.push(getEncuestaInfo());
-      pedidos.push(listPreguntasAdmin());
-    }
-
-    Promise.all(pedidos)
-      .then(([instrumento, listaEstudiantes, infoEncuesta, preguntas]) => {
-        setItems(instrumento);
-        if (listaEstudiantes) setEstudiantes(listaEstudiantes);
+    Promise.all([getInstrumento(), getEncuestaInfo(), listPreguntasAdmin()])
+      .then(([instrumento, infoEncuesta, preguntas]) => {
+        setItems(instrumento || []);
         if (infoEncuesta) {
           setEncuestaInfo(infoEncuesta);
           setFormEncuesta({
@@ -170,53 +143,27 @@ export default function CaracterizacionPage() {
 
   useEffect(() => {
     cargarDatos();
-  }, [esAdmin, esEstudiante]);
+  }, []);
 
-  // Manejo de respuestas del formulario
-  const total = items.length;
-  const respondidos = Object.keys(respuestas).length;
-  const porcentaje = total ? Math.round((respondidos / total) * 100) : 0;
+  const totalActivos = items.length;
 
   const grupos = useMemo(() => {
     const map = new Map();
     items.forEach((item) => {
       const dim = item.dim || "IND";
       if (!map.has(dim)) {
-        map.set(dim, { dim, dimNombre: item.dimNombre || DIMENSIONES_CONFIG[dim]?.nombre || dim, items: [] });
+        map.set(dim, {
+          dim,
+          dimNombre: item.dimNombre || DIMENSIONES_CONFIG[dim]?.nombre || dim,
+          items: []
+        });
       }
       map.get(dim).items.push(item);
     });
     return Array.from(map.values());
   }, [items]);
 
-  function responder(itemId, valor) {
-    setRespuestas((prev) => ({ ...prev, [`item_${itemId}`]: valor }));
-  }
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    if (!codigoEstudiante) {
-      setError("Seleccione el estudiante que diligencia el instrumento.");
-      return;
-    }
-    if (respondidos < total) {
-      setError(`Por favor complete todos los ${total} ítems del instrumento (${respondidos}/${total}).`);
-      return;
-    }
-    setEnviando(true);
-    setError("");
-    try {
-      const envio = await enviarCaracterizacion({ codigoEstudiante, respuestas });
-      setResultado(envio);
-      avisar("Encuesta de caracterización enviada y evaluada correctamente.");
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setEnviando(false);
-    }
-  }
-
-  // --- ACCIONES DE ADMINISTRACIÓN ---
+  // --- ACCIONES DE EDICIÓN ---
 
   function abrirModalNuevaPregunta() {
     setPreguntaEditando(null);
@@ -251,10 +198,10 @@ export default function CaracterizacionPage() {
     try {
       if (preguntaEditando) {
         await actualizarPregunta(preguntaEditando.id, formPregunta);
-        avisar(`Pregunta #${formPregunta.orden} actualizada con éxito.`);
+        avisar(`Pregunta #${formPregunta.orden} actualizada. El cambio ya está disponible para el estudiante.`);
       } else {
         await crearPregunta(formPregunta);
-        avisar("Nueva pregunta agregada a la encuesta de caracterización.");
+        avisar("Nueva pregunta agregada y publicada en el formulario del estudiante.");
       }
       setModalPreguntaAbierto(false);
       cargarDatos();
@@ -268,7 +215,7 @@ export default function CaracterizacionPage() {
   async function handleTogglePregunta(id, activoActual) {
     try {
       await togglePregunta(id);
-      avisar(`Pregunta ${activoActual ? "inhabilitada" : "activada"} correctamente.`);
+      avisar(`Pregunta ${activoActual ? "inhabilitada" : "activada"} en el formulario del estudiante.`);
       cargarDatos();
     } catch (err) {
       setError(err.message);
@@ -295,7 +242,7 @@ export default function CaracterizacionPage() {
     setError("");
     try {
       await updateEncuesta(encuestaInfo.id, formEncuesta);
-      avisar("Metadatos de la encuesta actualizados correctamente.");
+      avisar("Configuración de la encuesta guardada y actualizada para los estudiantes.");
       setModalEncuestaAbierto(false);
       cargarDatos();
     } catch (err) {
@@ -305,7 +252,7 @@ export default function CaracterizacionPage() {
     }
   }
 
-  // Filtrado de preguntas para la tabla administrativa
+  // Filtrado de preguntas para la tabla de edición
   const preguntasFiltradas = useMemo(() => {
     return preguntasAdmin.filter((p) => {
       const dimNorm = (p.categoria === "GEST PROG" ? "GEST_PROG" : p.categoria) || "IND";
@@ -324,8 +271,8 @@ export default function CaracterizacionPage() {
 
   return (
     <AppLayout
-      titulo="Formulario Caracterización Permanencia"
-      breadcrumb="Instrumento Institucional / Detección Temprana de Factores de Riesgo"
+      titulo="Formulario Caracterización (Instrumento)"
+      breadcrumb="Instrumento Institucional / Edición y Modo Lectura"
     >
       {/* Notificaciones flotantes */}
       {notificacion && (
@@ -372,85 +319,87 @@ export default function CaracterizacionPage() {
         </div>
       )}
 
-      {/* Selector de modo para Administrador */}
-      {esAdmin && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: "1.5rem",
-            background: "var(--surface-card)",
-            padding: "0.75rem 1.25rem",
-            borderRadius: "var(--radius-md)",
-            border: "1px solid var(--border-light)",
-            boxShadow: "var(--shadow-xs)"
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-            <span
-              style={{
-                fontSize: "0.85rem",
-                fontWeight: 600,
-                color: "var(--text-muted)",
-                textTransform: "uppercase",
-                letterSpacing: "0.05em"
-              }}
-            >
-              <i className="fas fa-shield-halved" style={{ color: "var(--brand-primary)", marginRight: "0.35rem" }}></i>
-              Modo Administrador:
-            </span>
-            <div style={{ display: "flex", gap: "0.5rem" }}>
+      {/* Barra Superior de Modo: Edición vs Modo Lectura */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          gap: "0.75rem",
+          marginBottom: "1.5rem",
+          background: "var(--surface-card)",
+          padding: "0.85rem 1.25rem",
+          borderRadius: "var(--radius-md)",
+          border: "1px solid var(--border-light)",
+          boxShadow: "var(--shadow-xs)"
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+          <span
+            style={{
+              fontSize: "0.85rem",
+              fontWeight: 700,
+              color: "var(--text-muted)",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em"
+            }}
+          >
+            <i className="fas fa-Sliders" style={{ color: "var(--brand-primary)", marginRight: "0.35rem" }}></i>
+            Apartado de Instrumento:
+          </span>
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+            {esAdmin && (
               <button
                 type="button"
-                className={`btn btn-sm ${tabAdmin === "gestion" ? "btn-primary" : "btn-outline"}`}
-                onClick={() => setTabAdmin("gestion")}
+                className={`btn btn-sm ${modoVista === "gestion" ? "btn-primary" : "btn-outline"}`}
+                onClick={() => setModoVista("gestion")}
                 style={{ display: "flex", alignItems: "center", gap: "0.45rem", fontWeight: 600 }}
-              >
-                <i className="fas fa-sliders"></i>
-                Gestión y Edición de la Encuesta ({preguntasAdmin.length || 34})
-              </button>
-              <button
-                type="button"
-                className={`btn btn-sm ${tabAdmin === "formulario" ? "btn-primary" : "btn-outline"}`}
-                onClick={() => setTabAdmin("formulario")}
-                style={{ display: "flex", alignItems: "center", gap: "0.45rem", fontWeight: 600 }}
-              >
-                <i className="fas fa-eye"></i>
-                Vista Previa / Diligenciamiento
-              </button>
-            </div>
-          </div>
-
-          {tabAdmin === "gestion" && (
-            <div style={{ display: "flex", gap: "0.5rem" }}>
-              <button
-                type="button"
-                className="btn btn-sm btn-outline"
-                onClick={() => setModalEncuestaAbierto(true)}
-                style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}
               >
                 <i className="fas fa-pen-to-square"></i>
-                Editar Encuesta
+                Edición de la Encuesta ({preguntasAdmin.length || 34})
               </button>
-              <button
-                type="button"
-                className="btn btn-sm btn-primary"
-                onClick={abrirModalNuevaPregunta}
-                style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}
-              >
-                <i className="fas fa-plus"></i>
-                Nueva Pregunta
-              </button>
-            </div>
-          )}
+            )}
+            <button
+              type="button"
+              className={`btn btn-sm ${modoVista === "lectura" ? "btn-primary" : "btn-outline"}`}
+              onClick={() => setModoVista("lectura")}
+              style={{ display: "flex", alignItems: "center", gap: "0.45rem", fontWeight: 600 }}
+            >
+              <i className="fas fa-book-open"></i>
+              Modo Lectura (Cómo queda para el Estudiante)
+            </button>
+          </div>
         </div>
-      )}
+
+        {esAdmin && modoVista === "gestion" && (
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className="btn btn-sm btn-outline"
+              onClick={() => setModalEncuestaAbierto(true)}
+              style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}
+            >
+              <i className="fas fa-gear"></i>
+              Configurar Encuesta
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm btn-primary"
+              onClick={abrirModalNuevaPregunta}
+              style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}
+            >
+              <i className="fas fa-plus"></i>
+              Nueva Pregunta
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* -------------------------------------------------------------------------- */}
-      {/* VISTA 1: PANEL DE GESTIÓN Y EDICIÓN DE LA ENCUESTA (SOLO ADMIN)             */}
+      {/* VISTA 1: PANEL DE EDICIÓN DE LA ENCUESTA                                   */}
       {/* -------------------------------------------------------------------------- */}
-      {esAdmin && tabAdmin === "gestion" ? (
+      {esAdmin && modoVista === "gestion" ? (
         <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
           {/* Tarjeta de Encabezado Institucional del Instrumento */}
           <div
@@ -464,7 +413,7 @@ export default function CaracterizacionPage() {
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "1rem" }}>
               <div>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.65rem", marginBottom: "0.4rem" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.65rem", marginBottom: "0.4rem", flexWrap: "wrap" }}>
                   <h2 style={{ fontSize: "1.35rem", fontWeight: 700, margin: 0, color: "var(--text-main)" }}>
                     {encuestaInfo?.nombre || "Formulario caracterización permanencia"}
                   </h2>
@@ -476,7 +425,7 @@ export default function CaracterizacionPage() {
                   </span>
                 </div>
                 <p style={{ margin: 0, color: "var(--text-muted)", fontSize: "0.9rem", maxWidth: "800px" }}>
-                  Instrumento psicométrico e institucional aplicado a estudiantes de <strong>1°, 4° y 7° semestre</strong> para evaluar las 5 dimensiones clave de permanencia estudiantil. Los cambios realizados se aplican inmediatamente al formulario del estudiante.
+                  Este apartado es exclusivamente de <strong>edición y previsualización en modo lectura</strong>. Cualquier modificación o pregunta agregada se refleja automáticamente en el portal del estudiante (<strong>1.°, 4.° y 7.° semestre</strong>).
                 </p>
               </div>
 
@@ -494,7 +443,9 @@ export default function CaracterizacionPage() {
           {/* Tarjetas KPI de Dimensiones */}
           <div className="dashboard-grid" style={{ marginBottom: 0 }}>
             {Object.entries(DIMENSIONES_CONFIG).map(([key, cfg]) => {
-              const conteo = encuestaInfo?.conteoPorDimension?.[key] ?? preguntasAdmin.filter((p) => (p.categoria === "GEST PROG" ? "GEST_PROG" : p.categoria) === key).length;
+              const conteo =
+                encuestaInfo?.conteoPorDimension?.[key] ??
+                preguntasAdmin.filter((p) => (p.categoria === "GEST PROG" ? "GEST_PROG" : p.categoria) === key).length;
               const activo = filtroDim === key;
               return (
                 <div
@@ -511,7 +462,9 @@ export default function CaracterizacionPage() {
                 >
                   <div className="kpi-body">
                     <span className="kpi-label">{cfg.label}</span>
-                    <span className="kpi-value" style={{ color: cfg.color }}>{conteo} ítems</span>
+                    <span className="kpi-value" style={{ color: cfg.color }}>
+                      {conteo} ítems
+                    </span>
                   </div>
                   <div className="kpi-icon" style={{ background: cfg.bg, color: cfg.color }}>
                     <i className={`fas ${cfg.icon}`}></i>
@@ -535,7 +488,7 @@ export default function CaracterizacionPage() {
               flexWrap: "wrap"
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flex: 1, minWidth: "260px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flex: 1, minWidth: "240px" }}>
               <div style={{ position: "relative", width: "100%" }}>
                 <i
                   className="fas fa-search"
@@ -544,7 +497,7 @@ export default function CaracterizacionPage() {
                 <input
                   type="text"
                   className="form-control"
-                  placeholder="Buscar ítem por texto o número..."
+                  placeholder="Buscar pregunta por texto o número..."
                   value={busqueda}
                   onChange={(e) => setBusqueda(e.target.value)}
                   style={{ paddingLeft: "36px" }}
@@ -552,12 +505,12 @@ export default function CaracterizacionPage() {
               </div>
             </div>
 
-            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
               <select
                 className="form-control"
                 value={filtroDim}
                 onChange={(e) => setFiltroDim(e.target.value)}
-                style={{ minWidth: "190px" }}
+                style={{ minWidth: "180px" }}
               >
                 <option value="TODAS">Todas las Dimensiones</option>
                 {Object.entries(DIMENSIONES_CONFIG).map(([k, c]) => (
@@ -603,15 +556,23 @@ export default function CaracterizacionPage() {
                 borderBottom: "1px solid var(--border-light)",
                 display: "flex",
                 justifyContent: "space-between",
-                alignItems: "center"
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: "0.5rem"
               }}
             >
               <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 700 }}>
                 Listado de Preguntas del Instrumento ({preguntasFiltradas.length} mostradas)
               </h3>
-              <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
-                Organizado según documento oficial de permanencia UNICESMAG
-              </span>
+              <button
+                type="button"
+                className="btn btn-sm btn-outline"
+                onClick={() => setModoVista("lectura")}
+                style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}
+              >
+                <i className="fas fa-eye"></i>
+                Ver cómo queda en Modo Lectura
+              </button>
             </div>
 
             <div className="table-responsive">
@@ -671,11 +632,17 @@ export default function CaracterizacionPage() {
                           <td>
                             <span style={{ fontSize: "0.8rem", color: "var(--text-main)" }}>
                               {preg.tipoRespuesta === "BOOLEANO" || preg.tipo === "sino" ? (
-                                <><i className="fas fa-toggle-on" style={{ color: "var(--brand-primary)", marginRight: "0.3rem" }}></i> Sí / No</>
+                                <>
+                                  <i className="fas fa-toggle-on" style={{ color: "var(--brand-primary)", marginRight: "0.3rem" }}></i> Sí / No
+                                </>
                               ) : preg.tipoRespuesta === "LIKERT_INVERSO" || preg.tipo === "likert_inverso" ? (
-                                <><i className="fas fa-arrows-rotate" style={{ color: "#d97706", marginRight: "0.3rem" }}></i> Likert (Inversa)</>
+                                <>
+                                  <i className="fas fa-arrows-rotate" style={{ color: "#d97706", marginRight: "0.3rem" }}></i> Likert (Inversa)
+                                </>
                               ) : (
-                                <><i className="fas fa-bars-staggered" style={{ color: "#0891b2", marginRight: "0.3rem" }}></i> Likert (4 puntos)</>
+                                <>
+                                  <i className="fas fa-bars-staggered" style={{ color: "#0891b2", marginRight: "0.3rem" }}></i> Likert (4 puntos)
+                                </>
                               )}
                             </span>
                           </td>
@@ -729,809 +696,144 @@ export default function CaracterizacionPage() {
         </div>
       ) : (
         /* -------------------------------------------------------------------------- */
-        /* VISTA 2: FORMULARIO INTERACTIVO DE DILIGENCIAMIENTO Y RESULTADO             */
+        /* VISTA 2: MODO LECTURA (VISTA PREVIA DE CÓMO QUEDA PARA EL ESTUDIANTE)      */
         /* -------------------------------------------------------------------------- */
         <div>
-          {/* Si ya hay resultado, mostramos la pantalla oficial de caracterización estudiantil */}
-          {resultado ? (
-            <div
-              className="card"
-              style={{
-                padding: "2.5rem 2rem",
-                background: "#FFFFFF",
-                borderRadius: "var(--radius-lg)",
-                boxShadow: "var(--shadow-sm)",
-                border: "1px solid var(--border-light)",
-                maxWidth: "960px",
-                margin: "0 auto"
-              }}
-            >
-              {/* Encabezado Principal */}
-              <h1
-                style={{
-                  color: "#D97706",
-                  fontSize: "1.55rem",
-                  fontWeight: 800,
-                  letterSpacing: "0.04em",
-                  textAlign: "center",
-                  margin: "0 0 1.25rem 0",
-                  textTransform: "uppercase"
-                }}
-              >
-                CARACTERIZACIÓN ESTUDIANTIL
-              </h1>
-
-              {/* Párrafo de Agradecimiento e Introducción */}
-              <p
-                style={{
-                  textAlign: "center",
-                  maxWidth: "860px",
-                  margin: "0 auto 1.25rem auto",
-                  fontSize: "0.95rem",
-                  color: "#374151",
-                  lineHeight: "1.55"
-                }}
-              >
-                Gracias por participar en el proceso de caracterización estudiantil. Esta evaluación nos permite conocer mejor tu experiencia universitaria y brindarte el acompañamiento necesario para potenciar tu desarrollo académico y personal.
-              </p>
-
-              {/* Mensaje de Clasificación */}
-              <p
-                style={{
-                  textAlign: "center",
-                  fontSize: "0.95rem",
-                  color: "#1F2937",
-                  margin: "0 0 1.5rem 0",
-                  fontWeight: 500
-                }}
-              >
-                Según la información que proporcionaste, tu nivel de permanencia en la universidad ha sido clasificado como:
-              </p>
-
-              {/* Bloque: NIVEL DE PERMANENCIA */}
-              <div style={{ display: "flex", justifyContent: "center", marginBottom: "2rem" }}>
+          {/* Encabezado informativo de Modo Lectura */}
+          <div
+            className="card"
+            style={{
+              background: "linear-gradient(135deg, #FFFFFF 0%, var(--surface-subtle) 100%)",
+              border: "1px solid var(--border-light)",
+              borderLeft: "5px solid var(--brand-primary)",
+              marginBottom: "1.5rem",
+              padding: "1.5rem"
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
                 <div
                   style={{
-                    display: "inline-flex",
-                    border: "2px solid #000000",
-                    borderRadius: "3px",
-                    overflow: "hidden",
-                    background: "#FFFFFF"
-                  }}
-                >
-                  <div
-                    style={{
-                      padding: "0.6rem 2rem",
-                      fontWeight: 800,
-                      fontSize: "0.95rem",
-                      letterSpacing: "0.03em",
-                      borderRight: "2px solid #000000",
-                      background: "#FFFFFF",
-                      color: "#000000",
-                      display: "flex",
-                      alignItems: "center"
-                    }}
-                  >
-                    NIVEL DE PERMANENCIA
-                  </div>
-                  <div
-                    style={{
-                      padding: "0.6rem 2.5rem",
-                      fontWeight: 900,
-                      fontSize: "1.1rem",
-                      color:
-                        resultado.nivelPermanencia === "Baja"
-                          ? "#DC2626"
-                          : resultado.nivelPermanencia === "Media"
-                          ? "#D97706"
-                          : "#059669",
-                      background: "#FFFFFF",
-                      display: "flex",
-                      alignItems: "center"
-                    }}
-                  >
-                    {resultado.nivelPermanencia}
-                  </div>
-                </div>
-              </div>
-
-              {/* Tabla Diagnóstica de 4 Columnas por Dimensión */}
-              <div style={{ overflowX: "auto", marginBottom: "2.25rem" }}>
-                <table
-                  style={{
-                    width: "100%",
-                    borderCollapse: "collapse",
-                    border: "1px solid #D1D5DB"
-                  }}
-                >
-                  <thead>
-                    <tr
-                      style={{
-                        background:
-                          resultado.nivelPermanencia === "Baja"
-                            ? "#FDE8E8"
-                            : resultado.nivelPermanencia === "Media"
-                            ? "#FEF3C7"
-                            : "#DCFCE7"
-                      }}
-                    >
-                      <th
-                        style={{
-                          padding: "0.85rem 0.75rem",
-                          border: "1px solid #D1D5DB",
-                          textAlign: "center",
-                          fontSize: "0.95rem",
-                          fontWeight: 700,
-                          color: "#111827",
-                          width: "25%"
-                        }}
-                      >
-                        Nivel Individual
-                      </th>
-                      <th
-                        style={{
-                          padding: "0.85rem 0.75rem",
-                          border: "1px solid #D1D5DB",
-                          textAlign: "center",
-                          fontSize: "0.95rem",
-                          fontWeight: 700,
-                          color: "#111827",
-                          width: "25%"
-                        }}
-                      >
-                        Nivel Institucional
-                      </th>
-                      <th
-                        style={{
-                          padding: "0.85rem 0.75rem",
-                          border: "1px solid #D1D5DB",
-                          textAlign: "center",
-                          fontSize: "0.95rem",
-                          fontWeight: 700,
-                          color: "#111827",
-                          width: "25%"
-                        }}
-                      >
-                        Nivel Académico
-                      </th>
-                      <th
-                        style={{
-                          padding: "0.85rem 0.75rem",
-                          border: "1px solid #D1D5DB",
-                          textAlign: "center",
-                          fontSize: "0.95rem",
-                          fontWeight: 700,
-                          color: "#111827",
-                          width: "25%"
-                        }}
-                      >
-                        Nivel Socioeconómico
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td
-                        style={{
-                          padding: "1.1rem 0.9rem",
-                          border: "1px solid #D1D5DB",
-                          fontSize: "0.865rem",
-                          color: "#1F2937",
-                          verticalAlign: "top",
-                          lineHeight: "1.5",
-                          background: "#FFFFFF",
-                          textAlign: "left"
-                        }}
-                      >
-                        {resultado.conceptosPorDimension?.IND}
-                      </td>
-                      <td
-                        style={{
-                          padding: "1.1rem 0.9rem",
-                          border: "1px solid #D1D5DB",
-                          fontSize: "0.865rem",
-                          color: "#1F2937",
-                          verticalAlign: "top",
-                          lineHeight: "1.5",
-                          background: "#FFFFFF",
-                          textAlign: "left"
-                        }}
-                      >
-                        {resultado.conceptosPorDimension?.INS}
-                      </td>
-                      <td
-                        style={{
-                          padding: "1.1rem 0.9rem",
-                          border: "1px solid #D1D5DB",
-                          fontSize: "0.865rem",
-                          color: "#1F2937",
-                          verticalAlign: "top",
-                          lineHeight: "1.5",
-                          background: "#FFFFFF",
-                          textAlign: "left"
-                        }}
-                      >
-                        {resultado.conceptosPorDimension?.ACA}
-                      </td>
-                      <td
-                        style={{
-                          padding: "1.1rem 0.9rem",
-                          border: "1px solid #D1D5DB",
-                          fontSize: "0.865rem",
-                          color: "#1F2937",
-                          verticalAlign: "top",
-                          lineHeight: "1.5",
-                          background: "#FFFFFF",
-                          textAlign: "left"
-                        }}
-                      >
-                        {resultado.conceptosPorDimension?.SOC}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Tarjeta Enmarcada: ¡INFORMACIÓN IMPORTANTE! */}
-              <div
-                style={{
-                  border: "1.5px solid #111827",
-                  borderRadius: "14px",
-                  padding: "2.25rem 2rem",
-                  background: "#FFFFFF",
-                  marginBottom: "1.75rem",
-                  textAlign: "center"
-                }}
-              >
-                <h2
-                  style={{
-                    fontSize: "2rem",
-                    fontWeight: 900,
-                    fontStyle: "italic",
-                    letterSpacing: "0.02em",
-                    margin: "0 0 0.85rem 0",
-                    color: "#000000"
-                  }}
-                >
-                  {resultado.mensajePermanencia?.titulo || "¡INFORMACIÓN IMPORTANTE!"}
-                </h2>
-
-                <p
-                  style={{
-                    fontSize: "1.15rem",
-                    fontStyle: "italic",
-                    fontWeight: 800,
-                    margin: "0 0 1.35rem 0",
-                    color: "#000000"
-                  }}
-                >
-                  {resultado.mensajePermanencia?.subtitulo || `Tu nivel de permanencia en la universidad es ${resultado.nivelPermanencia.toUpperCase()}.`}
-                </p>
-
-                <div
-                  style={{
-                    maxWidth: "840px",
-                    margin: "0 auto",
+                    width: "46px",
+                    height: "46px",
+                    borderRadius: "50%",
+                    background: "var(--brand-primary-50)",
+                    color: "var(--brand-primary)",
                     display: "flex",
-                    flexDirection: "column",
-                    gap: "1.25rem",
-                    fontStyle: "italic",
-                    fontSize: "1.025rem",
-                    color: "#1F2937",
-                    lineHeight: "1.6"
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "1.25rem",
+                    flexShrink: 0
                   }}
                 >
-                  <p style={{ margin: 0 }}>
-                    {resultado.mensajePermanencia?.parrafo1}
-                  </p>
-                  <p style={{ margin: 0 }}>
-                    {resultado.mensajePermanencia?.parrafo2}
-                  </p>
-                  <p style={{ margin: 0 }}>
-                    {resultado.mensajePermanencia?.parrafo3}
-                  </p>
+                  <i className="fas fa-book-open"></i>
                 </div>
-              </div>
-
-              {/* Mensaje de Cierre y Contacto */}
-              <p
-                style={{
-                  textAlign: "center",
-                  fontSize: "0.85rem",
-                  color: "#4B5563",
-                  maxWidth: "840px",
-                  margin: "0 auto 1.5rem auto",
-                  lineHeight: "1.45"
-                }}
-              >
-                Si deseas conversar sobre tu resultado o recibir orientación, no dudes en contactarnos. Nuestro compromiso es acompañarte en este camino y asegurarnos de que cuentes con las herramientas necesarias para alcanzar tus metas.
-              </p>
-
-              {/* Docente Acompañante */}
-              <div style={{ textAlign: "center", marginBottom: "1.75rem" }}>
-                <span style={{ fontSize: "1.05rem", fontWeight: 700, color: "#111827" }}>
-                  Docente Acompañante:{" "}
-                </span>
-                <span style={{ fontSize: "1.05rem", fontWeight: 500, color: "#374151" }}>
-                  {resultado.docenteAcompanante || "Equipo de Permanencia y Acompañamiento Institucional"}
-                </span>
-              </div>
-
-              {/* Botón: PORTAFOLIO DE SERVICIOS y Acciones */}
-              <div style={{ display: "flex", justifyContent: "center", gap: "1rem", flexWrap: "wrap", alignItems: "center" }}>
-                <button
-                  type="button"
-                  onClick={() => setModalPortafolio(true)}
-                  style={{
-                    backgroundColor: "#1E3A8A",
-                    color: "#FFFFFF",
-                    border: "none",
-                    borderRadius: "6px",
-                    padding: "0.85rem 2.25rem",
-                    fontSize: "0.95rem",
-                    fontWeight: 700,
-                    letterSpacing: "0.05em",
-                    textTransform: "uppercase",
-                    cursor: "pointer",
-                    boxShadow: "0 2px 4px rgba(0,0,0,0.15)",
-                    transition: "all 0.2s ease"
-                  }}
-                >
-                  PORTAFOLIO DE SERVICIOS
-                </button>
-
-                <button
-                  type="button"
-                  className="btn btn-outline"
-                  onClick={() => window.print()}
-                  style={{ display: "flex", alignItems: "center", gap: "0.45rem", padding: "0.8rem 1.5rem", fontWeight: 600 }}
-                >
-                  <i className="fas fa-print"></i>
-                  Imprimir Comprobante
-                </button>
-
-                <button
-                  type="button"
-                  className="btn btn-outline"
-                  onClick={() => {
-                    setResultado(null);
-                    setRespuestas({});
-                  }}
-                  style={{ display: "flex", alignItems: "center", gap: "0.45rem", padding: "0.8rem 1.5rem" }}
-                >
-                  <i className="fas fa-rotate-left"></i>
-                  Nuevo Diligenciamiento
-                </button>
-              </div>
-            </div>
-          ) : (
-            <>
-              {/* Banner de progreso */}
-              <div
-                className="card"
-                style={{
-                  background: "linear-gradient(135deg, #FFFFFF 0%, var(--surface-subtle) 100%)",
-                  border: "1px solid var(--border-light)",
-                  marginBottom: "1.5rem",
-                  padding: "1.5rem"
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem", flexWrap: "wrap", gap: "1rem" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-                    <div
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
+                    <h2 style={{ fontSize: "1.15rem", margin: 0, fontWeight: 700 }}>
+                      {encuestaInfo?.nombre || "Formulario de Caracterización y Permanencia"}
+                    </h2>
+                    <span
                       style={{
-                        width: "44px",
-                        height: "44px",
-                        borderRadius: "50%",
-                        background: "var(--brand-primary-50)",
-                        color: "var(--brand-primary)",
-                        display: "flex",
+                        display: "inline-flex",
                         alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: "1.25rem"
+                        gap: "0.35rem",
+                        padding: "0.25rem 0.7rem",
+                        borderRadius: "var(--radius-pill)",
+                        fontSize: "0.75rem",
+                        fontWeight: 700,
+                        background: "#EFF6FF",
+                        color: "#1D4ED8",
+                        border: "1px solid #BFDBFE"
                       }}
                     >
-                      <i className="fas fa-list-check"></i>
-                    </div>
-                    <div>
-                      <h2 style={{ fontSize: "1.15rem", margin: 0, fontWeight: 700 }}>
-                        {encuestaInfo?.nombre || "Formulario de Caracterización y Permanencia"}
-                      </h2>
-                      <p style={{ margin: 0, fontSize: "0.85rem", color: "var(--text-muted)" }}>
-                        {total} ítems oficiales en 5 dimensiones — Semestres 1, 4 y 7
-                      </p>
-                    </div>
-                  </div>
-
-                  <div style={{ textAlign: "right" }}>
-                    <span style={{ fontSize: "1.25rem", fontWeight: 700, color: porcentaje === 100 ? "#059669" : "var(--brand-primary)" }}>
-                      {porcentaje}%
-                    </span>
-                    <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", display: "block" }}>
-                      {respondidos} de {total} completados
+                      <i className="fas fa-eye"></i> Modo Lectura — Vista Previa Oficial
                     </span>
                   </div>
-                </div>
-
-                <div style={{ width: "100%", height: "8px", background: "var(--border-light)", borderRadius: "4px", overflow: "hidden" }}>
-                  <div
-                    style={{
-                      width: `${porcentaje}%`,
-                      height: "100%",
-                      background: porcentaje === 100 ? "#059669" : "var(--brand-primary)",
-                      transition: "width 0.3s ease"
-                    }}
-                  ></div>
+                  <p style={{ margin: "0.25rem 0 0 0", fontSize: "0.85rem", color: "var(--text-muted)" }}>
+                    Así visualiza el estudiante las <strong>{totalActivos} preguntas activas</strong> organizadas en 5 dimensiones dentro de su portal exclusivo.
+                  </p>
                 </div>
               </div>
 
-              {/* Selector de estudiante para roles administrativos / directivos / asistenciales */}
-              {!esEstudiante && (
-                <div className="card" style={{ marginBottom: "1.5rem", padding: "1.25rem" }}>
-                  <label className="form-label" style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                    <i className="fas fa-user-graduate" style={{ color: "var(--brand-primary)" }}></i>
-                    Seleccionar Estudiante a Caracterizar:
-                  </label>
-                  <select
-                    className="form-control"
-                    value={codigoEstudiante}
-                    onChange={(e) => setCodigoEstudiante(e.target.value)}
-                    style={{ maxWidth: "550px" }}
-                  >
-                    <option value="">-- Seleccione un estudiante --</option>
-                    {estudiantes.map((est) => (
-                      <option key={est.codigo} value={est.codigo}>
-                        {est.codigo} — {est.nombres} {est.apellidos} ({est.programa}, Semestre {est.semestre})
-                      </option>
-                    ))}
-                  </select>
-                </div>
+              {esAdmin && (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-primary"
+                  onClick={() => setModoVista("gestion")}
+                  style={{ display: "flex", alignItems: "center", gap: "0.45rem" }}
+                >
+                  <i className="fas fa-pen-to-square"></i>
+                  Volver a Edición
+                </button>
               )}
+            </div>
+          </div>
 
-              {/* -------------------------------------------------------------------------- */}
-              {/* TARJETA DE DATOS DEL ESTUDIANTE (SOLO LECTURA - SIN DERECHO A MODIFICAR)    */}
-              {/* -------------------------------------------------------------------------- */}
-              <div
-                className="card"
-                style={{
-                  marginBottom: "1.5rem",
-                  padding: "1.5rem",
-                  borderLeft: "5px solid var(--brand-primary)",
-                  background: "linear-gradient(135deg, #FFFFFF 0%, #F8FAFC 100%)"
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem", flexWrap: "wrap", gap: "0.75rem" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+          {/* Listado en Modo Lectura por Dimensión */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+            {grupos.map((grupo) => {
+              const cfg = DIMENSIONES_CONFIG[grupo.dim] || DIMENSIONES_CONFIG.IND;
+              return (
+                <div key={grupo.dim} className="card" style={{ padding: "1.5rem" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.6rem",
+                      paddingBottom: "1rem",
+                      marginBottom: "1.25rem",
+                      borderBottom: "2px solid var(--surface-subtle)",
+                      flexWrap: "wrap"
+                    }}
+                  >
                     <div
                       style={{
-                        width: "36px",
-                        height: "36px",
+                        width: "32px",
+                        height: "32px",
                         borderRadius: "var(--radius-sm)",
-                        background: "var(--brand-primary-50)",
-                        color: "var(--brand-primary)",
+                        background: cfg.bg,
+                        color: cfg.color,
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center"
                       }}
                     >
-                      <i className="fas fa-id-card"></i>
+                      <i className={`fas ${cfg.icon}`}></i>
                     </div>
-                    <div>
-                      <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700, color: "var(--text-main)" }}>
-                        Datos del Estudiante Registrado
-                      </h3>
-                      <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
-                        Información oficial sincronizada desde la base de datos institucional DataBasePractica
-                      </span>
-                    </div>
+                    <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 700, color: "var(--text-main)" }}>
+                      {grupo.dimNombre}
+                    </h3>
+                    <span className="badge" style={{ background: cfg.bg, color: cfg.color, marginLeft: "auto", fontSize: "0.75rem" }}>
+                      {grupo.items.length} ítems activos
+                    </span>
                   </div>
 
-                  <span
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "0.35rem",
-                      padding: "0.3rem 0.75rem",
-                      borderRadius: "var(--radius-pill)",
-                      fontSize: "0.75rem",
-                      fontWeight: 700,
-                      background: "#F1F5F9",
-                      color: "#475569",
-                      border: "1px solid #CBD5E1"
-                    }}
-                  >
-                    <i className="fas fa-lock" style={{ color: "#64748B" }}></i> Solo Lectura (No Modificable)
-                  </span>
-                </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "1.1rem" }}>
+                    {grupo.items.map((item) => (
+                      <div
+                        key={item.id}
+                        style={{
+                          padding: "1rem 1.15rem",
+                          borderRadius: "var(--radius-md)",
+                          background: "var(--surface-subtle)",
+                          border: "1px solid var(--border-light)"
+                        }}
+                      >
+                        <p style={{ margin: "0 0 0.75rem 0", fontWeight: 600, fontSize: "0.95rem", color: "var(--text-main)" }}>
+                          <span style={{ color: "var(--brand-primary)", marginRight: "0.4rem" }}>#{item.orden || item.id}.</span>
+                          {item.texto}
+                        </p>
 
-                {cargandoEstudiante ? (
-                  <div style={{ padding: "1rem 0", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                    <i className="fas fa-spinner fa-spin"></i> Cargando información del estudiante...
-                  </div>
-                ) : estudiantePerfil ? (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "1rem" }}>
-                    <div style={{ background: "#FFFFFF", padding: "0.85rem 1rem", borderRadius: "var(--radius-md)", border: "1px solid var(--border-light)" }}>
-                      <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600, display: "block", textTransform: "uppercase" }}>
-                        Nombres y Apellidos
-                      </span>
-                      <strong style={{ fontSize: "0.95rem", color: "var(--text-main)" }}>
-                        {estudiantePerfil.nombres} {estudiantePerfil.apellidos}
-                      </strong>
-                    </div>
-
-                    <div style={{ background: "#FFFFFF", padding: "0.85rem 1rem", borderRadius: "var(--radius-md)", border: "1px solid var(--border-light)" }}>
-                      <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600, display: "block", textTransform: "uppercase" }}>
-                        Código Estudiantil
-                      </span>
-                      <strong style={{ fontSize: "0.95rem", color: "var(--brand-primary)" }}>
-                        {estudiantePerfil.codigo}
-                      </strong>
-                    </div>
-
-                    <div style={{ background: "#FFFFFF", padding: "0.85rem 1rem", borderRadius: "var(--radius-md)", border: "1px solid var(--border-light)" }}>
-                      <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600, display: "block", textTransform: "uppercase" }}>
-                        Documento de Identidad
-                      </span>
-                      <strong style={{ fontSize: "0.95rem", color: "var(--text-main)" }}>
-                        {estudiantePerfil.tipoDocumento || "CC"} {estudiantePerfil.numeroDocumento || estudiantePerfil.documento || "—"}
-                      </strong>
-                    </div>
-
-                    <div style={{ background: "#FFFFFF", padding: "0.85rem 1rem", borderRadius: "var(--radius-md)", border: "1px solid var(--border-light)" }}>
-                      <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600, display: "block", textTransform: "uppercase" }}>
-                        Programa Académico
-                      </span>
-                      <strong style={{ fontSize: "0.95rem", color: "var(--text-main)" }}>
-                        {estudiantePerfil.programa || "Ingeniería de Sistemas"}
-                      </strong>
-                    </div>
-
-                    <div style={{ background: "#FFFFFF", padding: "0.85rem 1rem", borderRadius: "var(--radius-md)", border: "1px solid var(--border-light)" }}>
-                      <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600, display: "block", textTransform: "uppercase" }}>
-                        Semestre Actual
-                      </span>
-                      <span className="badge badge-primary" style={{ fontSize: "0.85rem", marginTop: "0.2rem" }}>
-                        Semestre {estudiantePerfil.semestre || 1}
-                      </span>
-                    </div>
-
-                    <div style={{ background: "#FFFFFF", padding: "0.85rem 1rem", borderRadius: "var(--radius-md)", border: "1px solid var(--border-light)" }}>
-                      <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600, display: "block", textTransform: "uppercase" }}>
-                        Correo Institucional
-                      </span>
-                      <span style={{ fontSize: "0.85rem", color: "#2563EB", fontWeight: 500, wordBreak: "break-all" }}>
-                        {estudiantePerfil.correoInstitucional || estudiantePerfil.email || "—"}
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>
-                    Seleccione un estudiante para visualizar su información institucional.
-                  </div>
-                )}
-              </div>
-
-              {/* Formulario de preguntas agrupadas */}
-              <form onSubmit={handleSubmit}>
-                <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
-                  {grupos.map((grupo) => {
-                    const cfg = DIMENSIONES_CONFIG[grupo.dim] || DIMENSIONES_CONFIG.IND;
-                    return (
-                      <div key={grupo.dim} className="card" style={{ padding: "1.5rem" }}>
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "0.6rem",
-                            paddingBottom: "1rem",
-                            marginBottom: "1.25rem",
-                            borderBottom: "2px solid var(--surface-subtle)"
-                          }}
-                        >
-                          <div
-                            style={{
-                              width: "32px",
-                              height: "32px",
-                              borderRadius: "var(--radius-sm)",
-                              background: cfg.bg,
-                              color: cfg.color,
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center"
-                            }}
-                          >
-                            <i className={`fas ${cfg.icon}`}></i>
-                          </div>
-                          <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 700, color: "var(--text-main)" }}>
-                            {grupo.dimNombre}
-                          </h3>
-                          <span className="badge" style={{ background: cfg.bg, color: cfg.color, marginLeft: "auto", fontSize: "0.75rem" }}>
-                            {grupo.items.length} ítems
-                          </span>
-                        </div>
-
-                        <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
-                          {grupo.items.map((item) => (
-                            <div
-                              key={item.id}
-                              style={{
-                                padding: "1rem",
-                                borderRadius: "var(--radius-md)",
-                                background: respuestas[`item_${item.id}`] ? "var(--surface-subtle)" : "transparent",
-                                border: "1px solid var(--border-light)"
-                              }}
-                            >
-                              <p style={{ margin: "0 0 0.75rem 0", fontWeight: 600, fontSize: "0.95rem" }}>
-                                <span style={{ color: "var(--brand-primary)", marginRight: "0.4rem" }}>#{item.id}.</span>
-                                {item.texto}
-                              </p>
-
-                              <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
-                                {renderOpciones(item, respuestas[`item_${item.id}`], responder)}
-                              </div>
-                            </div>
-                          ))}
+                        <div style={{ display: "flex", gap: "0.65rem", flexWrap: "wrap" }}>
+                          {renderOpcionesLectura(item)}
                         </div>
                       </div>
-                    );
-                  })}
+                    ))}
+                  </div>
                 </div>
-
-                {/* Botón de Enviar */}
-                <div style={{ marginTop: "1.75rem", display: "flex", justifyContent: "flex-end", gap: "1rem" }}>
-                  <button
-                    type="submit"
-                    className="btn btn-primary btn-lg"
-                    disabled={enviando || respondidos < total}
-                    style={{ minWidth: "240px", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem" }}
-                  >
-                    {enviando ? (
-                      <>
-                        <i className="fas fa-spinner fa-spin"></i> Guardando en Base de Datos...
-                      </>
-                    ) : (
-                      <>
-                        <i className="fas fa-paper-plane"></i> Enviar y Guardar Caracterización
-                      </>
-                    )}
-                  </button>
-                </div>
-              </form>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* -------------------------------------------------------------------------- */}
-      {/* MODAL: PORTAFOLIO DE SERVICIOS INSTITUCIONALES UNICESMAG                    */}
-      {/* -------------------------------------------------------------------------- */}
-      {modalPortafolio && (
-        <div
-          className="modal-overlay"
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.6)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1100,
-            padding: "1rem"
-          }}
-        >
-          <div
-            className="card"
-            style={{
-              width: "100%",
-              maxWidth: "750px",
-              maxHeight: "90vh",
-              overflowY: "auto",
-              background: "#FFFFFF",
-              borderRadius: "var(--radius-lg)",
-              boxShadow: "var(--shadow-lg)",
-              padding: "2rem"
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem", borderBottom: "1px solid var(--border-light)", paddingBottom: "1rem" }}>
-              <div>
-                <h3 style={{ margin: 0, fontSize: "1.35rem", fontWeight: 800, color: "var(--brand-primary)" }}>
-                  Portafolio de Servicios de Permanencia y Bienestar
-                </h3>
-                <span style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
-                  Universidad CESMAG — Acompañamiento Integral al Estudiante
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setModalPortafolio(false)}
-                style={{ background: "none", border: "none", fontSize: "1.25rem", color: "var(--text-muted)", cursor: "pointer" }}
-              >
-                <i className="fas fa-xmark"></i>
-              </button>
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
-              {/* Servicio 1: USP */}
-              <div style={{ padding: "1rem 1.25rem", borderRadius: "var(--radius-md)", border: "1px solid var(--border-light)", background: "var(--surface-subtle)" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.35rem" }}>
-                  <i className="fas fa-brain" style={{ color: "#2563EB", fontSize: "1.1rem" }}></i>
-                  <strong style={{ fontSize: "1rem", color: "var(--text-main)" }}>Unidad de Servicios Psicológicos (USP)</strong>
-                </div>
-                <p style={{ margin: "0 0 0.5rem 0", fontSize: "0.875rem", color: "var(--text-muted)" }}>
-                  Atención psicológica individual, orientación emocional, talleres de manejo de ansiedad y técnicas de adaptación a la vida universitaria.
-                </p>
-                <span style={{ fontSize: "0.8rem", color: "#2563EB", fontWeight: 600 }}>
-                  <i className="fas fa-envelope"></i> usp@unicesmag.edu.co | Ext. 145 - Edificio San Francisco
-                </span>
-              </div>
-
-              {/* Servicio 2: Tutorías */}
-              <div style={{ padding: "1rem 1.25rem", borderRadius: "var(--radius-md)", border: "1px solid var(--border-light)", background: "var(--surface-subtle)" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.35rem" }}>
-                  <i className="fas fa-chalkboard-user" style={{ color: "#059669", fontSize: "1.1rem" }}></i>
-                  <strong style={{ fontSize: "1rem", color: "var(--text-main)" }}>Tutorías Académicas y Refuerzo Docente</strong>
-                </div>
-                <p style={{ margin: "0 0 0.5rem 0", fontSize: "0.875rem", color: "var(--text-muted)" }}>
-                  Acompañamiento personalizado en asignaturas de alta exigencia, métodos de estudio, razonamiento lógico y lectoescritura.
-                </p>
-                <span style={{ fontSize: "0.8rem", color: "#059669", fontWeight: 600 }}>
-                  <i className="fas fa-user-check"></i> Consulta con tu Director de Programa o Coordinación Académica
-                </span>
-              </div>
-
-              {/* Servicio 3: Trabajo Social & Apoyo Económico */}
-              <div style={{ padding: "1rem 1.25rem", borderRadius: "var(--radius-md)", border: "1px solid var(--border-light)", background: "var(--surface-subtle)" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.35rem" }}>
-                  <i className="fas fa-hand-holding-dollar" style={{ color: "#D97706", fontSize: "1.1rem" }}></i>
-                  <strong style={{ fontSize: "1rem", color: "var(--text-main)" }}>Trabajo Social y Apoyos Socioeconómicos</strong>
-                </div>
-                <p style={{ margin: "0 0 0.5rem 0", fontSize: "0.875rem", color: "var(--text-muted)" }}>
-                  Orientación sobre convenios de financiamiento, becas por rendimiento, subsidios de alimentación y monitorías institucionales.
-                </p>
-                <span style={{ fontSize: "0.8rem", color: "#D97706", fontWeight: 600 }}>
-                  <i className="fas fa-envelope"></i> trabajosocial@unicesmag.edu.co | Bienestar Institucional
-                </span>
-              </div>
-
-              {/* Servicio 4: Consultorios Jurídicos */}
-              <div style={{ padding: "1rem 1.25rem", borderRadius: "var(--radius-md)", border: "1px solid var(--border-light)", background: "var(--surface-subtle)" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.35rem" }}>
-                  <i className="fas fa-scale-balanced" style={{ color: "#7C3AED", fontSize: "1.1rem" }}></i>
-                  <strong style={{ fontSize: "1rem", color: "var(--text-main)" }}>Consultorios Jurídicos y Centro de Conciliación</strong>
-                </div>
-                <p style={{ margin: "0 0 0.5rem 0", fontSize: "0.875rem", color: "var(--text-muted)" }}>
-                  Asesoría legal confidencial y canal de atención especializada en prevención y protección ante Violencia Basada en Género (VBG).
-                </p>
-                <span style={{ fontSize: "0.8rem", color: "#7C3AED", fontWeight: 600 }}>
-                  <i className="fas fa-shield-halved"></i> consultoriosjuridicos@unicesmag.edu.co
-                </span>
-              </div>
-
-              {/* Servicio 5: Salud y Pastoral */}
-              <div style={{ padding: "1rem 1.25rem", borderRadius: "var(--radius-md)", border: "1px solid var(--border-light)", background: "var(--surface-subtle)" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.35rem" }}>
-                  <i className="fas fa-heart-pulse" style={{ color: "#EF4444", fontSize: "1.1rem" }}></i>
-                  <strong style={{ fontSize: "1rem", color: "var(--text-main)" }}>Área de Salud María Goretti y Pastoral Universitaria</strong>
-                </div>
-                <p style={{ margin: "0 0 0.5rem 0", fontSize: "0.875rem", color: "var(--text-muted)" }}>
-                  Primeros auxilios, valoración de salud general, enfermería, actividades de formación integral y bienestar espiritual.
-                </p>
-                <span style={{ fontSize: "0.8rem", color: "#EF4444", fontWeight: 600 }}>
-                  <i className="fas fa-phone"></i> PBX: (2) 724 4434 - Área de Salud
-                </span>
-              </div>
-            </div>
-
-            <div style={{ marginTop: "1.75rem", display: "flex", justifyContent: "flex-end" }}>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => setModalPortafolio(false)}
-                style={{ padding: "0.65rem 1.75rem", fontWeight: 600 }}
-              >
-                Entendido / Cerrar
-              </button>
-            </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -1540,7 +842,19 @@ export default function CaracterizacionPage() {
       {/* MODAL: AGREGAR / EDITAR PREGUNTA                                            */}
       {/* -------------------------------------------------------------------------- */}
       {modalPreguntaAbierto && (
-        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: "1rem" }}>
+        <div
+          className="modal-overlay"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: "1rem"
+          }}
+        >
           <div
             className="card"
             style={{
@@ -1581,7 +895,7 @@ export default function CaracterizacionPage() {
                   />
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))", gap: "1rem" }}>
                   <div>
                     <label className="form-label" style={{ fontWeight: 600 }}>
                       Dimensión / Categoría *
@@ -1617,7 +931,7 @@ export default function CaracterizacionPage() {
                   </div>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))", gap: "1rem" }}>
                   <div>
                     <label className="form-label" style={{ fontWeight: 600 }}>
                       N° de Orden
@@ -1674,7 +988,7 @@ export default function CaracterizacionPage() {
                     </>
                   ) : (
                     <>
-                      <i className="fas fa-floppy-disk"></i> {preguntaEditando ? "Actualizar" : "Crear Ítem"}
+                      <i className="fas fa-floppy-disk"></i> {preguntaEditando ? "Guardar y Actualizar" : "Crear Ítem"}
                     </>
                   )}
                 </button>
@@ -1688,7 +1002,19 @@ export default function CaracterizacionPage() {
       {/* MODAL: EDITAR DATOS GENERALES DE LA ENCUESTA                                */}
       {/* -------------------------------------------------------------------------- */}
       {modalEncuestaAbierto && (
-        <div className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: "1rem" }}>
+        <div
+          className="modal-overlay"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: "1rem"
+          }}
+        >
           <div
             className="card"
             style={{
@@ -1728,7 +1054,7 @@ export default function CaracterizacionPage() {
                   />
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))", gap: "1rem" }}>
                   <div>
                     <label className="form-label" style={{ fontWeight: 600 }}>
                       Versión

@@ -215,7 +215,7 @@ export default function ReportesPage() {
           <h3 className="card-title">Filtros de Extracción</h3>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "1rem", marginBottom: "1rem" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: "1rem", marginBottom: "1rem" }}>
           <div>
             <label className="form-label" htmlFor="filtro-periodo">Periodo Académico</label>
             <select

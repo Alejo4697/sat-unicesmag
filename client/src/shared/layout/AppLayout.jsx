@@ -5,17 +5,29 @@
    contenido dentro de <AppLayout>.
    ========================================================================== */
 
+import { useState } from "react";
 import Sidebar from "./Sidebar.jsx";
 import Topbar from "./Topbar.jsx";
+import CambiarPasswordModal from "./CambiarPasswordModal.jsx";
 
 export default function AppLayout({ titulo, breadcrumb, children }) {
+  const [modalPasswordAbierto, setModalPasswordAbierto] = useState(false);
+
   return (
     <div className="app-container">
-      <Sidebar />
+      <Sidebar onCambiarPassword={() => setModalPasswordAbierto(true)} />
       <div className="main-wrapper">
-        <Topbar titulo={titulo} breadcrumb={breadcrumb} />
+        <Topbar
+          titulo={titulo}
+          breadcrumb={breadcrumb}
+          onCambiarPassword={() => setModalPasswordAbierto(true)}
+        />
         <main className="content-area">{children}</main>
       </div>
+      <CambiarPasswordModal
+        abierto={modalPasswordAbierto}
+        onClose={() => setModalPasswordAbierto(false)}
+      />
     </div>
   );
 }
