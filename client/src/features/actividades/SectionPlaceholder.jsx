@@ -19,41 +19,29 @@ export default function SectionPlaceholder({ section }) {
   if (!content) return null;
 
   if (section === "apoyos") {
-    return (
-      <>
-        <section className="card" aria-labelledby={`vec-section-${section}`}>
-          <div className="card-header">
-            <h2 className="card-title" id={`vec-section-${section}`}>
-              <i className={`fas ${content.icon}`} aria-hidden="true"></i>
-              {content.title}
-            </h2>
-          </div>
-          <p className="text-muted">{content.message}</p>
-        </section>
-        <ApoyosView />
-      </>
-    );
+    return <ApoyosView />;
   }
 
   if (section === "registros") {
     return (
-      <>
-        <section className="card" aria-labelledby={`vec-section-${section}`}>
-          <div className="card-header">
-            <h2 className="card-title" id={`vec-section-${section}`}>
-              <i className={`fas ${content.icon}`} aria-hidden="true"></i>
-              {content.title}
-            </h2>
+      <section className="vec-attendance-page" aria-labelledby={`vec-section-${section}`}>
+        <header className="vec-attendance-hero">
+          <span className="vec-attendance-hero__icon" aria-hidden="true">
+            <i className={`fas ${content.icon}`}></i>
+          </span>
+          <div>
+            <span className="vec-attendance-hero__eyebrow">ACTIVIDADES VEC</span>
+            <h1 id={`vec-section-${section}`}>{content.title}</h1>
+            <p>{content.message}</p>
           </div>
-          <p className="text-muted">{content.message}</p>
-          <ol className="vec-workflow-steps" aria-label="Pasos para verificar asistencia">
-            <li><strong>1.</strong> Busca y selecciona la actividad registrada por su nombre, periodo y fechas.</li>
-            <li><strong>2.</strong> Revisa la lista de participantes inscritos en esa actividad.</li>
-            <li><strong>3.</strong> Confirma quiénes asistieron o descarga el reporte de la actividad.</li>
-          </ol>
-        </section>
+        </header>
+        <ol className="vec-attendance-workflow" aria-label="Flujo de verificación de asistencia">
+          <li><span>01</span><div><strong>Selecciona la actividad</strong><small>Filtra por nombre y confirma el periodo y las fechas.</small></div></li>
+          <li><span>02</span><div><strong>Concilia la lista</strong><small>Marca manualmente o importa un archivo exportado de Forms.</small></div></li>
+          <li><span>03</span><div><strong>Revisa y confirma</strong><small>Solo las coincidencias verificadas quedan registradas.</small></div></li>
+        </ol>
         <AsistentesActividadTable />
-      </>
+      </section>
     );
   }
 

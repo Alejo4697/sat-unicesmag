@@ -6,6 +6,7 @@ import {
   corregirTipoApoyoInscripcion,
   crearActividad,
   eliminarActividad,
+  eliminarInscripcion,
   getAuditoriaInscripcion,
   getActividades,
   getCatalogosEstudiante,
@@ -127,6 +128,10 @@ export default function ActividadesAdminView() {
   const [auditoriaApoyo, setAuditoriaApoyo] = useState(null);
   const [guardandoApoyo, setGuardandoApoyo] = useState(false);
   const [eliminandoActividadId, setEliminandoActividadId] = useState("");
+  const [eliminandoInscripcionId, setEliminandoInscripcionId] = useState("");
+  const [errorEliminacionInscripcion, setErrorEliminacionInscripcion] = useState("");
+  const [confirmacionEliminacion, setConfirmacionEliminacion] = useState(null);
+  const [busquedaParticipante, setBusquedaParticipante] = useState("");
   const [buscandoPersonas, setBuscandoPersonas] = useState(false);
 
   const cargarActividades = useCallback(async () => {
@@ -201,6 +206,20 @@ export default function ActividadesAdminView() {
     .sort((a, b) => a.subdivision.localeCompare(b.subdivision, "es"));
   const modalidadesSeleccionadas = subdivisionesPrograma
     .filter((item) => form?.subdivisionProgramas?.includes(item.programaCompleto));
+  const filasCatalogoSeleccionadas = modalidadesSeleccionadas.length
+    ? modalidadesSeleccionadas
+    : (subdivisionesPrograma.length === 0
+      ? programasDelGrupo.filter((item) => !item.subdivision)
+      : []);
+  const valoresCatalogoSeleccionados = (field) => [...new Set(
+    filasCatalogoSeleccionadas.map((item) => item[field]).filter(Boolean),
+  )];
+  const apoyosCatalogoSeleccionados = valoresCatalogoSeleccionados("tipoApoyo");
+  const estrategiasCatalogoSeleccionadas = [
+    ["Bienestar institucional", valoresCatalogoSeleccionados("estrategiaPoliticaBienestar")],
+    ["Permanencia", valoresCatalogoSeleccionados("estrategiaPoliticaPermanencia")],
+    ["Educación inclusiva", valoresCatalogoSeleccionados("estrategiaPoliticaEducacionInclusiva")],
+  ].filter(([, values]) => values.length);
   const actividadesPorEstado = ESTADOS.map((estado) => ({
     estado,
     etiqueta: ETIQUETAS_ESTADO[estado],
@@ -305,6 +324,9 @@ export default function ActividadesAdminView() {
 
   async function showParticipants(activity) {
     setError("");
+    setErrorEliminacionInscripcion("");
+    setConfirmacionEliminacion(null);
+    setBusquedaParticipante("");
     setParticipantes({ actividadId: activity.id, actividad: activity.actividad, filas: [], cargando: true, error: "" });
     try {
       const filas = await getParticipantesActividad(activity.id);
@@ -317,6 +339,44 @@ export default function ActividadesAdminView() {
       } : current);
     }
   }
+
+  async function removeParticipant(row) {
+    setEliminandoInscripcionId(row.id);
+    setErrorEliminacionInscripcion("");
+    try {
+      const result = await eliminarInscripcion(row.id);
+      setParticipantes((current) => current ? {
+        ...current,
+        filas: current.filas.filter((item) => item.id !== row.id),
+        aviso: result.mensaje,
+      } : current);
+      setConfirmacionEliminacion(null);
+      setActividades((current) => current.map((activity) => (
+        activity.id === participantes.actividadId
+          ? { ...activity, totalParticipantes: Math.max(0, Number(activity.totalParticipantes || 0) - 1) }
+          : activity
+      )));
+    } catch (requestError) {
+      setErrorEliminacionInscripcion(requestError.message || "No se pudo eliminar la inscripción.");
+    } finally {
+      setEliminandoInscripcionId("");
+    }
+  }
+
+  const participantesFiltrados = (participantes?.filas || []).filter((row) => {
+    const termino = busquedaParticipante.trim().toLocaleLowerCase("es");
+    if (!termino) return true;
+    return [
+      row.apellidosNombres,
+      row.identificacion,
+      row.correo,
+      row.rolParticipacion,
+      row.programaBienestar,
+      row.programaModalidad,
+      row.tipoApoyo,
+    ]
+      .some((value) => String(value || "").toLocaleLowerCase("es").includes(termino));
+  });
 
   async function showHistory(person) {
     setError("");
@@ -576,14 +636,32 @@ export default function ActividadesAdminView() {
                     <input className="form-control" id="activity-name" value={form.actividad} onChange={(event) => update("actividad", event.target.value)} maxLength={250} placeholder="Ej. Jornada de bienestar universitario" required />
                   </div>
                   <div className="form-group activity-form-field--wide"><label className="form-label" htmlFor="activity-program">Programa general de Bienestar <span className="activity-form-optional">Opcional</span></label>
+                    <p className="activity-program-hint">Elige el programa. Si tiene modalidades, podrás seleccionar una o varias y el sistema completará sus datos relacionados.</p>
                     <select className="form-select" id="activity-program" value={form.programaBienestar} onChange={(event) => setForm((current) => ({ ...current, programaBienestar: event.target.value, subdivisionProgramas: [] }))}>
                       <option value="">No aplica</option>{opcionesProgramasBienestar.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
                     </select>
                   </div>
                   {subdivisionesPrograma.length > 0 && (
                     <div className="form-group activity-form-field--wide activity-modalities-field" role="group" aria-labelledby="activity-subdivision-label">
-                      <span className="form-label" id="activity-subdivision-label">Apoyos disponibles</span>
-                      <p className="activity-modalities__hint">Marca únicamente los apoyos que manejará esta actividad. Puedes seleccionar uno solo aunque el programa tenga varias opciones.</p>
+                      <div className="activity-modalities-field__heading">
+                        <span className="activity-modalities-field__step">2</span>
+                        <span>
+                          <span className="form-label" id="activity-subdivision-label">Variables o modalidades</span>
+                          <span className="activity-modalities-field__description">Selecciona una o varias opciones para esta actividad.</span>
+                        </span>
+                        <span className="activity-modalities-field__count">
+                          {form.subdivisionProgramas.length} {form.subdivisionProgramas.length === 1 ? "seleccionada" : "seleccionadas"}
+                        </span>
+                      </div>
+                      <div className="activity-modalities-field__toolbar">
+                        <p className="activity-modalities__hint">Cada modalidad conservará su tipo de apoyo correspondiente.</p>
+                        {subdivisionesPrograma.length > 1 && (
+                          <div className="activity-modalities-field__quick-actions">
+                            <button type="button" onClick={() => update("subdivisionProgramas", subdivisionesPrograma.map((item) => item.programaCompleto))}>Seleccionar todas</button>
+                            <button type="button" onClick={() => update("subdivisionProgramas", [])}>Limpiar</button>
+                          </div>
+                        )}
+                      </div>
                       <div className="activity-modalities">
                         {subdivisionesPrograma.map((item) => {
                           const seleccionada = form.subdivisionProgramas.includes(item.programaCompleto);
@@ -616,6 +694,39 @@ export default function ActividadesAdminView() {
                         })}
                       </div>
                     </div>
+                  )}
+                  {filasCatalogoSeleccionadas.length > 0 && (
+                    <section className="activity-catalog-summary activity-form-field--wide" aria-live="polite">
+                      <div className="activity-catalog-summary__heading">
+                        <span className="activity-catalog-summary__icon"><i className="fas fa-wand-magic-sparkles" aria-hidden="true"></i></span>
+                        <span>
+                          <strong>Datos que se completarán automáticamente</strong>
+                          <small>Se guardarán junto con la actividad y sus modalidades.</small>
+                        </span>
+                      </div>
+                      <div className="activity-catalog-summary__grid">
+                        {[
+                          ["Componente", valoresCatalogoSeleccionados("componente")],
+                          ["Línea de acción", valoresCatalogoSeleccionados("lineaAccion")],
+                          ["Tipos de apoyo", apoyosCatalogoSeleccionados],
+                        ].filter(([, values]) => values.length).map(([label, values]) => (
+                          <div className="activity-catalog-summary__item" key={label}>
+                            <span>{label}</span>
+                            <strong>{values.join(" · ")}</strong>
+                          </div>
+                        ))}
+                      </div>
+                      {estrategiasCatalogoSeleccionadas.length > 0 && (
+                        <details className="activity-catalog-summary__strategies">
+                          <summary>Ver estrategias institucionales asociadas</summary>
+                          <dl>
+                            {estrategiasCatalogoSeleccionadas.map(([label, values]) => (
+                              <div key={label}><dt>{label}</dt><dd>{values.join(" · ")}</dd></div>
+                            ))}
+                          </dl>
+                        </details>
+                      )}
+                    </section>
                   )}
                 </div>
               </section>
@@ -658,16 +769,116 @@ export default function ActividadesAdminView() {
       )}
 
       {participantes && (
-        <Modal title={`Participantes · ${participantes.actividad || "Actividad"}`} onClose={() => setParticipantes(null)} wide>
+        <Modal
+          title="Participantes de la actividad"
+          subtitle={participantes.actividad || "Actividad"}
+          onClose={() => setParticipantes(null)}
+          wide
+        >
         <section className="card activity-modal__card">
-          <div className="card-header" style={{ display: "flex", justifyContent: "space-between" }}>
-            <h2 className="card-title">Participantes · {participantes.actividad || "Actividad"}</h2>
-            <button className="btn btn-outline btn-sm" type="button" onClick={() => setParticipantes(null)}>Cerrar</button>
+          <div className="activity-participants-heading">
+            <div>
+              <span className="activity-admin__eyebrow">GESTIÓN DE ASISTENTES</span>
+              <h2>Personas inscritas</h2>
+              <p>Consulta el programa o modalidad elegida, el apoyo asignado y administra las inscripciones.</p>
+            </div>
+            {!participantes.cargando && !participantes.error && (
+              <span className="activity-participants-count">
+                <i className="fas fa-users" aria-hidden="true"></i>
+                {participantes.filas.length} {participantes.filas.length === 1 ? "participante" : "participantes"}
+              </span>
+            )}
           </div>
-          {participantes.cargando ? <p className="text-muted" role="status">Cargando participantes...</p> : participantes.error ? <div className="auth-error" role="alert">{participantes.error}</div> : participantes.filas.length === 0 ? <p className="text-muted">Esta actividad todavía no tiene participantes.</p> : (
-            <div className="table-responsive"><table className="table"><thead><tr><th>Persona</th><th>Documento</th><th>Rol</th><th>Correo</th><th>Tipo de apoyo</th><th>Acciones</th></tr></thead><tbody>
-              {participantes.filas.map((row) => <tr key={row.id}><td>{row.apellidosNombres}</td><td>{row.identificacion}</td><td>{row.rolParticipacion}</td><td>{row.correo || "—"}</td><td>{row.tipoApoyo || "Sin clasificar"}</td><td style={{ display: "flex", flexWrap: "wrap", gap: ".4rem" }}><button className="btn btn-outline btn-sm" type="button" onClick={() => showHistory(row)}>Historial</button><button className="btn btn-outline btn-sm" type="button" onClick={() => setEdicionApoyo({ id: row.id, persona: row.apellidosNombres, tipoActual: row.tipoApoyo || "Sin clasificar", idTipoApoyo: row.idTipoApoyo || "", motivo: "" })}>Corregir apoyo</button><button className="btn btn-outline btn-sm" type="button" onClick={() => showSupportAudit(row)}>Auditoría</button></td></tr>)}
-            </tbody></table></div>
+          {participantes.aviso && <div className="autosave-banner" role="status">{participantes.aviso}</div>}
+          {errorEliminacionInscripcion && <div className="auth-error" role="alert">{errorEliminacionInscripcion}</div>}
+          {confirmacionEliminacion && (
+            <div className="activity-delete-confirm" role="alert">
+              <span className="activity-delete-confirm__icon"><i className="fas fa-triangle-exclamation" aria-hidden="true"></i></span>
+              <div className="activity-delete-confirm__copy">
+                <strong>¿Eliminar a {confirmacionEliminacion.apellidosNombres || confirmacionEliminacion.identificacion}?</strong>
+                <p>Se quitará de esta actividad. El perfil y los datos personales solo se borrarán si no tienen otros vínculos. Esta acción no se puede deshacer.</p>
+              </div>
+              <div className="activity-delete-confirm__actions">
+                <button className="btn btn-outline btn-sm" type="button" onClick={() => setConfirmacionEliminacion(null)} disabled={Boolean(eliminandoInscripcionId)}>Cancelar</button>
+                <button className="btn btn-danger btn-sm" type="button" onClick={() => removeParticipant(confirmacionEliminacion)} disabled={Boolean(eliminandoInscripcionId)}>
+                  <i className={`fas ${eliminandoInscripcionId ? "fa-spinner fa-spin" : "fa-trash-can"}`} aria-hidden="true"></i>
+                  {eliminandoInscripcionId ? "Eliminando…" : "Sí, eliminar"}
+                </button>
+              </div>
+            </div>
+          )}
+          {participantes.cargando ? (
+            <div className="activity-participants-state" role="status">
+              <i className="fas fa-spinner fa-spin" aria-hidden="true"></i>
+              <span>Cargando participantes...</span>
+            </div>
+          ) : participantes.error ? (
+            <div className="auth-error" role="alert">{participantes.error}</div>
+          ) : participantes.filas.length === 0 ? (
+            <div className="activity-participants-empty">
+              <span><i className="fas fa-user-group" aria-hidden="true"></i></span>
+              <strong>Aún no hay participantes</strong>
+              <p>Cuando se registren personas en esta actividad, aparecerán aquí.</p>
+            </div>
+          ) : (
+            <>
+              <div className="activity-participants-toolbar">
+                <label className="activity-participants-search">
+                  <i className="fas fa-search" aria-hidden="true"></i>
+                  <input
+                    type="search"
+                    aria-label="Buscar participantes"
+                    placeholder="Buscar por nombre, documento, rol, modalidad o apoyo"
+                    value={busquedaParticipante}
+                    onChange={(event) => setBusquedaParticipante(event.target.value)}
+                  />
+                </label>
+                <span className="activity-participants-toolbar__hint">Selecciona una acción para administrar cada inscripción.</span>
+              </div>
+              {participantesFiltrados.length === 0 ? (
+                <div className="activity-participants-no-results">No hay participantes que coincidan con la búsqueda.</div>
+              ) : (
+                <div className="table-responsive activity-participants-table-wrap">
+                  <table className="table activity-participants-table">
+                    <thead><tr><th>Persona</th><th>Rol</th><th>Programa / modalidad</th><th>Apoyo asignado</th><th className="activity-participants-table__actions-heading">Administrar</th></tr></thead>
+                    <tbody>
+                      {participantesFiltrados.map((row) => (
+                        <tr key={row.id}>
+                          <td>
+                            <div className="activity-participants-person">
+                              <span className="activity-participants-person__avatar" aria-hidden="true">
+                                {(row.apellidosNombres || row.identificacion || "P").trim().charAt(0).toLocaleUpperCase("es")}
+                              </span>
+                              <span className="activity-participants-person__details">
+                                <strong>{row.apellidosNombres || "Nombre no registrado"}</strong>
+                                <small><i className="far fa-id-card" aria-hidden="true"></i>{row.identificacion || "Documento no registrado"}</small>
+                                {row.correo && <small><i className="far fa-envelope" aria-hidden="true"></i>{row.correo}</small>}
+                              </span>
+                            </div>
+                          </td>
+                          <td><span className={`activity-participants-role activity-participants-role--${String(row.rolParticipacion || "").toLowerCase()}`}>{row.detalleTipoParticipante || row.rolParticipacion || "Sin rol"}</span></td>
+                          <td>
+                            <span className="activity-participants-modality">
+                              <strong>{row.programaBienestar || "Sin programa de Bienestar"}</strong>
+                              <small>{row.programaModalidad || "Modalidad no especificada"}</small>
+                            </span>
+                          </td>
+                          <td><span className="activity-participants-support"><i className="fas fa-hand-holding-heart" aria-hidden="true"></i>{row.tipoApoyo || "Sin clasificar"}</span></td>
+                          <td>
+                            <div className="activity-participants-actions">
+                              <button className="btn btn-outline btn-sm" type="button" onClick={() => showHistory(row)} title="Ver historial"><i className="fas fa-clock-rotate-left" aria-hidden="true"></i><span>Historial</span></button>
+                              <button className="btn btn-outline btn-sm" type="button" onClick={() => setEdicionApoyo({ id: row.id, persona: row.apellidosNombres, tipoActual: row.tipoApoyo || "Sin clasificar", idTipoApoyo: row.idTipoApoyo || "", motivo: "" })} title="Corregir tipo de apoyo"><i className="fas fa-sliders" aria-hidden="true"></i><span>Apoyo</span></button>
+                              <button className="btn btn-outline btn-sm" type="button" onClick={() => showSupportAudit(row)} title="Ver auditoría del apoyo"><i className="fas fa-clipboard-list" aria-hidden="true"></i><span>Auditoría</span></button>
+                              <button className="btn btn-danger btn-sm activity-participants-actions__delete" type="button" onClick={() => setConfirmacionEliminacion(row)} disabled={Boolean(eliminandoInscripcionId)} title="Eliminar participante"><i className="fas fa-trash-can" aria-hidden="true"></i><span>Eliminar</span></button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
         </section>
         </Modal>

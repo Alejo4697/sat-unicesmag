@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { getResumenParticipantes } from "./participantesApi.js";
 import ParticipantesTable from "./ParticipantesTable.jsx";
+import ProfileBulkImport from "./ProfileBulkImport.jsx";
+import { useAuth } from "../../shared/context/AuthContext.jsx";
 
 const CARDS = [
   { label: "Total de participantes", key: "total_participantes", icon: "fa-users", color: "icon-blue" },
@@ -12,12 +14,18 @@ const CARDS = [
 ];
 
 export default function DashboardView() {
+  const { user } = useAuth();
   const [resumen, setResumen] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
+  const [actualizacion, setActualizacion] = useState(0);
+  const puedeAdministrar = ["admin", "administrador", "coordinador"]
+    .includes(String(user?.rol || "").toLowerCase());
 
   useEffect(() => {
     let activa = true;
+    setCargando(true);
+    setError("");
     getResumenParticipantes()
       .then((data) => {
         if (activa) setResumen(data);
@@ -29,7 +37,7 @@ export default function DashboardView() {
         if (activa) setCargando(false);
       });
     return () => { activa = false; };
-  }, []);
+  }, [actualizacion]);
 
   return (
     <section aria-labelledby="vec-dashboard-title">
@@ -63,7 +71,9 @@ export default function DashboardView() {
         </div>
         <p className="text-muted">Resumen basado en los registros guardados en el módulo VEC.</p>
       </section>
+      {puedeAdministrar && <ProfileBulkImport onSaved={() => setActualizacion((current) => current + 1)} />}
       <ParticipantesTable
+        key={actualizacion}
         limite={10}
         titulo="Participantes recientes"
         colapsadoInicialmente

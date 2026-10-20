@@ -7,8 +7,8 @@ import { generarExcelAsistentes } from "./excelAsistentes.js";
 const require = createRequire(import.meta.url);
 const catalogoBienestarFuente = require("./bienestarCatalogo.json");
 const router = Router();
-const TIPOS = new Set(["ESTUDIANTE"]);
 const ROLES_PARTICIPANTE_VEC = new Set(["ESTUDIANTE", "EGRESADO", "COLABORADOR", "EXTERNO"]);
+const TIPOS = ROLES_PARTICIPANTE_VEC;
 const TIPOS_DOCUMENTO_PARTICIPANTE = new Set([
   "CC", "TI", "CE", "PA", "RC", "NIT", "PPT", "PEP", "CD", "SC", "NUIP", "OTRO",
 ]);
@@ -33,6 +33,26 @@ function obtenerProgramaGeneralBienestar(nombre) {
   if (separador >= 0) return nombre.slice(0, separador).trim();
   const agregadoFinal = nombre.match(/ \((participantes|grupos?)(?=[ )])([^()]*)\)$/i);
   return agregadoFinal ? nombre.slice(0, agregadoFinal.index).trim() : nombre;
+}
+
+const etiquetasModalidadBienestar = new Map([
+  ["electiva", "Electiva"],
+  ["cursos cortos (participantes certificados)", "Cursos cortos (participantes certificados)"],
+  ["cursos cortos (participantes no certificados)", "Cursos cortos (participantes NO certificados)"],
+  ["actividades", "Actividades"],
+  ["consejería", "Consejería"],
+  ["vbg", "VBG"],
+  ["nna", "NNA"],
+  ["cursos (participantes certificados)", "Cursos (participantes certificados)"],
+  ["cursos (participantes no certificados)", "Cursos (participantes NO certificados)"],
+  ["grupos", "Grupos"],
+  ["grupo", "Grupo"],
+  ["participantes certificados", "Participantes certificados"],
+  ["participantes no certificados", "Participantes NO certificados"],
+]);
+
+function etiquetaModalidadBienestar(value) {
+  return etiquetasModalidadBienestar.get(String(value || "").trim().toLocaleLowerCase("es")) || value;
 }
 
 const ordenProgramaBienestar = new Map();
@@ -62,16 +82,16 @@ function listarProgramasBienestar() {
     const programaGeneral = agrupado ? programaBase : programaCompleto;
     let subdivision = null;
     if (agrupado) {
-      if (programaCompleto.toLocaleLowerCase("es") === programaBase.toLocaleLowerCase("es")) {
-        subdivision = "Programa general (sin modalidad específica)";
-      } else if (separador >= 0) {
+      if (programaCompleto.toLocaleLowerCase("es") !== programaBase.toLocaleLowerCase("es")
+        && separador >= 0) {
         subdivision = programaCompleto.slice(separador + 3).trim();
-      } else {
+      } else if (programaCompleto.toLocaleLowerCase("es") !== programaBase.toLocaleLowerCase("es")) {
         subdivision = programaCompleto.slice(programaBase.length).trim()
           .replace(/^\(/, "")
           .replace(/\)$/, "");
       }
     }
+    subdivision = subdivision ? etiquetaModalidadBienestar(subdivision) : null;
     const fuente = bienestarFuentePorPrograma.get(programaCompleto);
     return {
       programa: programaGeneral,
@@ -81,6 +101,9 @@ function listarProgramasBienestar() {
       lineaAccion: item.lineaAccion || null,
       numeroTipoApoyo: Number(fuente?.tipoApoyoExcel?.match(/Apoyo\s+(\d+)/i)?.[1]) || null,
       tipoApoyo: fuente?.tipoApoyoExcel || null,
+      estrategiaPoliticaBienestar: item.estrategiaPoliticaBienestar || null,
+      estrategiaPoliticaPermanencia: item.estrategiaPoliticaPermanencia || null,
+      estrategiaPoliticaEducacionInclusiva: item.estrategiaPoliticaEducacionInclusiva || null,
       ordenExcel: index + 1,
       ordenPrograma: ordenProgramaBienestar.get(programaBase) || index + 1,
     };
@@ -98,6 +121,7 @@ const ASSISTANTS_QUERY = `
          pv.tipo_participante AS "rolParticipacion",
          COALESCE(roles.roles, ARRAY[pv.tipo_participante]) AS roles,
          COALESCE((to_jsonb(avp)->>'asistencia_verificada')::boolean, false) AS "asistenciaVerificada",
+         COALESCE(to_jsonb(avp)->>'asistencia_verificada_origen', 'MANUAL') AS "origenAsistencia",
          COALESCE(prog.nombre, pv.programa_academico) AS "programaPregrado",
          pv.programa_posgrado_dependencia AS "programaPosgrado",
          COALESCE(m.semestre, e.semestre_actual, pv.semestre)::text AS "semestre",
@@ -139,6 +163,7 @@ const ASSISTANTS_QUERY = `
          a.estrategia_politica_bienestar AS "estrategiaBienestar",
          a.estrategia_politica_permanencia AS "estrategiaPermanencia",
          a.estrategia_politica_educacion_inclusiva AS "estrategiaInclusiva",
+         avp.programa_modalidad AS "programaModalidad",
          ta.nombre AS "tipoApoyo",
          avp.id_tipos_apoyo AS "idTipoApoyo"
   FROM sat.actividades_vec a
@@ -590,6 +615,143 @@ router.get("/eventos/:id/participantes", async (req, res, next) => {
   }
 });
 
+router.delete("/inscripciones/:id", requireRole("admin", "coordinador", "administrador"), async (req, res, next) => {
+  const id = String(req.params.id || "");
+  if (!UUID_PATTERN.test(id)) return res.status(400).json({ error: "Inscripción no válida." });
+
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `SELECT avp.id_actividades_vec_participantes AS id,
+              pv.id_participantes_vec AS "idParticipante",
+              pv.id_personas AS "idPersona",
+              pv.tipo_participante AS rol,
+              p.numero_identificacion AS identificacion
+       FROM sat.actividades_vec_participantes avp
+       JOIN sat.participantes_vec pv
+         ON pv.id_participantes_vec = avp.id_participantes_vec
+       JOIN sat.personas p ON p.id = pv.id_personas
+       WHERE avp.id_actividades_vec_participantes = $1
+       FOR UPDATE OF avp, pv, p`,
+      [id]
+    );
+    const inscripcion = rows[0];
+    if (!inscripcion) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "No se encontró la inscripción." });
+    }
+
+    await client.query(
+      "DELETE FROM sat.actividades_vec_participantes WHERE id_actividades_vec_participantes = $1",
+      [id]
+    );
+
+    const { rows: restantes } = await client.query(
+      `SELECT COUNT(*)::int AS total
+       FROM sat.actividades_vec_participantes
+       WHERE id_participantes_vec = $1`,
+      [inscripcion.idParticipante]
+    );
+    const tieneOtrasInscripciones = restantes[0].total > 0;
+    let perfilEliminado = false;
+    let personaEliminada = false;
+
+    if (!tieneOtrasInscripciones && inscripcion.rol !== "ESTUDIANTE") {
+      await client.query("SAVEPOINT eliminar_perfil_vec");
+      try {
+        const { rows: perfilesEliminados } = await client.query(
+          `DELETE FROM sat.participantes_vec
+           WHERE id_participantes_vec = $1
+           RETURNING id_participantes_vec`,
+          [inscripcion.idParticipante]
+        );
+        perfilEliminado = Boolean(perfilesEliminados[0]);
+        await client.query("RELEASE SAVEPOINT eliminar_perfil_vec");
+      } catch (err) {
+        if (err.code !== "23503") throw err;
+        await client.query("ROLLBACK TO SAVEPOINT eliminar_perfil_vec");
+        await client.query("RELEASE SAVEPOINT eliminar_perfil_vec");
+      }
+    }
+
+    if (perfilEliminado) {
+      const { rows: otrosPerfiles } = await client.query(
+        `SELECT 1
+         FROM sat.participantes_vec
+         WHERE id_personas = $1
+         LIMIT 1`,
+        [inscripcion.idPersona]
+      );
+      const { rows: fuentesInstitucionales } = await client.query(
+        `SELECT (
+           EXISTS (SELECT 1 FROM sat.estudiantes
+                   WHERE id_personas = $1 OR numero_documento = $2)
+           OR EXISTS (SELECT 1 FROM sat.usuarios
+                      WHERE id_personas = $1 OR numero_documento = $2)
+           OR EXISTS (SELECT 1 FROM sat.docentes
+                      WHERE id_personas = $1 OR numero_documento = $2)
+         ) AS vinculada`,
+        [inscripcion.idPersona, inscripcion.identificacion]
+      );
+      const { rows: referenciasConEfectos } = await client.query(
+        `SELECT EXISTS (
+           SELECT 1
+           FROM pg_constraint
+           WHERE contype = 'f'
+             AND confrelid = 'sat.personas'::regclass
+             AND confdeltype IN ('c', 'n', 'd')
+         ) AS existe`,
+      );
+      if (!otrosPerfiles[0]
+        && !fuentesInstitucionales[0].vinculada
+        && !referenciasConEfectos[0].existe) {
+        await client.query("SAVEPOINT eliminar_persona");
+        try {
+          const { rows: personasEliminadas } = await client.query(
+            "DELETE FROM sat.personas WHERE id = $1 RETURNING id",
+            [inscripcion.idPersona]
+          );
+          personaEliminada = Boolean(personasEliminadas[0]);
+          await client.query("RELEASE SAVEPOINT eliminar_persona");
+        } catch (err) {
+          if (err.code !== "23503") throw err;
+          await client.query("ROLLBACK TO SAVEPOINT eliminar_persona");
+          await client.query("RELEASE SAVEPOINT eliminar_persona");
+        }
+      }
+    }
+
+    const mensaje = ["Se eliminó la inscripción de la actividad."];
+    if (perfilEliminado) {
+      mensaje.push("También se eliminó el perfil VEC y su rol.");
+      mensaje.push(personaEliminada
+        ? "Se eliminaron los datos de la persona porque no tenía otros vínculos."
+        : "Se conservaron los datos personales porque siguen vinculados a otros registros o fuentes institucionales.");
+    } else if (inscripcion.rol === "ESTUDIANTE") {
+      mensaje.push("Se conservó el perfil de estudiante.");
+    } else if (tieneOtrasInscripciones) {
+      mensaje.push("Se conservó el perfil VEC porque tiene otras inscripciones.");
+    } else {
+      mensaje.push("Se conservó el perfil VEC porque está vinculado a otros registros.");
+    }
+
+    await client.query("COMMIT");
+    return res.json({
+      inscripcionEliminada: true,
+      perfilEliminado,
+      personaEliminada,
+      mensaje: mensaje.join(" "),
+    });
+  } catch (err) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    enviarErrorBaseDatos(err, res, next);
+  } finally {
+    client?.release();
+  }
+});
+
 router.patch("/inscripciones/:id/apoyo", requireRole("admin", "coordinador", "administrador"), async (req, res, next) => {
   const id = String(req.params.id || "");
   const idTipoApoyo = String(req.body?.idTipoApoyo || "").trim() || null;
@@ -610,7 +772,9 @@ router.patch("/inscripciones/:id/apoyo", requireRole("admin", "coordinador", "ad
       if (!supportRows[0]) throw Object.assign(new Error("El tipo de apoyo no existe o está inactivo."), { status: 400 });
     }
     const { rows: currentRows } = await client.query(
-      `SELECT avp.id_tipos_apoyo AS anterior
+      `SELECT avp.id_tipos_apoyo AS anterior,
+              avp.programa_modalidad AS "modalidadAnterior",
+              avp.id_actividades_vec AS "idActividad"
        FROM sat.actividades_vec_participantes avp
        WHERE avp.id_actividades_vec_participantes=$1
        FOR UPDATE`,
@@ -625,15 +789,39 @@ router.patch("/inscripciones/:id/apoyo", requireRole("admin", "coordinador", "ad
       await client.query("COMMIT");
       return res.json({ id, idTipoApoyo, sinCambios: true });
     }
+    let nuevaModalidad = null;
+    if (idTipoApoyo) {
+      const { rows: modalidades } = await client.query(
+        `SELECT programa
+         FROM sat.actividades_vec_modalidades
+         WHERE id_actividades_vec = $1
+           AND id_tipos_apoyo = $2
+         ORDER BY programa`,
+        [currentRows[0].idActividad, idTipoApoyo]
+      );
+      if (modalidades.length === 1) {
+        nuevaModalidad = modalidades[0].programa;
+      } else if (modalidades.some((modalidad) => modalidad.programa === currentRows[0].modalidadAnterior)) {
+        nuevaModalidad = currentRows[0].modalidadAnterior;
+      }
+    }
     await client.query(
-      "UPDATE sat.actividades_vec_participantes SET id_tipos_apoyo=$2 WHERE id_actividades_vec_participantes=$1",
-      [id, idTipoApoyo]
+      `UPDATE sat.actividades_vec_participantes
+       SET id_tipos_apoyo=$2, programa_modalidad=$3
+       WHERE id_actividades_vec_participantes=$1`,
+      [id, idTipoApoyo, nuevaModalidad]
     );
     await client.query(
       `INSERT INTO sat.actividades_vec_participantes_auditoria
          (id_actividades_vec_participantes, accion, id_usuario, detalle)
        VALUES ($1, 'EDITAR_TIPO_APOYO', $2, $3::jsonb)`,
-      [id, String(req.user?.id || ""), JSON.stringify({ anterior, nuevo: idTipoApoyo, motivo })]
+      [id, String(req.user?.id || ""), JSON.stringify({
+        anterior,
+        nuevo: idTipoApoyo,
+        modalidadAnterior: currentRows[0].modalidadAnterior,
+        modalidadNueva: nuevaModalidad,
+        motivo,
+      })]
     );
     await client.query("COMMIT");
     res.json({ id, idTipoApoyo, sinCambios: false });
@@ -735,6 +923,10 @@ router.post("/asistencia/verificar", requireRole("admin", "coordinador", "admini
   if (!Array.isArray(req.body.registros) || req.body.registros.length > 10000) {
     return res.status(400).json({ error: "La lista de registros no es válida." });
   }
+  const origen = String(req.body.origen || "MANUAL").trim().toUpperCase();
+  if (!["MANUAL", "EXCEL"].includes(origen)) {
+    return res.status(400).json({ error: "El origen de la verificación de asistencia no es válido." });
+  }
   const registroIds = [...new Set(req.body.registros.map(String))];
   const asistenciaVerificada = req.body.asistenciaVerificada !== false;
   if (registroIds.some((id) => !UUID_PATTERN.test(id))) {
@@ -748,7 +940,8 @@ router.post("/asistencia/verificar", requireRole("admin", "coordinador", "admini
            asistencia_verificada_en = CASE WHEN $6
              THEN COALESCE(avp.asistencia_verificada_en, now()) ELSE NULL END,
            asistencia_verificada_por = CASE WHEN $6
-             THEN COALESCE(avp.asistencia_verificada_por, $7) ELSE NULL END
+             THEN COALESCE(avp.asistencia_verificada_por, $7) ELSE NULL END,
+           asistencia_verificada_origen = CASE WHEN $6 THEN $8 ELSE 'MANUAL' END
        FROM sat.actividades_vec a
        WHERE avp.id_actividades_vec = a.id_actividades_vec
          AND avp.id_actividades_vec_participantes = ANY($1::uuid[])
@@ -767,6 +960,7 @@ router.post("/asistencia/verificar", requireRole("admin", "coordinador", "admini
         sesion.fechaFinalizacion,
         asistenciaVerificada,
         String(req.user.id),
+        origen,
       ]
     );
     res.json({ idsVerificados: rows.map((row) => row.id), totalVerificados: rows.length });
@@ -1519,9 +1713,20 @@ router.get("/buscar", async (req, res, next) => {
   }
 
   try {
-    const participante = await buscarParticipante(tipo, identificacion)
-      || await buscarParticipanteEnPersonas(tipo, identificacion);
+    let participante = null;
+    const tiposBusqueda = [
+      tipo,
+      ...["ESTUDIANTE", "COLABORADOR"].filter((rol) => rol !== tipo),
+    ];
+    for (const tipoBusqueda of tiposBusqueda) {
+      participante = await buscarParticipante(tipoBusqueda, identificacion);
+      if (participante) break;
+    }
+    if (!participante) {
+      participante = await buscarParticipanteEnPersonas(tipo, identificacion);
+    }
     if (participante) {
+      participante.tipo = tipo;
       const datosComplementarios = await buscarDatosComplementariosPersona(participante.idPersona);
       for (const [campo, valor] of Object.entries(datosComplementarios)) {
         if (participante[campo] == null || participante[campo] === "") {
@@ -1592,6 +1797,17 @@ function normalizarNombreImportacion(value) {
     .toLocaleUpperCase("es");
 }
 
+function tokensNombreImportacion(value) {
+  return normalizarNombreImportacion(value).match(/[\p{L}\p{N}]+/gu) || [];
+}
+
+function coincideNombreImportacion(proporcionado, institucional) {
+  const tokensProporcionados = tokensNombreImportacion(proporcionado);
+  const tokensInstitucionales = tokensNombreImportacion(institucional);
+  return tokensProporcionados.length > 0
+    && tokensProporcionados.every((token) => tokensInstitucionales.includes(token));
+}
+
 async function mapConcurrent(items, limit, worker) {
   const results = new Array(items.length);
   let index = 0;
@@ -1660,6 +1876,16 @@ async function validarCargaMasiva(idActividad, filas) {
     if (row.identificadores.some((identificador) => identificador.length > 64)) {
       return { ...row, status: "invalid", message: "El documento o código supera el máximo de 64 caracteres." };
     }
+    if (variables.length && !row.variable && variables.length === 1) {
+      [row.variable] = variables;
+    }
+    if (variables.length && !row.variable) {
+      return {
+        ...row,
+        status: "invalid",
+        message: "Selecciona la variable o modalidad a la que se inscribirá esta persona.",
+      };
+    }
     if (row.variable) {
       if (!variables.includes(row.variable)) {
         return { ...row, status: "invalid", message: "La modalidad no corresponde a esta actividad." };
@@ -1696,22 +1922,29 @@ async function validarCargaMasiva(idActividad, filas) {
       return { ...row, status: "not_found", message: `No se encontró una persona con el identificador ${identificador}.` };
     }
     if (!encontrados.length) {
-      return { ...row, status: "invalid", message: "No se encontró un estudiante con esos datos institucionales." };
+      return { ...row, status: "invalid", message: "No se encontró una persona con esos datos institucionales." };
     }
     if (encontrados.length > 1) {
-      return { ...row, status: "invalid", message: "El documento y el código institucional no corresponden al mismo estudiante." };
+      return { ...row, status: "invalid", message: "El documento y el código institucional no corresponden a la misma persona." };
     }
     const encontrado = encontrados[0];
     if (!encontrado.identificacion || !encontrado.nombres || !encontrado.apellidos) {
       return { ...row, participante: encontrado, status: "invalid", message: "El registro institucional no contiene cédula o nombre completo para verificar la inscripción." };
     }
-    if ((participante.nombres && normalizarNombreImportacion(participante.nombres) !== normalizarNombreImportacion(encontrado.nombres))
-      || (participante.apellidos && normalizarNombreImportacion(participante.apellidos) !== normalizarNombreImportacion(encontrado.apellidos))) {
+    const nombresArchivoCoinciden = (!participante.nombres
+      || coincideNombreImportacion(
+        participante.nombres,
+        participante.apellidos ? encontrado.nombres : `${encontrado.nombres} ${encontrado.apellidos}`,
+      ))
+      && (!participante.apellidos || coincideNombreImportacion(participante.apellidos, encontrado.apellidos));
+    if (!nombresArchivoCoinciden) {
       return { ...row, status: "invalid", message: "El nombre del archivo no coincide con los datos institucionales." };
     }
     if (row.nombreCompleto
-      && normalizarNombreImportacion(row.nombreCompleto)
-        !== normalizarNombreImportacion(`${encontrado.nombres} ${encontrado.apellidos}`)) {
+      && !coincideNombreImportacion(
+        row.nombreCompleto,
+        `${encontrado.nombres} ${encontrado.apellidos}`,
+      )) {
       return { ...row, status: "invalid", message: "El nombre completo del archivo no coincide con los datos institucionales." };
     }
     const rolesExistentes = await obtenerRolesVerificados(
@@ -1785,10 +2018,10 @@ async function validarCargaMasiva(idActividad, filas) {
       ].filter(Boolean)
       : row.identificadores.map(normalizarNombreImportacion);
     if (row.status === "valid" && keysInscritos.has(normalizarNombreImportacion(row.participante.identificacion))) {
-      return { ...row, status: "duplicate", message: "El estudiante ya está registrado en esta actividad; se omite." };
+      return { ...row, status: "duplicate", message: "La persona ya está registrada en esta actividad; se omite." };
     }
     if (keys.some((key) => personasIncluidas.has(key))) {
-      return { ...row, status: "duplicate", message: "El estudiante aparece más de una vez en el archivo; se conserva una sola fila." };
+      return { ...row, status: "duplicate", message: "La persona aparece más de una vez en el archivo; se conserva una sola fila." };
     }
     keys.forEach((key) => personasIncluidas.add(key));
     return row;
@@ -1822,6 +2055,222 @@ router.post("/registro-actividad/validar-masivo", async (req, res, next) => {
     if (err.status) return res.status(err.status).json({ error: err.message });
     enviarErrorBaseDatos(err, res, next);
   }
+});
+
+async function obtenerEstadoPerfilPersona(db, identificacion) {
+  const { rows: people } = await db.query(
+    `SELECT id FROM sat.personas WHERE numero_identificacion = $1 LIMIT 1`,
+    [identificacion],
+  );
+  const idPersona = people[0]?.id || null;
+  const { rows: sourceRows } = await db.query(
+    `SELECT EXISTS (
+       SELECT 1 FROM sat.estudiantes WHERE numero_documento = $1
+       UNION ALL
+       SELECT 1 FROM sat.usuarios
+       WHERE numero_documento = $1 AND activo = true AND eliminado_en IS NULL
+       UNION ALL
+       SELECT 1 FROM sat.docentes WHERE numero_documento = $1 AND activo = true
+     ) AS existe`,
+    [identificacion],
+  );
+  const roles = new Set(await obtenerRolesVerificados(db, idPersona, identificacion));
+  const vecRoles = new Set();
+  if (idPersona) {
+    const { rows: profileRows } = await db.query(
+      `SELECT tipo_participante AS rol
+       FROM sat.participantes_vec
+       WHERE id_personas = $1`,
+      [idPersona],
+    );
+    profileRows.forEach((row) => {
+      vecRoles.add(row.rol);
+      roles.add(row.rol);
+    });
+  }
+  return {
+    existe: Boolean(idPersona || sourceRows[0]?.existe || roles.size),
+    idPersona,
+    roles: [...roles].sort(),
+    vecRoles: [...vecRoles].sort(),
+  };
+}
+
+function validarDatosPerfilImportado(participante) {
+  const required = [
+    ["identificación", participante.identificacion],
+    ["nombres", participante.nombres],
+    ["apellidos", participante.apellidos],
+    ["tipo de documento", participante.tipoDocumento],
+    ["fecha de nacimiento", participante.fechaNacimiento],
+    ["lugar de nacimiento", participante.lugarNacimiento],
+    ["género", participante.genero],
+    ["correo personal", participante.correo],
+    ["teléfono móvil", participante.celular],
+    ["teléfono alternativo", participante.telefono],
+    ["dirección de residencia", participante.direccion],
+    ["ciudad o municipio", participante.municipio],
+  ];
+  const missing = required.find(([, value]) => !value);
+  if (missing) return `Falta el campo obligatorio: ${missing[0]}.`;
+  if (!TIPOS_DOCUMENTO_PARTICIPANTE.has(participante.tipoDocumento)) {
+    return "Selecciona un tipo de documento válido.";
+  }
+  if (!/^[\p{L}\p{N}._-]{1,64}$/u.test(participante.identificacion)) {
+    return "El número de documento debe tener máximo 64 letras o números.";
+  }
+  const namePattern = /^[\p{L}\p{M}][\p{L}\p{M}\s'.-]{1,119}$/u;
+  if (!namePattern.test(participante.nombres) || !namePattern.test(participante.apellidos)) {
+    return "Nombres y apellidos deben tener entre 2 y 120 caracteres.";
+  }
+  if (!["Femenino", "Masculino", "No binario", "Otro", "Prefiero no responder"].includes(participante.genero)) {
+    return "Selecciona una opción válida para el género.";
+  }
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailPattern.test(participante.correo) || participante.correo.length > 254) {
+    return "Ingresa un correo personal válido.";
+  }
+  for (const [label, value] of [["teléfono móvil", participante.celular], ["teléfono alternativo", participante.telefono]]) {
+    const digits = value.replace(/\D/g, "");
+    if (!/^\+?[\d\s().-]+$/.test(value) || digits.length < 7 || digits.length > 15) {
+      return `Ingresa un ${label} válido de 7 a 15 dígitos.`;
+    }
+  }
+  for (const [label, value, max] of [
+    ["lugar de nacimiento", participante.lugarNacimiento, 250],
+    ["dirección", participante.direccion, 250],
+    ["municipio", participante.municipio, 150],
+    ["cargo", participante.cargo, 250],
+    ["dependencia", participante.dependencia, 250],
+  ]) {
+    if (value && value.length > max) return `El campo ${label} supera el máximo de ${max} caracteres.`;
+  }
+  const birthDate = new Date(`${participante.fechaNacimiento}T00:00:00.000Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(participante.fechaNacimiento)
+    || Number.isNaN(birthDate.getTime())
+    || birthDate.toISOString().slice(0, 10) !== participante.fechaNacimiento
+    || participante.fechaNacimiento > new Date().toISOString().slice(0, 10)) {
+    return "La fecha de nacimiento debe ser una fecha real que no sea posterior a hoy.";
+  }
+  if (participante.fechaEgreso) {
+    const graduationDate = new Date(`${participante.fechaEgreso}T00:00:00.000Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(participante.fechaEgreso)
+      || Number.isNaN(graduationDate.getTime())
+      || graduationDate.toISOString().slice(0, 10) !== participante.fechaEgreso) {
+      return "La fecha de egreso debe tener un formato válido.";
+    }
+  }
+  return "";
+}
+
+async function importarPerfilesMasivo(req, res, next, registrar) {
+  const rol = String(req.body?.rol || "").trim().toUpperCase();
+  const filas = req.body?.participantes;
+  const confirmadas = new Set((Array.isArray(req.body?.confirmarFilas) ? req.body.confirmarFilas : []).map(Number));
+  if (!["EGRESADO", "COLABORADOR", "EXTERNO"].includes(rol)) {
+    return res.status(400).json({ error: "Selecciona Egresado, Colaborador o Externo para esta carga." });
+  }
+  if (!Array.isArray(filas) || filas.length < 1 || filas.length > 500) {
+    return res.status(400).json({ error: "La carga debe contener entre 1 y 500 perfiles." });
+  }
+
+  const seen = new Set();
+  const normalizedRows = filas.map((row, index) => {
+    const participante = normalizarEntrada({ ...row, tipo: rol });
+    return {
+      fila: Number(row.fila) || index + 2,
+      participante: {
+        ...participante,
+        detalleTipoParticipante: DETALLE_ROL_PARTICIPANTE[rol],
+      },
+    };
+  });
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query("BEGIN");
+    const results = [];
+    for (const row of normalizedRows) {
+      const { fila, participante } = row;
+      const key = participante.identificacion || `ROW-${fila}`;
+      if (seen.has(key)) {
+        results.push({ fila, status: "duplicate-file", message: "La identificación se repite en este archivo." });
+        continue;
+      }
+      seen.add(key);
+      const validationError = validarDatosPerfilImportado(participante);
+      if (validationError) {
+        results.push({ fila, status: "invalid", message: validationError });
+        continue;
+      }
+
+      const state = await obtenerEstadoPerfilPersona(client, participante.identificacion);
+      if (state.vecRoles.includes(rol)) {
+        results.push({ fila, status: "already-has-role", roles: state.roles, message: `La persona ya tiene el rol ${DETALLE_ROL_PARTICIPANTE[rol]}.` });
+        continue;
+      }
+      const hasExternalConflict = (rol === "EXTERNO" && state.roles.length > 0)
+        || (rol !== "EXTERNO" && state.roles.includes("EXTERNO"));
+      if (hasExternalConflict) {
+        results.push({ fila, status: "external-conflict", roles: state.roles, message: "El rol Externo es exclusivo y no se puede combinar con otros roles." });
+        continue;
+      }
+
+      const requiresConfirmation = state.existe;
+      if (!registrar) {
+        results.push({
+          fila,
+          status: requiresConfirmation ? "requires-confirmation" : "ready",
+          roles: state.roles,
+          message: requiresConfirmation
+            ? `La persona ya existe${state.roles.length ? ` con rol: ${state.roles.map((item) => DETALLE_ROL_PARTICIPANTE[item] || item).join(", ")}` : ""}. Confirma para agregar ${DETALLE_ROL_PARTICIPANTE[rol]}.`
+            : `Lista para crear perfil de ${DETALLE_ROL_PARTICIPANTE[rol]}.`,
+        });
+        continue;
+      }
+      if (requiresConfirmation && !confirmadas.has(fila)) {
+        results.push({ fila, status: "omitted", roles: state.roles, message: "Se omitió: no se confirmó el nuevo rol." });
+        continue;
+      }
+
+      await client.query("SAVEPOINT importar_perfil_vec");
+      try {
+        const profile = await guardarPerfilDeActividad(client, participante);
+        results.push({
+          fila,
+          status: "created",
+          roles: [...new Set([...state.roles, rol])].sort(),
+          idPerfil: profile.idParticipante,
+          personaNueva: profile.personaNueva,
+          message: `Perfil de ${DETALLE_ROL_PARTICIPANTE[rol]} creado en sus tablas correspondientes.`,
+        });
+        await client.query("RELEASE SAVEPOINT importar_perfil_vec");
+      } catch (error) {
+        await client.query("ROLLBACK TO SAVEPOINT importar_perfil_vec");
+        if (error.code === "23514" && /rol EXTERNO/i.test(error.message)) {
+          results.push({ fila, status: "external-conflict", roles: state.roles, message: "No se puede combinar el rol Externo con otros roles." });
+        } else {
+          results.push({ fila, status: "failed", message: error.message || "No se pudo guardar el perfil." });
+        }
+        await client.query("RELEASE SAVEPOINT importar_perfil_vec");
+      }
+    }
+    await client.query("COMMIT");
+    res.json({ resultados: results });
+  } catch (error) {
+    if (client) await client.query("ROLLBACK");
+    enviarErrorBaseDatos(error, res, next);
+  } finally {
+    client?.release();
+  }
+}
+
+router.post("/perfiles/masivo/validar", requireRole("admin", "coordinador", "administrador"), async (req, res, next) => {
+  await importarPerfilesMasivo(req, res, next, false);
+});
+
+router.post("/perfiles/masivo/registrar", requireRole("admin", "coordinador", "administrador"), async (req, res, next) => {
+  await importarPerfilesMasivo(req, res, next, true);
 });
 
 router.post("/registro-actividad/masivo", async (req, res, next) => {
@@ -1881,6 +2330,9 @@ router.post("/registro-actividad/masivo", async (req, res, next) => {
     for (const row of validRows) {
       await client.query("SAVEPOINT registrar_participante");
       try {
+        if (actividad.variablesModalidades?.length && !row.variable) {
+          throw Object.assign(new Error("Selecciona una variable o modalidad antes de registrar a esta persona."), { status: 409 });
+        }
         if (row.variable) {
           if (!actividad.variablesModalidades?.includes(row.variable)
             || apoyoPorModalidad.get(row.variable) !== row.idTipoApoyo) {
@@ -1893,11 +2345,11 @@ router.post("/registro-actividad/masivo", async (req, res, next) => {
         const profile = await guardarPerfilDeActividad(client, row.participante);
         const { rows: inserted } = await client.query(
           `INSERT INTO sat.actividades_vec_participantes
-             (id_actividades_vec, id_participantes_vec, id_tipos_apoyo)
-           VALUES ($1, $2, $3)
+             (id_actividades_vec, id_participantes_vec, id_tipos_apoyo, programa_modalidad)
+           VALUES ($1, $2, $3, $4)
            ON CONFLICT (id_actividades_vec, id_participantes_vec) DO NOTHING
            RETURNING id_actividades_vec_participantes AS id`,
-          [idActividad, profile.idParticipante, row.idTipoApoyo || null]
+          [idActividad, profile.idParticipante, row.idTipoApoyo || null, row.variable || null]
         );
         if (!inserted[0]) {
           throw Object.assign(new Error("La persona ya está registrada en esta actividad."), { status: 409 });
@@ -2120,6 +2572,9 @@ router.post("/registro-actividad/masivo/registrar-no-encontrado", async (req, re
       throw Object.assign(new Error("La actividad ya no está disponible para recibir participantes."), { status: 409 });
     }
 
+    if (actividad.variablesModalidades?.length && !validacion.variable) {
+      throw Object.assign(new Error("Selecciona una variable o modalidad antes de registrar a esta persona."), { status: 409 });
+    }
     if (validacion.variable) {
       if (!actividad.variablesModalidades?.includes(validacion.variable)) {
         throw Object.assign(new Error("La modalidad seleccionada ya no está disponible para esta actividad."), { status: 409 });
@@ -2199,14 +2654,14 @@ router.post("/registro-actividad/masivo/registrar-no-encontrado", async (req, re
     });
     const { rows: inscripciones } = await client.query(
       `INSERT INTO sat.actividades_vec_participantes
-         (id_actividades_vec, id_participantes_vec, id_tipos_apoyo)
-       VALUES ($1, $2, $3)
+         (id_actividades_vec, id_participantes_vec, id_tipos_apoyo, programa_modalidad)
+       VALUES ($1, $2, $3, $4)
        ON CONFLICT (id_actividades_vec, id_participantes_vec) DO NOTHING
        RETURNING id_actividades_vec_participantes AS id`,
-      [idActividad, profile.idParticipante, validacion.idTipoApoyo || null]
+      [idActividad, profile.idParticipante, validacion.idTipoApoyo || null, validacion.variable || null]
     );
     if (!inscripciones[0]) {
-      throw Object.assign(new Error("El estudiante ya está inscrito en esta actividad."), { status: 409 });
+      throw Object.assign(new Error("La persona ya está inscrita en esta actividad."), { status: 409 });
     }
 
     await client.query("COMMIT");
@@ -2368,8 +2823,8 @@ async function obtenerProgramaBienestar(client, activity) {
      programas_normalizados AS (
        SELECT CASE WHEN total_programas > 1 THEN programa_general ELSE programa END AS programa_general,
               programa AS programa_completo,
-              CASE WHEN total_programas <= 1 THEN NULL
-                   WHEN LOWER(BTRIM(programa)) = LOWER(BTRIM(programa_general)) THEN 'Programa general (sin modalidad específica)'
+              CASE WHEN total_programas <= 1
+                     OR LOWER(BTRIM(programa)) = LOWER(BTRIM(programa_general)) THEN NULL
                    WHEN POSITION(' - ' IN programa) > 0
                      THEN BTRIM(SUBSTRING(programa FROM POSITION(' - ' IN programa) + 3))
                    ELSE BTRIM(SUBSTRING(programa FROM LENGTH(programa_general) + 1), ' ()')
@@ -2476,7 +2931,7 @@ async function guardarPerfilDeActividad(client, participante) {
        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
        ON CONFLICT (numero_identificacion) DO NOTHING RETURNING id`,
       [participante.identificacion, nombre.primero, nombre.segundo,
-        apellidos.primero, apellidos.segundo, participante.genero,
+        apellidos.primero, apellidos.segundo, normalizarGeneroPersona(participante.genero),
         participante.fechaNacimiento, participante.correo, participante.correoInstitucional,
         participante.celular, participante.telefono, participante.direccion]
     );
@@ -2504,7 +2959,7 @@ async function guardarPerfilDeActividad(client, participante) {
        direccion=COALESCE(NULLIF(direccion,''), $12)
      WHERE id=$1`,
     [persona.id, names.primero, names.segundo, surnames.primero, surnames.segundo,
-      participante.genero, participante.fechaNacimiento, participante.correo,
+      normalizarGeneroPersona(participante.genero), participante.fechaNacimiento, participante.correo,
       participante.correoInstitucional, participante.celular, participante.telefono,
       participante.direccion]
   );
@@ -2554,7 +3009,13 @@ async function vincularFuentesExistentes(client, idPersona, identificacion) {
   await client.query(`UPDATE sat.docentes SET id_personas=$1 WHERE numero_documento=$2 AND id_personas IS NULL`, [idPersona, identificacion]);
 }
 
-export async function agregarPersonaAEvento(client, idActividad, participante, idTipoApoyo) {
+export async function agregarPersonaAEvento(
+  client,
+  idActividad,
+  participante,
+  idTipoApoyo,
+  programaModalidad = null,
+) {
   const { rows: eventRows } = await client.query(
     `SELECT id_actividades_vec, estado FROM sat.actividades_vec
      WHERE id_actividades_vec=$1 FOR UPDATE`,
@@ -2564,11 +3025,12 @@ export async function agregarPersonaAEvento(client, idActividad, participante, i
   if (eventRows[0].estado === "CANCELADA") throw Object.assign(new Error("No se pueden agregar personas a una actividad cancelada."), { status: 409 });
   const profile = await guardarPerfilDeActividad(client, participante);
   const { rows } = await client.query(
-    `INSERT INTO sat.actividades_vec_participantes (id_actividades_vec, id_participantes_vec, id_tipos_apoyo)
-     VALUES ($1,$2,$3)
+    `INSERT INTO sat.actividades_vec_participantes
+       (id_actividades_vec, id_participantes_vec, id_tipos_apoyo, programa_modalidad)
+     VALUES ($1,$2,$3,$4)
      ON CONFLICT (id_actividades_vec, id_participantes_vec) DO NOTHING
      RETURNING id_actividades_vec_participantes AS id`,
-    [idActividad, profile.idParticipante, idTipoApoyo || null]
+    [idActividad, profile.idParticipante, idTipoApoyo || null, programaModalidad || null]
   );
   return { ...profile, idInscripcion: rows[0]?.id || null, yaInscrito: !rows[0] };
 }
@@ -2578,6 +3040,7 @@ async function registrarActividad(req, res, next, tipoForzado = null) {
     ...req.body.participante,
     tipo: tipoForzado || req.body.participante?.tipo,
   });
+  if (participante.tipo !== "ESTUDIANTE") participante.codigo = null;
   const invalidacionParticipante = validarEntrada(participante);
   if (invalidacionParticipante) return res.status(400).json({ error: invalidacionParticipante });
 
@@ -2773,7 +3236,7 @@ async function registrarActividad(req, res, next, tipoForzado = null) {
          RETURNING id`,
         [
           participante.identificacion, nombre.primero, nombre.segundo,
-          apellidos.primero, apellidos.segundo, participante.genero,
+          apellidos.primero, apellidos.segundo, normalizarGeneroPersona(participante.genero),
           participante.fechaNacimiento, participante.correo, participante.correoInstitucional,
           participante.celular, participante.telefono
         ]
@@ -2781,9 +3244,31 @@ async function registrarActividad(req, res, next, tipoForzado = null) {
       persona = rows[0] || await buscarPersonaPorIdentificacion(client, participante.identificacion);
     }
     if (!persona?.id) {
-      throw Object.assign(new Error("No se pudo resolver el estudiante en la base de datos."), { status: 409 });
+      throw Object.assign(new Error("No se pudo resolver la persona en la base de datos."), { status: 409 });
     }
     await vincularFuentesExistentes(client, persona.id, participante.identificacion);
+
+    const rolesVerificados = await obtenerRolesVerificados(
+      client,
+      persona.id,
+      participante.identificacion,
+    );
+    const { rows: perfilesDePersona } = await client.query(
+      `SELECT tipo_participante AS rol
+       FROM sat.participantes_vec
+       WHERE id_personas = $1`,
+      [persona.id]
+    );
+    const rolesExistentes = [...new Set([
+      ...rolesVerificados,
+      ...perfilesDePersona.map(({ rol }) => rol),
+    ])];
+    if (participante.tipo === "EXTERNO" && rolesExistentes.some((role) => role !== "EXTERNO")) {
+      throw Object.assign(new Error("Externo es un rol exclusivo y no se puede combinar con otros roles."), { status: 409 });
+    }
+    if (participante.tipo !== "EXTERNO" && rolesExistentes.includes("EXTERNO")) {
+      throw Object.assign(new Error("Esta persona tiene el rol Externo, que es exclusivo y no admite otros roles."), { status: 409 });
+    }
 
     let idParticipante;
     const { rows: participantesExistentes } = await client.query(
@@ -2793,6 +3278,15 @@ async function registrarActividad(req, res, next, tipoForzado = null) {
        LIMIT 1`,
       [persona.id, participante.tipo]
     );
+    if (!participantesExistentes[0]
+      && !rolesExistentes.includes(participante.tipo)
+      && rolesExistentes.length > 0
+      && req.body.confirmarNuevoRol !== true) {
+      throw Object.assign(new Error("Confirma explícitamente la asignación de este rol adicional antes de continuar."), {
+        status: 409,
+        code: "CONFIRM_ROLE_ADDITION",
+      });
+    }
     if (participantesExistentes[0]) {
       idParticipante = participantesExistentes[0].id_participantes_vec;
       await client.query(
@@ -2912,13 +3406,14 @@ async function registrarActividad(req, res, next, tipoForzado = null) {
 
     const { rows: registro } = await client.query(
       `INSERT INTO sat.actividades_vec_participantes (
-         id_actividades_vec, id_participantes_vec, id_tipos_apoyo
-       ) VALUES ($1, $2, $3)
+         id_actividades_vec, id_participantes_vec, id_tipos_apoyo, programa_modalidad
+       ) VALUES ($1, $2, $3, $4)
        RETURNING id_actividades_vec_participantes`,
       [
         idActividad,
         idParticipante,
         actividad.idTipoApoyo,
+        actividad.subdivisionProgramas[0] || null,
       ]
     );
 
@@ -2932,6 +3427,12 @@ async function registrarActividad(req, res, next, tipoForzado = null) {
     });
   } catch (err) {
     if (client) await client.query("ROLLBACK");
+    if (err.status) {
+      return res.status(err.status).json({
+        error: err.message,
+        ...(err.code ? { code: err.code } : {}),
+      });
+    }
     enviarErrorBaseDatos(err, res, next);
   } finally {
     client?.release();
@@ -2966,7 +3467,7 @@ router.post("/", async (req, res, next) => {
          RETURNING id`,
         [
           payload.identificacion, nombre.primero, nombre.segundo,
-          apellidos.primero, apellidos.segundo, payload.genero,
+          apellidos.primero, apellidos.segundo, normalizarGeneroPersona(payload.genero),
           payload.fechaNacimiento, payload.correo, payload.correoInstitucional,
           payload.celular, payload.telefono
         ]
@@ -3339,7 +3840,6 @@ async function buscarParticipanteEnPersonas(tipo, identificacion) {
      LEFT JOIN sat.periodos_academicos periodo
        ON periodo.id_periodos_academicos = m.id_periodos_academicos
      WHERE p.numero_identificacion = $1
-       AND (pv.tipo_participante = $2 OR e.id_estudiantes IS NOT NULL)
      LIMIT 1`,
     [identificacion, tipo]
   );
@@ -3477,7 +3977,7 @@ async function buscarPersonaFuente(client, identificacion) {
     [
       identificacion, nombres.primero, nombres.segundo,
       apellidos.primero, apellidos.segundo,
-      perfil.genero || null, perfil.fecha_nacimiento || null,
+      perfil.genero ? normalizarGeneroPersona(perfil.genero) : null, perfil.fecha_nacimiento || null,
       perfil.correo_institucional || null, perfil.telefono_fijo || perfil.telefono || null,
       perfil.telefono || null
     ]
@@ -3533,6 +4033,40 @@ function normalizarEntrada(body = {}) {
     discapacidad: clean(body.discapacidad),
     conflictoArmado: clean(body.conflictoArmado)
   };
+}
+
+function normalizarGeneroPersona(genero) {
+  const valor = String(genero ?? "").trim();
+  const clave = valor
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z]/gi, "")
+    .toUpperCase();
+  const codigos = {
+    F: "F",
+    FEMENINO: "F",
+    MUJER: "F",
+    M: "M",
+    MASCULINO: "M",
+    HOMBRE: "M",
+    NB: "NB",
+    NOBINARIO: "NB",
+    O: "O",
+    OT: "OT",
+    OTRO: "OT",
+    OTRA: "OT",
+    NR: "NR",
+    PREFIERONORESPONDER: "NR",
+    PREFIERENORESPONDER: "NR",
+    NORESPONDER: "NR",
+  };
+  const codigo = codigos[clave];
+  if (codigo) return codigo;
+  if (valor.length <= 2) return valor || null;
+  throw Object.assign(
+    new Error("El género indicado no tiene un código compatible con la base de datos."),
+    { status: 400 },
+  );
 }
 
 function normalizarActividad(body = {}) {
@@ -3623,7 +4157,11 @@ function validarEntrada(payload) {
   const detallesPorTipo = {
     ESTUDIANTE: ["Estudiante"],
   };
-  if (payload.detalleTipoParticipante
+  if (payload.detalleTipoParticipante?.length > 120) {
+    return "La clasificación del participante no puede superar 120 caracteres.";
+  }
+  if (payload.tipo === "ESTUDIANTE"
+    && payload.detalleTipoParticipante
     && !detallesPorTipo[payload.tipo].includes(payload.detalleTipoParticipante)) {
     return "Selecciona una clasificación válida para el tipo de participante.";
   }
@@ -3736,7 +4274,7 @@ function enviarErrorBaseDatos(err, res, next) {
   }
   if (err.code === "42703" && /asistencia_verificada/.test(err.message)) {
     return res.status(503).json({
-      error: "Para guardar la verificación de asistencia, aplica server/src/features/actividades/verificacion_elegibilidad.sql sobre la base SAT."
+      error: "Para consultar o guardar la verificación de asistencia, aplica server/src/features/actividades/verificacion_elegibilidad.sql sobre la base SAT."
     });
   }
   next(err);

@@ -74,6 +74,12 @@ export function getParticipantesActividad(id) {
   return apiFetch(`/actividades/participantes/eventos/${encodeURIComponent(id)}/participantes`);
 }
 
+export function eliminarInscripcion(id) {
+  return apiFetch(`/actividades/participantes/inscripciones/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
 export function corregirTipoApoyoInscripcion(id, { idTipoApoyo, motivo }) {
   return apiFetch(`/actividades/participantes/inscripciones/${encodeURIComponent(id)}/apoyo`, {
     method: "PATCH",
@@ -101,10 +107,16 @@ export function registrarActividadEstudiante({ participante, actividad }) {
   });
 }
 
-export function registrarActividad({ participante, actividad, autorizarExcepcion, motivoExcepcion }) {
+export function registrarActividad({
+  participante,
+  actividad,
+  autorizarExcepcion,
+  motivoExcepcion,
+  confirmarNuevoRol = false,
+}) {
   return apiFetch("/actividades/participantes/registro-actividad", {
     method: "POST",
-    body: { participante, actividad, autorizarExcepcion, motivoExcepcion },
+    body: { participante, actividad, autorizarExcepcion, motivoExcepcion, confirmarNuevoRol },
   });
 }
 
@@ -126,6 +138,20 @@ export function registrarNoEncontradoMasivo({ idActividad, participante }) {
   return apiFetch("/actividades/participantes/registro-actividad/masivo/registrar-no-encontrado", {
     method: "POST",
     body: { idActividad, participante },
+  });
+}
+
+export function validarPerfilesMasivo({ rol, participantes }) {
+  return apiFetch("/actividades/participantes/perfiles/masivo/validar", {
+    method: "POST",
+    body: { rol, participantes },
+  });
+}
+
+export function registrarPerfilesMasivo({ rol, participantes, confirmarFilas = [] }) {
+  return apiFetch("/actividades/participantes/perfiles/masivo/registrar", {
+    method: "POST",
+    body: { rol, participantes, confirmarFilas },
   });
 }
 
@@ -152,10 +178,18 @@ export function getAsistentes({ idActividad, idPeriodo, fechaInicio, fechaFinali
   return apiFetch(`/actividades/participantes/asistentes?${params.toString()}`, { signal });
 }
 
-export function verificarAsistencia({ idActividad, idPeriodo, fechaInicio, fechaFinalizacion, registros, asistenciaVerificada = true }) {
+export function verificarAsistencia({
+  idActividad,
+  idPeriodo,
+  fechaInicio,
+  fechaFinalizacion,
+  registros,
+  asistenciaVerificada = true,
+  origen = "MANUAL",
+}) {
   return apiFetch("/actividades/participantes/asistencia/verificar", {
     method: "POST",
-    body: { idActividad, idPeriodo, fechaInicio, fechaFinalizacion, registros, asistenciaVerificada },
+    body: { idActividad, idPeriodo, fechaInicio, fechaFinalizacion, registros, asistenciaVerificada, origen },
   });
 }
 

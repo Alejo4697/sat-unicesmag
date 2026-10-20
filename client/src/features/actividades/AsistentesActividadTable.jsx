@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import AttendanceSpreadsheetImport from "./AttendanceSpreadsheetImport.jsx";
 import {
   exportarAsistentes,
   getActividadesDisponibles,
@@ -231,8 +232,7 @@ export default function AsistentesActividadTable() {
     });
   }
 
-  async function confirmarAsistentes() {
-    const registros = seleccionadosPendientes.map(({ id }) => id);
+  async function guardarAsistencias(registros, { origen = "MANUAL", fuente = "lista manual" } = {}) {
     if (!actividadSeleccionada || registros.length === 0) return;
     setVerificandoIds(registros);
     setError("");
@@ -245,6 +245,7 @@ export default function AsistentesActividadTable() {
         fechaFinalizacion: fechaCorta(actividadSeleccionada.fechaFinalizacion),
         registros,
         asistenciaVerificada: true,
+        origen,
       });
       const actualizados = await getAsistentes({
         idActividad: actividadId,
@@ -255,25 +256,36 @@ export default function AsistentesActividadTable() {
       setAsistentes(actualizados);
       setIdsSeleccionados(new Set());
       const confirmados = actualizados.filter((item) => registros.includes(item.id) && item.asistenciaVerificada).length;
-      setResultadoLote(`${confirmados} ${confirmados === 1 ? "asistente confirmado y guardado" : "asistentes confirmados y guardados"}.`);
+      setResultadoLote(
+        `${confirmados} ${confirmados === 1 ? "asistencia confirmada" : "asistencias confirmadas"} desde ${fuente}.`,
+      );
+      return confirmados === registros.length;
     } catch (requestError) {
       setError(requestError.message || "No se pudieron confirmar las asistencias seleccionadas.");
+      return false;
     } finally {
       setVerificandoIds([]);
     }
   }
+
+  async function confirmarAsistentes() {
+    const registros = seleccionadosPendientes.map(({ id }) => id);
+    return guardarAsistencias(registros);
+  }
+
+  async function confirmarDesdeArchivo(registros, fileName) {
+    return guardarAsistencias(registros, { origen: "EXCEL", fuente: `el archivo ${fileName}` });
+  }
+
   return (
-    <section className="card" aria-label="Asistentes por actividad">
+    <section className="card vec-attendance-panel" aria-label="Asistentes por actividad">
       <div className="card-header">
         <h2 className="card-title">
-          <i className="fas fa-users" aria-hidden="true"></i>
-          Asistencia por actividad registrada
+          <i className="fas fa-clipboard-check" aria-hidden="true"></i>
+          Control de asistencia
         </h2>
       </div>
-      <p className="text-muted">
-        Selecciona una actividad registrada para consultar y confirmar sus participantes, o descargar
-        el reporte de esa actividad.
-      </p>
+      <p className="text-muted">Consulta las inscripciones, verifica la lista manualmente o concilia la asistencia desde un archivo de formulario.</p>
 
       {error && <div className="auth-error" role="alert">{error}</div>}
 
@@ -430,6 +442,12 @@ export default function AsistentesActividadTable() {
                     </div>
                   </div>
                   {resultadoLote && <p className="vec-batch-result" role="status">{resultadoLote}</p>}
+                  <AttendanceSpreadsheetImport
+                    key={actividadId}
+                    asistentes={asistentes}
+                    busy={verificandoIds.length > 0 || cargandoAsistentes}
+                    onConfirm={confirmarDesdeArchivo}
+                  />
                 </section>
               ) : (
                 <p className="text-muted">La verificación física solo está disponible para coordinadores.</p>
@@ -495,10 +513,18 @@ export default function AsistentesActividadTable() {
                                     disabled={Boolean(asistente.asistenciaVerificada) || verificandoIds.includes(asistente.id)}
                                     aria-label={`Confirmar asistencia de ${asistente.apellidosNombres || asistente.identificacion}`}
                                   />
-                                  <span>{asistente.asistenciaVerificada ? "Confirmada" : idsSeleccionados.has(asistente.id) ? "Seleccionada" : "Pendiente"}</span>
+                                  <span>
+                                    {asistente.asistenciaVerificada
+                                      ? `Confirmada · ${asistente.origenAsistencia === "EXCEL" ? "Excel" : "manual"}`
+                                      : idsSeleccionados.has(asistente.id) ? "Seleccionada" : "Pendiente"}
+                                  </span>
                                 </label>
                               ) : (
-                                <span>{asistente.asistenciaVerificada ? "Confirmada" : idsSeleccionados.has(asistente.id) ? "Seleccionada" : "Pendiente"}</span>
+                                <span>
+                                  {asistente.asistenciaVerificada
+                                    ? `Confirmada · ${asistente.origenAsistencia === "EXCEL" ? "Excel" : "manual"}`
+                                    : idsSeleccionados.has(asistente.id) ? "Seleccionada" : "Pendiente"}
+                                </span>
                               )}
                             </td>
                             <td>{asistente.periodo || "—"}</td>

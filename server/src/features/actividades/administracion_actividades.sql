@@ -87,6 +87,25 @@ ALTER TABLE sat.actividades_vec_participantes
   FOREIGN KEY (id_tipos_apoyo)
   REFERENCES sat.apoyos_actividades_vec(id_tipos_apoyo) ON DELETE RESTRICT;
 
+ALTER TABLE sat.actividades_vec_participantes
+  ADD COLUMN IF NOT EXISTS programa_modalidad varchar(250);
+
+WITH modalidades_unicas AS (
+  SELECT id_actividades_vec,
+         id_tipos_apoyo,
+         MIN(programa) AS programa
+  FROM sat.actividades_vec_modalidades
+  WHERE id_tipos_apoyo IS NOT NULL
+  GROUP BY id_actividades_vec, id_tipos_apoyo
+  HAVING COUNT(*) = 1
+)
+UPDATE sat.actividades_vec_participantes participante
+SET programa_modalidad = modalidad.programa
+FROM modalidades_unicas modalidad
+WHERE participante.programa_modalidad IS NULL
+  AND participante.id_actividades_vec = modalidad.id_actividades_vec
+  AND participante.id_tipos_apoyo = modalidad.id_tipos_apoyo;
+
 CREATE INDEX IF NOT EXISTS idx_actividades_vec_modalidades_apoyo
   ON sat.actividades_vec_modalidades (id_tipos_apoyo);
 

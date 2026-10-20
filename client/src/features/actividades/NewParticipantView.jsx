@@ -10,9 +10,15 @@ import BulkParticipantImport from "./BulkParticipantImport.jsx";
 
 const TIPOS = [
   { value: "ESTUDIANTE", label: "Estudiante" },
+  { value: "EGRESADO", label: "Egresado" },
+  { value: "COLABORADOR", label: "Colaborador" },
+  { value: "EXTERNO", label: "Externo" },
 ];
 const DETALLES_POR_TIPO = {
   ESTUDIANTE: [{ value: "Estudiante", label: "Estudiante" }],
+  EGRESADO: [{ value: "Egresado no titulado", label: "Egresado" }],
+  COLABORADOR: [{ value: "Colaborador", label: "Colaborador" }],
+  EXTERNO: [{ value: "Externo", label: "Externo" }],
 };
 
 const TIPOS_DOCUMENTO = [
@@ -262,14 +268,20 @@ function calculateAge(dateString) {
   return age >= 0 ? String(age) : "";
 }
 
-function SectionCard({ title, icon, children }) {
+function SectionCard({ title, icon, children, summary, description }) {
   return (
-    <section className="card">
-      <h3 className="card-title">
-        <i className={`fas ${icon}`} aria-hidden="true"></i>
-        {title}
-      </h3>
-      {children}
+    <section className="card vec-participant-section">
+      <header className="vec-participant-section__header">
+        <span className="vec-participant-section__icon" aria-hidden="true">
+          <i className={`fas ${icon}`}></i>
+        </span>
+        <div className="vec-participant-section__heading">
+          <h2>{title}</h2>
+          {description && <p>{description}</p>}
+        </div>
+        {summary && <span className="vec-participant-section__summary">{summary}</span>}
+      </header>
+      <div className="vec-participant-section__body">{children}</div>
     </section>
   );
 }
@@ -341,20 +353,14 @@ function Field({
 
 function FormGrid({ children }) {
   return (
-    <div style={{
-      display: "grid",
-      gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
-      gap: "0 1rem",
-    }}>
-      {children}
-    </div>
+    <div className="vec-participant-form-grid">{children}</div>
   );
 }
 
 export default function NewParticipantView({ onCancel }) {
   const [modoRegistro, setModoRegistro] = useState("masivo");
   const [cargaMasivaPendiente, setCargaMasivaPendiente] = useState(false);
-  const [tipo] = useState("ESTUDIANTE");
+  const [tipo, setTipo] = useState("ESTUDIANTE");
   const [identificacion, setIdentificacion] = useState("");
   const [busqueda, setBusqueda] = useState({ status: "idle", participante: null, mensaje: "" });
   const [form, setForm] = useState(EMPTY_FORM);
@@ -388,7 +394,11 @@ export default function NewParticipantView({ onCancel }) {
   const personaEncontrada = encontrada || duplicada;
   const rolesRegistrados = busqueda.participante?.roles || [];
   const rolesVerificados = busqueda.participante?.rolesVerificados || [];
-  const tieneRolesMultiples = rolesRegistrados.length > 1;
+  const rolesExistentes = [...new Set([...rolesRegistrados, ...rolesVerificados])];
+  const rolExternoIncompatible = rolesExistentes.includes("EXTERNO")
+    ? tipo !== "EXTERNO" || rolesExistentes.some((role) => role !== "EXTERNO")
+    : tipo === "EXTERNO" && rolesExistentes.length > 0;
+  const tieneRolesMultiples = rolesExistentes.length > 1;
   const esRolNuevoParaPersona = personaEncontrada && !rolesRegistrados.includes(tipo);
   const esperandoResultado = ["waiting", "loading"].includes(busqueda.status);
   const esEstudiante = tipo === "ESTUDIANTE";
@@ -421,6 +431,17 @@ export default function NewParticipantView({ onCancel }) {
   const eventoSeleccionado = eventosProximos.find(
     (evento) => String(evento.id) === String(actividad.idEventoExistente),
   );
+  const modalidadesEventoSeleccionado = eventoSeleccionado?.variablesModalidades || [];
+  const requiereSeleccionModalidadEvento = modalidadesEventoSeleccionado.length > 0;
+  const opcionesModalidadEvento = modalidadesEventoSeleccionado
+    .filter((item) => item.idTipoApoyo)
+    .map((item) => ({
+      value: item.programaCompleto,
+      label: [
+        item.subdivision || item.programaCompleto,
+        item.tipoApoyo,
+      ].filter(Boolean).join(" · "),
+    }));
   const apoyoSugerido = catalogos.tiposApoyo.find((item) => (
     String(item.id) === String(actividadSeleccionada?.idTipoApoyoSugerido || "")
   ));
@@ -625,14 +646,7 @@ export default function NewParticipantView({ onCancel }) {
     const catalogoEvento = catalogoActividades.find((item) => item.id === evento.idCatalogoActividad);
     const clasificacionEvento = catalogoClasificado.find((item) => item.id === evento.idCatalogoActividad);
     const modalidadesEvento = evento.variablesModalidades || [];
-    const apoyosModalidades = [...new Set(
-      modalidadesEvento.map((item) => String(item.idTipoApoyo || "")).filter(Boolean),
-    )];
-    const modalidadEvento = modalidadesEvento.length === 1
-      ? modalidadesEvento[0]
-      : apoyosModalidades.length === 1
-        ? modalidadesEvento.find((item) => String(item.idTipoApoyo) === apoyosModalidades[0])
-        : modalidadesEvento.find((item) => item.programaCompleto === clasificacionEvento?.programa);
+    const modalidadEvento = modalidadesEvento.length === 1 ? modalidadesEvento[0] : null;
     setActividad({
       ...EMPTY_ACTIVIDAD,
       idEventoExistente: evento.id,
@@ -660,10 +674,8 @@ export default function NewParticipantView({ onCancel }) {
       ubicacion: evento.ubicacion || "",
       fechaInicio: String(evento.fechaInicio).slice(0, 10),
       fechaFinalizacion: String(evento.fechaFinalizacion).slice(0, 10),
-      idTipoApoyo: apoyosModalidades.length === 1
-        ? apoyosModalidades[0]
-        : modalidadEvento?.idTipoApoyo
-          || (modalidadesEvento.length ? "" : catalogoEvento?.idTipoApoyoSugerido || ""),
+      idTipoApoyo: modalidadEvento?.idTipoApoyo
+        || (modalidadesEvento.length ? "" : catalogoEvento?.idTipoApoyoSugerido || ""),
       estrategiaPoliticaBienestar: evento.estrategiaPoliticaBienestar || catalogoEvento?.estrategiaPoliticaBienestar || "",
       estrategiaPoliticaPermanencia: evento.estrategiaPoliticaPermanencia || catalogoEvento?.estrategiaPoliticaPermanencia || "",
       estrategiaPoliticaEducacionInclusiva: evento.estrategiaPoliticaEducacionInclusiva || catalogoEvento?.estrategiaPoliticaEducacionInclusiva || "",
@@ -738,16 +750,16 @@ export default function NewParticipantView({ onCancel }) {
       setError("Selecciona el tipo de documento de identificación.");
       return;
     }
-    if (tipo !== "ESTUDIANTE" && !form.detalleTipoParticipante) {
-      setError("Selecciona la clasificación del participante que corresponde al registro VEC.");
-      return;
-    }
-    if (tipo === "COLABORADOR" && form.detalleTipoParticipante === "Otro" && !form.detalleTipoParticipanteOtro.trim()) {
-      setError("Especifica el tipo de colaborador.");
+    if (rolExternoIncompatible) {
+      setError("Externo es un rol exclusivo y no se puede combinar con otros roles.");
       return;
     }
     if (!actividad.idCatalogoActividad) {
       setError("Selecciona una actividad del catálogo institucional.");
+      return;
+    }
+    if (requiereSeleccionModalidadEvento && !actividad.subdivisionPrograma) {
+      setError("Selecciona la variable o modalidad a la que se inscribirá esta persona.");
       return;
     }
     if (tieneRolesMultiples && actividad.idTipoApoyo && !confirmacionRolApoyo) {
@@ -755,13 +767,23 @@ export default function NewParticipantView({ onCancel }) {
       return;
     }
 
+    const agregarRolNuevo = esRolNuevoParaPersona && rolesExistentes.length > 0;
+    if (agregarRolNuevo) {
+      const rolesActuales = rolesExistentes
+        .map((role) => TIPOS.find((item) => item.value === role)?.label || role)
+        .join(", ");
+      const rolNuevo = TIPOS.find((item) => item.value === tipo)?.label || tipo;
+      if (!window.confirm(
+        `La persona ya tiene estos roles: ${rolesActuales}.\n\n¿Confirmas agregar el rol ${rolNuevo} y continuar con la inscripción?`,
+      )) return;
+    }
+
     const participante = {
       ...form,
       tipo,
-      detalleTipoParticipante: tipo === "ESTUDIANTE" ? "Estudiante"
-        : tipo === "COLABORADOR" && form.detalleTipoParticipante === "Otro"
-          ? `Otro: ${form.detalleTipoParticipanteOtro.trim()}`
-          : form.detalleTipoParticipante,
+      detalleTipoParticipante: form.detalleTipoParticipante
+        || DETALLES_POR_TIPO[tipo]?.[0]?.value
+        || "",
       identificacion: form.identificacion || identificacion.trim(),
       celular: form.celular || form.contacto || null,
       semestre: form.semestre === "" ? null : Number(form.semestre),
@@ -773,13 +795,17 @@ export default function NewParticipantView({ onCancel }) {
       setError("Espera a que terminen de cargar los catálogos de actividad.");
       return;
     }
-    await guardarRegistro(participante, actividad);
+    await guardarRegistro(participante, actividad, agregarRolNuevo);
   }
 
-  async function guardarRegistro(participante, actividadParaGuardar) {
+  async function guardarRegistro(participante, actividadParaGuardar, confirmarNuevoRol = false) {
     setGuardando(true);
     try {
-      await registrarActividad({ participante, actividad: actividadParaGuardar });
+      await registrarActividad({
+        participante,
+        actividad: actividadParaGuardar,
+        confirmarNuevoRol,
+      });
       let errorActualizacionEventos = "";
       try {
         setEventosProximos(await getEventosProximos());
@@ -834,10 +860,17 @@ export default function NewParticipantView({ onCancel }) {
         <div>
           <span className="vec-registration-intro__eyebrow">GESTIÓN DE PARTICIPANTES</span>
           <h1>Registrar participantes</h1>
-          <p>Agiliza el registro validando una lista de estudiantes desde Excel o agrega una persona manualmente.</p>
+          <p>Inscribe participantes en actividades y asigna su programa, modalidad y apoyo correspondiente.</p>
         </div>
       </header>
 
+      <div className="vec-registration-step-heading">
+        <span className="vec-registration-step-heading__number">1</span>
+        <div>
+          <strong>Elige cómo quieres registrar</strong>
+          <span>Puedes cargar una lista completa o completar el registro de una persona.</span>
+        </div>
+      </div>
       <div className="vec-registration-mode" role="group" aria-label="Método de registro">
         <button
           className={`vec-registration-mode__option vec-registration-mode__option--bulk${modoRegistro === "masivo" ? " is-active" : ""}`}
@@ -848,9 +881,9 @@ export default function NewParticipantView({ onCancel }) {
           <i className="fas fa-file-excel" aria-hidden="true"></i>
           <span>
             <strong>Carga masiva desde Excel</strong>
-            <small>Recomendado · Valida y registra varios estudiantes en un solo proceso</small>
+            <small>Valida una lista y asigna modalidad y apoyo por participante</small>
           </span>
-          <span className="vec-registration-mode__badge">MÁS RÁPIDO</span>
+          <span className="vec-registration-mode__badge">{modoRegistro === "masivo" ? "SELECCIONADO" : "MÁS RÁPIDO"}</span>
         </button>
         <button
           className={`vec-registration-mode__option${modoRegistro === "individual" ? " is-active" : ""}`}
@@ -859,17 +892,32 @@ export default function NewParticipantView({ onCancel }) {
           onClick={() => confirmarSalidaCargaMasiva(() => setModoRegistro("individual"))}
         >
           <i className="fas fa-user" aria-hidden="true"></i>
-          <span><strong>Registro individual</strong><small>Registrar una persona a la vez</small></span>
+          <span><strong>Registro individual</strong><small>Busca una persona y completa su inscripción</small></span>
+          {modoRegistro === "individual" && <span className="vec-registration-mode__badge">SELECCIONADO</span>}
         </button>
       </div>
 
       {modoRegistro === "masivo" ? <BulkParticipantImport onPendingChange={setCargaMasivaPendiente} /> : <>
       <SectionCard title="Tipo de participante e identificación" icon="fa-id-card" defaultOpen>
         <div className="form-group">
-          <span className="form-label">Tipo de participante</span>
-          <strong>Estudiante</strong>
+          <label className="form-label" htmlFor="participant-role">Rol para esta inscripción</label>
+          <select
+            className="form-control"
+            id="participant-role"
+            value={tipo}
+            onChange={(event) => {
+              setTipo(event.target.value);
+              setForm(EMPTY_FORM);
+              setBusqueda({ status: "idle", participante: null, mensaje: "" });
+              setError("");
+              setConfirmacion("");
+              setConfirmacionRolApoyo(false);
+            }}
+          >
+            {TIPOS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+          </select>
           <p className="text-muted">
-            Este módulo registra estudiantes únicamente. La búsqueda consulta el registro académico; no cambia roles ni crea cuentas de usuario.
+            El rol elegido se usa para esta inscripción. Estudiante, egresado y colaborador pueden coexistir; Externo es exclusivo.
           </p>
         </div>
         <div className="form-group">
@@ -897,7 +945,7 @@ export default function NewParticipantView({ onCancel }) {
             maxLength={64}
             required
           />
-          {esEstudiante && <p className="text-muted">La búsqueda se realiza automáticamente al dejar de escribir.</p>}
+          <p className="text-muted">La búsqueda se realiza automáticamente al dejar de escribir; también revisa otros roles para encontrar a la misma persona.</p>
         </div>
         {["waiting", "loading"].includes(busqueda.status) && (
           <div className="autosave-banner vec-participant-status" role="status">
@@ -946,7 +994,12 @@ export default function NewParticipantView({ onCancel }) {
         {mostrarPerfil && ["ESTUDIANTE", "COLABORADOR"].includes(tipo)
           && !rolesVerificados.includes(tipo) && (
           <div className="text-muted vec-participant-status" role="status">
-            Se guardará una ficha de estudiante en Actividades. No se creará ni modificará ningún usuario o rol institucional.
+            Se guardará una ficha de {TIPOS.find((item) => item.value === tipo)?.label.toLowerCase()} en Actividades. No se creará ni modificará ningún usuario o rol institucional.
+          </div>
+        )}
+        {rolExternoIncompatible && (
+          <div className="vec-role-warning-details" role="alert">
+            Externo es un rol exclusivo y no se puede combinar con ningún otro rol.
           </div>
         )}
         {busqueda.status === "error" && (
@@ -994,24 +1047,14 @@ export default function NewParticipantView({ onCancel }) {
               <Field
                 name="detalleTipoParticipante"
                 label="Clasificación en el registro VEC"
-                value={form.detalleTipoParticipante || (tipo === "ESTUDIANTE" ? "Estudiante" : "")}
+                value={form.detalleTipoParticipante || DETALLES_POR_TIPO[tipo]?.[0]?.value || ""}
                 onChange={actualizarCampo}
-                required
-                readOnly={tipo === "ESTUDIANTE" || datoAutocompletadoSoloLectura("detalleTipoParticipante")}
-                options={DETALLES_POR_TIPO[tipo] || []}
+                readOnly={datoAutocompletadoSoloLectura("detalleTipoParticipante")}
+                options={opcionesConValorActual(
+                  DETALLES_POR_TIPO[tipo] || [],
+                  form.detalleTipoParticipante,
+                )}
               />
-              {tipo === "COLABORADOR" && form.detalleTipoParticipante === "Otro" && (
-                <Field
-                  name="detalleTipoParticipanteOtro"
-                  label="Especifica el tipo de colaborador"
-                  value={form.detalleTipoParticipanteOtro}
-                  onChange={actualizarCampo}
-                  placeholder="Ej.: contratista, practicante, auxiliar"
-                  required
-                  maxLength={114}
-                  readOnly={datoAutocompletadoSoloLectura("detalleTipoParticipanteOtro")}
-                />
-              )}
               {esEstudiante && (
                 <Field name="periodoFuente" label="Periodo académico (fuente)" value={form.periodo} onChange={() => {}} readOnly />
               )}
@@ -1359,28 +1402,36 @@ export default function NewParticipantView({ onCancel }) {
                     {mostrarOtraDependencia && (
                       <Field name="dependenciaOtra" label="Especifica la otra dependencia" value={actividad.dependenciaOtra} onChange={actualizarActividad} readOnly={Boolean(actividad.idEventoExistente)} />
                     )}
-                    <Field
-                      name="idTipoApoyo"
-                      label="Tipo de apoyo asociado"
-                      value={actividad.idTipoApoyo}
-                      onChange={(name, value) => {
-                        if (eventoSeleccionado && apoyosVinculadosEvento.length) {
-                          const modalidadVinculada = eventoSeleccionado.variablesModalidades.find(
-                            (modalidad) => String(modalidad.idTipoApoyo) === String(value),
+                    {requiereSeleccionModalidadEvento ? (
+                      <Field
+                        name="subdivisionPrograma"
+                        label="Variable o modalidad de inscripción"
+                        value={actividad.subdivisionPrograma}
+                        onChange={(_name, value) => {
+                          const modalidadSeleccionada = modalidadesEventoSeleccionado.find(
+                            (item) => item.programaCompleto === value,
                           );
                           setActividad((current) => ({
                             ...current,
-                            [name]: value,
-                            subdivisionPrograma: modalidadVinculada?.programaCompleto || "",
+                            subdivisionPrograma: value,
+                            idTipoApoyo: modalidadSeleccionada?.idTipoApoyo || "",
                           }));
-                        } else {
-                          actualizarActividad(name, value);
-                        }
-                        setConfirmacionRolApoyo(false);
-                      }}
-                      placeholder="No aplica"
-                      options={opcionesApoyosActividad.map((apoyo) => ({ value: apoyo.id, label: apoyo.nombre }))}
-                    />
+                          setConfirmacionRolApoyo(false);
+                        }}
+                        required={requiereSeleccionModalidadEvento}
+                        placeholder="Selecciona la modalidad para esta persona"
+                        options={opcionesModalidadEvento}
+                      />
+                    ) : (
+                      <Field
+                        name="idTipoApoyo"
+                        label="Tipo de apoyo asociado"
+                        value={actividad.idTipoApoyo}
+                        onChange={actualizarActividad}
+                        placeholder="No aplica"
+                        options={opcionesApoyosActividad.map((apoyo) => ({ value: apoyo.id, label: apoyo.nombre }))}
+                      />
+                    )}
                     <div className="form-group" style={{ gridColumn: "1 / -1" }}>
                       {eventoSeleccionado?.variablesModalidades?.length > 0
                         && apoyosVinculadosEvento.length === 0 && (
@@ -1388,6 +1439,12 @@ export default function NewParticipantView({ onCancel }) {
                             Esta jornada no tiene tipos de apoyo activos asociados a sus variables o modalidades. No es posible registrar el participante hasta corregir esa asociación.
                           </p>
                         )}
+                      {requiereSeleccionModalidadEvento && actividad.subdivisionPrograma && (
+                        <p className="text-muted" role="status">
+                          Esta persona se inscribirá en <strong>{modalidadesEventoSeleccionado.find((item) => item.programaCompleto === actividad.subdivisionPrograma)?.subdivision || actividad.subdivisionPrograma}</strong>
+                          {actividad.idTipoApoyo && <> con el apoyo <strong>{catalogos.tiposApoyo.find((item) => String(item.id) === String(actividad.idTipoApoyo))?.nombre || "asociado a la modalidad"}</strong></>}.
+                        </p>
+                      )}
                       {actividadSeleccionada
                         && !eventoSeleccionado?.variablesModalidades?.length
                         && opcionesApoyosActividad.length === 0
@@ -1485,7 +1542,7 @@ export default function NewParticipantView({ onCancel }) {
 
       {error && <div className="auth-error" role="alert" style={{ marginBottom: "1rem" }}>{error}</div>}
       {confirmacion && <div className="autosave-banner vec-participant-status" role="status">{confirmacion}</div>}
-      <div style={{ display: "flex", justifyContent: "flex-end", flexWrap: "wrap", gap: "0.75rem", marginBottom: "1.5rem" }}>
+      <div className="vec-participant-form__actions">
         <button
           className="btn btn-outline"
           type="button"

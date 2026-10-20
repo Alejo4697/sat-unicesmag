@@ -539,24 +539,6 @@ export default function AdministracionPage() {
               </table>
             </div>
           </div>
-
-          <div className="dashboard-grid" style={{ marginTop: "1.5rem" }}>
-            {matriz.rolesYPermisos.map((rol) => (
-              <div className="card" key={rol.id}>
-                <div className="card-header">
-                  <span className="card-title">{rol.nombre}</span>
-                </div>
-                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>{rol.integrantes.join(", ")}</p>
-                <div>
-                  {rol.permisos.map((p) => (
-                    <span className="tag-item" key={p}>
-                      {p}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
         </>
       )}
     </AppLayout>

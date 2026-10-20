@@ -138,32 +138,61 @@ por-dispositivo, como el borrador de intervenciones):
   disponibles al registrar participantes; las opciones del catálogo
   institucional permanecen separadas. En la administración y al registrar
   participantes, los programas aparecen numerados según su primera aparición
-  en «Sis bienestar»; los que tienen variantes se muestran una sola vez como
-  programa general y permiten elegir únicamente los apoyos que aplican al crear
-  la actividad; basta con seleccionar uno aunque el programa tenga varias
-  opciones, y se conserva su apoyo correspondiente. El catálogo propio de este
-  módulo se guarda en `sat.apoyos_actividades_vec`, separado del catálogo
+  en «Sis bienestar»; los que tienen variables o modalidades se muestran una
+  sola vez como programa general y despliegan sus opciones al seleccionarlos.
+  Se puede elegir una o varias modalidades reales (la fila general no aparece
+  como modalidad adicional); el sistema muestra y completa automáticamente
+  componente, línea de acción, tipo de apoyo y estrategias institucionales
+  asociadas. Cada modalidad conserva su tipo de apoyo correspondiente. El
+  catálogo propio de este módulo se guarda en `sat.apoyos_actividades_vec`, separado del catálogo
   general. La búsqueda de personas e historial reutilizan las
   identidades y participaciones institucionales. El registro permite el flujo
-  individual y la carga masiva de hojas de cálculo por actividad; ambos flujos admiten
-  únicamente estudiantes. La carga masiva permite elegir una modalidad
-  opcional para toda la lista: si no se elige, las inscripciones quedan sin
-  modalidad ni tipo de apoyo. El archivo puede contener documento o código
-  institucional para buscar al estudiante; los nombres y apellidos son
-  opcionales, pues se consultan en los registros institucionales. No se usa el
-  correo del Excel para validar estudiantes. Se reconocen alias de encabezado
-  comunes y encabezados ubicados en las primeras 20 filas de cualquiera de las hojas; si
-  no hay encabezados, se intenta detectar una columna de identificadores. Se
+  individual y la carga masiva de hojas de cálculo por actividad. Al inscribir en una jornada con
+  modalidades, se elige la variable o modalidad de cada persona y se guarda el
+  tipo de apoyo asociado; si la jornada tiene una sola modalidad, se asigna
+  automáticamente. Esta elección está disponible en el registro individual,
+  por fila en la carga masiva y al crear perfiles de personas no encontradas.
+  En el registro individual se puede seleccionar estudiante, egresado,
+  colaborador o externo; si la identificación ya corresponde a una persona con
+  otros roles compatibles, se solicita confirmar el rol adicional antes de
+  guardar. El rol Externo permanece exclusivo y se valida también en el servidor.
+  El servidor valida la modalidad y su apoyo asociado antes de guardar cada
+  inscripción. La carga masiva admite estudiantes, egresados, colaboradores y externos. En el archivo se
+  debe indicar el rol de cada fila en una columna «Rol de participante»
+  (también se reconocen encabezados equivalentes); si no se incluye, se mantiene
+  la compatibilidad y se interpreta como estudiante. Las filas con rol
+  «Egresado» se guardan como perfiles VEC y se sincronizan con `sat.egresados`
+  mediante la migración `server/src/features/actividades/participantes_roles.sql`,
+  aplicada con `npm --prefix server run db:roles-participantes`. La carga masiva
+  permite elegir la actividad y, si tiene modalidades de Bienestar, seleccionar
+  una modalidad predeterminada para toda la carga antes de subir el archivo.
+  También se puede asignar o cambiar por participante antes de confirmar; el
+  apoyo vinculado se guarda en cada inscripción. Se reconoce una columna
+  opcional «Apoyo» con el nombre de la modalidad. Si el valor del archivo
+  coincide con varias modalidades, se debe elegir la opción correcta
+  manualmente. El archivo puede contener documento o código institucional para
+  buscar a la persona; los nombres y apellidos son opcionales, pues se consultan
+  en los registros institucionales. No se usa el correo del Excel para validar
+  personas. Se reconocen alias de encabezado
+  comunes, incluyendo «Código», «Código institucional» y «Código estudiante»,
+  y encabezados ubicados en las primeras 20 filas de cualquiera de las hojas;
+  la comparación de nombres no depende del orden de nombres y apellidos. Si no
+  hay encabezados, se intenta detectar una columna de identificadores. Se
   aceptan `.xlsx`, `.xls`, `.xlsm`, `.xlsb`, `.ods`, `.csv` y `.tsv`, sin
   necesitar una plantilla fija. La validación se centra en la coincidencia de
-  nombre, cédula y código estudiantil con el registro
-  institucional; fechas y otros datos de la hoja no se exigen ni generan
-  errores. Los estudiantes no encontrados se muestran en una tabla aparte;
-  las filas repetidas y los estudiantes ya inscritos se omiten conservando
-  una sola aparición. Los estudiantes válidos pueden registrarse aunque haya
-  identificadores no encontrados, con un máximo de 500 filas por archivo.
-  El grupo válido se guarda en una sola transacción: si alguna de esas filas
-  falla, no se registra ninguna. El registro
+  nombre, cédula y código institucional con el registro institucional cuando
+  corresponda; fechas y otros datos de la hoja no se exigen ni generan errores.
+  Las personas no
+  encontradas se muestran en una tabla aparte y pueden crearse con el rol
+  indicado, individualmente o en lote para egresados, colaboradores y externos.
+  La creación masiva es opcional por rol, usa los datos personales obligatorios
+  de la plantilla y registra cada perfil en su tabla relacionada y en la
+  actividad seleccionada; cada fila se procesa de forma independiente. Las
+  filas repetidas y las personas ya inscritas se omiten
+  conservando una sola aparición. Los participantes válidos pueden registrarse
+  aunque haya identificadores no encontrados, con un máximo de 500 filas por
+  archivo. Los resultados se procesan con un punto de recuperación por fila:
+  las inscripciones exitosas se conservan aunque otra fila falle. El registro
   consulta datos institucionales y solo completa
   campos vacíos; no sobrescribe los valores existentes de personas,
   estudiantes, usuarios o docentes. La migración
@@ -173,7 +202,13 @@ por-dispositivo, como el borrador de intervenciones):
   egresados y externos se mantienen en tablas separadas vinculadas a
   `sat.participantes_vec`; se sincronizan con sus roles y la base impide que
   un externo tenga otros roles. Se aplican con
-  `npm --prefix server run db:roles-participantes`. La carga masiva lista jornadas
+  `npm --prefix server run db:roles-participantes`. Desde Resumen, los perfiles
+  de Egresado, Colaborador o Externo también se pueden importar por Excel/CSV,
+  seleccionando un único rol para todo el archivo y relacionando encabezados
+  flexibles sin una plantilla fija. Esta carga crea o vincula perfiles VEC sin
+  inscribir personas en actividades; antes de agregar un rol a una persona ya
+  registrada solicita confirmación explícita. Los roles repetidos y los
+  conflictos de exclusividad de Externo se omiten. La carga masiva lista jornadas
   registradas de todos los periodos y fechas; las canceladas se muestran, pero
   no se pueden seleccionar. Al crear jornadas desde Administración o desde el
   registro se permiten fechas pasadas, siempre que la fecha final no sea
@@ -183,14 +218,24 @@ por-dispositivo, como el borrador de intervenciones):
   referencia al catálogo, modalidades y auditoría. Cada modalidad seleccionada
   se conserva además en `sat.actividades_vec_modalidades`, ligada al tipo de
   apoyo activo que corresponde en el catálogo de Bienestar; al inscribir a un
-  estudiante se guarda ese apoyo en `sat.actividades_vec_participantes`.
-  `npm --prefix server run db:actividades` crea esta relación y completa las
-  modalidades históricas que se puedan vincular con un apoyo del catálogo.
+  participante se guardan el apoyo y la modalidad exacta en
+  `sat.actividades_vec_participantes`. La lista de participantes muestra el
+  programa/modalidad y el apoyo asignado en columnas separadas.
+  `npm --prefix server run db:actividades` crea esta relación, completa las
+  modalidades históricas que se puedan vincular sin ambigüedad y agrega la
+  columna de modalidad a cada inscripción; ejecuta el comando para aplicar el
+  cambio antes de usar la nueva versión del servidor.
   «Administrar actividades» permite borrar jornadas de forma permanente, con
   confirmación; las inscripciones, modalidades y auditorías vinculadas se
   eliminan en cascada, pero no se borran personas ni perfiles de estudiantes.
   El API expone `DELETE /api/actividades/participantes/eventos/:id`, protegido
-  para administradores y coordinadores.
+  para administradores y coordinadores. Desde la lista de participantes de una
+  actividad también se puede eliminar una inscripción; el perfil VEC y su rol
+  solo se eliminan si no tiene otras inscripciones y no es un perfil de
+  estudiante. Los datos de `sat.personas` solo se eliminan cuando no quedan
+  otros perfiles, fuentes institucionales ni referencias; en caso contrario se
+  conservan. La eliminación requiere confirmación e incluye las auditorías
+  asociadas a la inscripción.
   La exportación genera un libro `.xlsx` de consulta con únicamente las hojas
   de colaboradores, estudiantes, egresados y externos; excluye las bases,
   hojas de apoyo, validaciones de captura y macros de la plantilla.
@@ -198,10 +243,9 @@ por-dispositivo, como el borrador de intervenciones):
   `server/src/features/actividades/verificacion_elegibilidad.sql`, aplicada a
   la base conectada; anade marcas de asistencia desactivadas por defecto. La
   restricción única actividad-participante evita inscripciones repetidas en una
-  misma sesión. Los tipos históricos de participante se conservan para consulta,
-  pero las nuevas búsquedas, registros y cargas masivas del módulo solo admiten
-  estudiantes; las columnas de rol de archivos antiguos son opcionales y, si
-  existen, deben identificar al participante como estudiante.
+  misma sesión. Los perfiles de estudiantes, egresados, colaboradores y externos
+  se registran según el rol de cada persona; la columna de rol es opcional en
+  archivos antiguos y, si falta, se conserva el valor predeterminado de estudiante.
   La verificación se encuentra en «Asistencia y reportes»: se selecciona la
   actividad, periodo y jornada; luego se puede comparar un Excel `.xlsx` con
   documentos pegados o confirmar cada asistente en el checklist. El archivo se

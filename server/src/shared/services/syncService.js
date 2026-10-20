@@ -616,21 +616,23 @@ export async function ejecutarSincronizacion() {
         const tipoVinc = (d.tipo_vinculacion || d.abreviatura_vinculacion || "DOCENTE").trim();
         const nomProg = (d.nombre_programa || "").toUpperCase().trim();
         const activoDoc = d.estado !== false;
+        const correoInst = String(d.correo_institucional || "").trim().toLowerCase() || null;
 
         // 1. Asegurar en sat.personas
         const resPersona = await localClient.query(`
           INSERT INTO sat.personas (
             numero_identificacion, primer_nombre, segundo_nombre,
-            primer_apellido, segundo_apellido, cargo
-          ) VALUES ($1, $2, $3, $4, $5, 'Docente')
+            primer_apellido, segundo_apellido, cargo, correo_institucional
+          ) VALUES ($1, $2, $3, $4, $5, 'Docente', $6)
           ON CONFLICT (numero_identificacion) DO UPDATE SET
             primer_nombre = COALESCE(EXCLUDED.primer_nombre, sat.personas.primer_nombre),
             segundo_nombre = COALESCE(EXCLUDED.segundo_nombre, sat.personas.segundo_nombre),
             primer_apellido = COALESCE(EXCLUDED.primer_apellido, sat.personas.primer_apellido),
             segundo_apellido = COALESCE(EXCLUDED.segundo_apellido, sat.personas.segundo_apellido),
-            cargo = COALESCE(sat.personas.cargo, 'Docente')
+            cargo = COALESCE(sat.personas.cargo, 'Docente'),
+            correo_institucional = COALESCE(EXCLUDED.correo_institucional, sat.personas.correo_institucional)
           RETURNING id;
-        `, [numDoc, pNom, sNom, pApe, sApe]);
+        `, [numDoc, pNom, sNom, pApe, sApe, correoInst]);
         const idPersona = resPersona.rows[0].id;
 
         // 2. Resolver id_programas_academicos si existe
@@ -651,20 +653,23 @@ export async function ejecutarSincronizacion() {
         await localClient.query(`
           INSERT INTO sat.docentes (
             numero_documento, nombres, apellidos, tipo_vinculo,
-            id_programas_academicos, activo, id_personas
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+            id_programas_academicos, activo, id_personas, correo_institucional
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
           ON CONFLICT (numero_documento) DO UPDATE SET
             nombres = EXCLUDED.nombres,
             apellidos = EXCLUDED.apellidos,
             tipo_vinculo = EXCLUDED.tipo_vinculo,
             id_programas_academicos = COALESCE(EXCLUDED.id_programas_academicos, sat.docentes.id_programas_academicos),
             activo = EXCLUDED.activo,
-            id_personas = EXCLUDED.id_personas;
-        `, [numDoc, nomCompleto, apeCompleto, tipoVinc, idProgDoc, activoDoc, idPersona]);
+            id_personas = EXCLUDED.id_personas,
+            correo_institucional = COALESCE(EXCLUDED.correo_institucional, sat.docentes.correo_institucional);
+        `, [numDoc, nomCompleto, apeCompleto, tipoVinc, idProgDoc, activoDoc, idPersona, correoInst]);
 
         docentesSincronizados++;
       }
       console.log(`[OK] ${docentesSincronizados} docentes sincronizados en sat.docentes y sat.personas.`);
+    } else {
+      console.warn("\n[AVISO] PASO 8 omitido: vista_docentes no es visible para el usuario ACADEMIC_DB_USER (¿falta GRANT SELECT?). No se sincronizaron docentes ni correo_institucional.");
     }
 
     // -------------------------------------------------------------
