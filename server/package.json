@@ -6,7 +6,7 @@
   "description": "API Express para SAT-UNICESMAG",
   "main": "src/server.js",
   "scripts": {
-    "dev": "node --watch src/server.js",
+    "dev": "node --watch --watch-path=src src/server.js",
     "start": "node src/server.js",
     "db:seed": "node src/shared/db/seed.js",
     "db:matriz": "node src/shared/db/seed.js matriz_bienestar.sql",

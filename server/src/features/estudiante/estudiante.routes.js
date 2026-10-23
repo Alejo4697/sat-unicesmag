@@ -104,35 +104,103 @@ router.get("/instrumento", async (req, res) => {
 });
 
 // --------------------------------------------------------------------------
-// 1. POST /solicitar-otp - Solicitar código OTP sin contraseña
+// 0.1 GET /consultar-correo - Autocompleta el correo al ingresar documento/código
+// --------------------------------------------------------------------------
+router.get("/consultar-correo", async (req, res) => {
+  const documento = String(req.query.documento || "").trim();
+
+  if (!documento || documento.length < 4) {
+    return res.json({ encontrado: false });
+  }
+
+  try {
+    const { rows } = await query(
+      `SELECT e.id_estudiantes, e.nombres, e.apellidos, e.correo_institucional, e.correo_personal, e.estado_matricula
+       FROM sat.estudiantes e
+       WHERE (e.numero_documento = $1 OR e.codigo_externo = $1)
+       LIMIT 1`,
+      [documento]
+    );
+
+    if (rows.length > 0) {
+      const est = rows[0];
+      const correo = (est.correo_institucional || est.correo_personal || "").trim();
+      const nombre = `${est.nombres || ""} ${est.apellidos || ""}`.trim();
+
+      return res.json({
+        encontrado: true,
+        correo,
+        nombre,
+        activo: est.estado_matricula === "MATRICULADO" || est.estado_matricula === "ACTIVO"
+      });
+    }
+
+    // Fallback a MOCK_DATA en caso de desarrollo
+    const mock = MOCK_DATA.estudiantes.find(
+      (m) => m.documento === documento || m.codigo === documento
+    );
+    if (mock) {
+      return res.json({
+        encontrado: true,
+        correo: mock.email,
+        nombre: `${mock.nombres} ${mock.apellidos}`.trim(),
+        activo: true
+      });
+    }
+
+    return res.json({ encontrado: false });
+  } catch (err) {
+    console.warn("Error en /consultar-correo:", err.message);
+    return res.json({ encontrado: false });
+  }
+});
+
+// --------------------------------------------------------------------------
+// 1. POST /solicitar-otp - Solicitar código OTP al correo registrado en sistema
 // --------------------------------------------------------------------------
 router.post("/solicitar-otp", async (req, res, next) => {
   const { documento, correo } = req.body;
 
-  if (!documento || !correo) {
+  if (!documento && !correo) {
     return res.status(400).json({
-      error: "Debe ingresar el número de documento y el correo electrónico institucional."
+      error: "Debe ingresar su número de documento o código estudiantil."
     });
   }
 
-  const docLimpio = String(documento).trim();
-  const correoLimpio = String(correo).trim().toLowerCase();
+  const docLimpio = documento ? String(documento).trim() : "";
+  const correoLimpio = correo ? String(correo).trim().toLowerCase() : "";
 
   try {
-    // 1. Validar en sat.estudiantes si existe y coincide
+    // 1. Validar en sat.estudiantes si existe
     let estudiante = null;
     try {
-      const { rows } = await query(
-        `SELECT e.id_estudiantes, e.codigo_externo, e.numero_documento, e.nombres, e.apellidos,
-                e.correo_institucional, e.semestre_actual, e.estado_matricula,
-                p.nombre AS programa
-         FROM sat.estudiantes e
-         LEFT JOIN sat.programas_academicos p ON e.id_programas_academicos = p.id_programas_academicos
-         WHERE (e.numero_documento = $1 OR e.codigo_externo = $1)
-           AND LOWER(TRIM(e.correo_institucional)) = $2
-         LIMIT 1`,
-        [docLimpio, correoLimpio]
-      );
+      let querySql;
+      let params;
+
+      if (docLimpio) {
+        querySql = `
+          SELECT e.id_estudiantes, e.codigo_externo, e.numero_documento, e.nombres, e.apellidos,
+                 e.correo_institucional, e.correo_personal, e.semestre_actual, e.estado_matricula,
+                 p.nombre AS programa
+          FROM sat.estudiantes e
+          LEFT JOIN sat.programas_academicos p ON e.id_programas_academicos = p.id_programas_academicos
+          WHERE e.numero_documento = $1 OR e.codigo_externo = $1
+          LIMIT 1`;
+        params = [docLimpio];
+      } else {
+        querySql = `
+          SELECT e.id_estudiantes, e.codigo_externo, e.numero_documento, e.nombres, e.apellidos,
+                 e.correo_institucional, e.correo_personal, e.semestre_actual, e.estado_matricula,
+                 p.nombre AS programa
+          FROM sat.estudiantes e
+          LEFT JOIN sat.programas_academicos p ON e.id_programas_academicos = p.id_programas_academicos
+          WHERE LOWER(TRIM(COALESCE(e.correo_institucional, ''))) = $1
+             OR LOWER(TRIM(COALESCE(e.correo_personal, ''))) = $1
+          LIMIT 1`;
+        params = [correoLimpio];
+      }
+
+      const { rows } = await query(querySql, params);
       if (rows.length > 0) {
         estudiante = rows[0];
       }
@@ -140,12 +208,13 @@ router.post("/solicitar-otp", async (req, res, next) => {
       console.warn("Fallo consulta a sat.estudiantes en solicitar-otp:", dbErr.message);
     }
 
-    // Fallback a MOCK_DATA si no se encuentra en DB directa
+    // Fallback a MOCK_DATA únicamente si no hay conexión a DB
     if (!estudiante) {
-      const mockEst = MOCK_DATA.estudiantes.find(
-        (e) => (e.documento === docLimpio || e.codigo === docLimpio) &&
-               e.email?.toLowerCase().trim() === correoLimpio
-      );
+      const mockEst = MOCK_DATA.estudiantes.find((e) => {
+        const matchesDoc = docLimpio && (e.documento === docLimpio || e.codigo === docLimpio);
+        const matchesEmail = correoLimpio && e.email?.toLowerCase().trim() === correoLimpio;
+        return matchesDoc || matchesEmail;
+      });
       if (mockEst) {
         estudiante = {
           id_estudiantes: `est_${mockEst.codigo}`,
@@ -163,7 +232,7 @@ router.post("/solicitar-otp", async (req, res, next) => {
 
     if (!estudiante) {
       return res.status(404).json({
-        error: "Los datos ingresados no coinciden con ningún estudiante activo registrado en el sistema. Verifique su número de documento y correo institucional."
+        error: "Los datos ingresados no coinciden con ningún estudiante registrado en el sistema. Verifique su número de documento."
       });
     }
 
@@ -172,6 +241,15 @@ router.post("/solicitar-otp", async (req, res, next) => {
     if (matricula === "RETIRADO" || matricula === "EXPULSADO" || matricula === "INACTIVO") {
       return res.status(403).json({
         error: "El estudiante se encuentra en estado inactivo o retirado. Comuníquese con la Secretaría Académica."
+      });
+    }
+
+    // OBTENER ESTRICTAMENTE EL CORREO REGISTRADO EN EL SISTEMA
+    const destinoCorreo = (estudiante.correo_institucional || estudiante.correo_personal || "").trim();
+
+    if (!destinoCorreo || !destinoCorreo.includes("@")) {
+      return res.status(400).json({
+        error: "El estudiante no tiene un correo electrónico registrado en el sistema para recibir el código. Por favor comuníquese con la Secretaría Académica."
       });
     }
 
@@ -194,25 +272,32 @@ router.post("/solicitar-otp", async (req, res, next) => {
         `INSERT INTO sat.otp_codigos
           (id_estudiantes, codigo, correo_destino, expira_en, intentos_fallidos, max_intentos, usado, ip_origen)
          VALUES ($1, $2, $3, $4, 0, 5, false, $5)`,
-        [estudiante.id_estudiantes, otpNumber, estudiante.correo_institucional, expiraEn, req.ip || null]
+        [estudiante.id_estudiantes, otpNumber, destinoCorreo, expiraEn, req.ip || null]
       );
     }
 
-    // 4. Enviar correo electrónico
-    const nombreCompleto = `${estudiante.nombres} ${estudiante.apellidos}`.trim();
-    await enviarCorreoOtp({
-      correo: estudiante.correo_institucional,
+    // 4. Enviar correo electrónico estrictamente a la dirección registrada
+    const nombreCompleto = `${estudiante.nombres || ""} ${estudiante.apellidos || ""}`.trim();
+    const resultadoEnvio = await enviarCorreoOtp({
+      correo: destinoCorreo,
       nombre: nombreCompleto,
       codigoOtp: otpNumber,
       expiraMinutos
     });
 
+    if (!resultadoEnvio?.envioRealizado) {
+      console.error(`[ERROR OTP] Falló despacho de correo a ${destinoCorreo}:`, resultadoEnvio?.error);
+      return res.status(503).json({
+        error: "No fue posible despachar el código de seguridad al correo institucional registrado. Verifique la conexión a internet o intente nuevamente más tarde."
+      });
+    }
+
+    // 5. Respuesta segura al cliente: NUNCA enviar el código en la respuesta HTTP
     res.json({
       ok: true,
-      mensaje: `Se ha enviado un código de verificación de 6 dígitos a su correo institucional.`,
-      correoOfuscado: ofuscarCorreo(estudiante.correo_institucional),
-      expiraMinutos,
-      ...(process.env.NODE_ENV === "development" ? { codigoDev: otpNumber } : {})
+      mensaje: `Se ha enviado un código de verificación de 6 dígitos a su correo electrónico registrado.`,
+      correoOfuscado: ofuscarCorreo(destinoCorreo),
+      expiraMinutos
     });
   } catch (err) {
     next(err);
@@ -225,11 +310,16 @@ router.post("/solicitar-otp", async (req, res, next) => {
 router.post("/verificar-otp", async (req, res, next) => {
   const { documento, correo, codigo } = req.body;
 
-  if (!documento || !codigo) {
-    return res.status(400).json({ error: "Debe ingresar el documento y el código de verificación de 6 dígitos." });
+  if (!codigo) {
+    return res.status(400).json({ error: "Debe ingresar el código de verificación de 6 dígitos." });
   }
 
-  const docLimpio = String(documento).trim();
+  if (!documento && !correo) {
+    return res.status(400).json({ error: "Debe ingresar el correo institucional o documento." });
+  }
+
+  const docLimpio = documento ? String(documento).trim() : "";
+  const correoLimpio = correo ? String(correo).trim().toLowerCase() : "";
   const codigoLimpio = String(codigo).trim();
 
   try {
@@ -243,9 +333,12 @@ router.post("/verificar-otp", async (req, res, next) => {
          FROM sat.estudiantes e
          LEFT JOIN sat.programas_academicos p ON e.id_programas_academicos = p.id_programas_academicos
          LEFT JOIN sat.sedes s ON e.id_sedes = s.id_sedes
-         WHERE e.numero_documento = $1 OR e.codigo_externo = $1
+         WHERE (
+           ($1 != '' AND (e.numero_documento = $1 OR e.codigo_externo = $1))
+           OR ($2 != '' AND LOWER(TRIM(e.correo_institucional)) = $2)
+         )
          LIMIT 1`,
-        [docLimpio]
+        [docLimpio, correoLimpio]
       );
       if (rows.length > 0) {
         estudiante = rows[0];
@@ -255,9 +348,11 @@ router.post("/verificar-otp", async (req, res, next) => {
     }
 
     if (!estudiante) {
-      const mockEst = MOCK_DATA.estudiantes.find(
-        (e) => e.documento === docLimpio || e.codigo === docLimpio
-      );
+      const mockEst = MOCK_DATA.estudiantes.find((e) => {
+        const matchesDoc = docLimpio && (e.documento === docLimpio || e.codigo === docLimpio);
+        const matchesEmail = correoLimpio && e.email?.toLowerCase().trim() === correoLimpio;
+        return matchesDoc || matchesEmail;
+      });
       if (mockEst) {
         estudiante = {
           id_estudiantes: `est_${mockEst.codigo}`,

@@ -56,7 +56,9 @@ export default function AsistentesActividadTable() {
   const [exportando, setExportando] = useState(false);
   const [error, setError] = useState("");
   const actividadSeleccionada = actividades.find((actividad) => actividad.id === actividadId);
-  const asistenciasConfirmadas = asistentes.filter((item) => item.asistenciaVerificada).length;
+  const asistenciasConfirmadas = asistentes.filter((item) => item.asistenciaEstado === "PRESENTE" || item.asistenciaVerificada).length;
+  const ausenciasConfirmadas = asistentes.filter((item) => item.asistenciaEstado === "AUSENTE").length;
+  const pendientesAsistencia = asistentes.length - asistenciasConfirmadas - ausenciasConfirmadas;
   const porcentajeAsistencia = asistentes.length
     ? Math.round((asistenciasConfirmadas / asistentes.length) * 100)
     : 0;
@@ -210,7 +212,9 @@ export default function AsistentesActividadTable() {
     }
   }
 
-  const asistentesPendientesVisibles = asistentesFiltrados.filter((item) => !item.asistenciaVerificada);
+  const asistentesPendientesVisibles = asistentesFiltrados.filter((item) => (
+    !item.asistenciaVerificada && item.asistenciaEstado !== "AUSENTE"
+  ));
   const seleccionadosPendientes = asistentes.filter((item) => idsSeleccionados.has(item.id) && !item.asistenciaVerificada);
 
   function cambiarSeleccion(asistente, seleccionado) {
@@ -232,7 +236,11 @@ export default function AsistentesActividadTable() {
     });
   }
 
-  async function guardarAsistencias(registros, { origen = "MANUAL", fuente = "lista manual" } = {}) {
+  async function guardarAsistencias(registros, {
+    origen = "MANUAL",
+    fuente = "lista manual",
+    asistenciaEstado = "PRESENTE",
+  } = {}) {
     if (!actividadSeleccionada || registros.length === 0) return;
     setVerificandoIds(registros);
     setError("");
@@ -244,7 +252,8 @@ export default function AsistentesActividadTable() {
         fechaInicio: fechaCorta(actividadSeleccionada.fechaInicio),
         fechaFinalizacion: fechaCorta(actividadSeleccionada.fechaFinalizacion),
         registros,
-        asistenciaVerificada: true,
+        asistenciaVerificada: asistenciaEstado === "PRESENTE",
+        asistenciaEstado,
         origen,
       });
       const actualizados = await getAsistentes({
@@ -255,9 +264,16 @@ export default function AsistentesActividadTable() {
       });
       setAsistentes(actualizados);
       setIdsSeleccionados(new Set());
-      const confirmados = actualizados.filter((item) => registros.includes(item.id) && item.asistenciaVerificada).length;
+      const confirmados = actualizados.filter((item) => (
+        registros.includes(item.id)
+        && (item.asistenciaEstado || (item.asistenciaVerificada ? "PRESENTE" : "PENDIENTE")) === asistenciaEstado
+      )).length;
       setResultadoLote(
-        `${confirmados} ${confirmados === 1 ? "asistencia confirmada" : "asistencias confirmadas"} desde ${fuente}.`,
+        asistenciaEstado === "PRESENTE"
+          ? `${confirmados} ${confirmados === 1 ? "asistencia confirmada" : "asistencias confirmadas"} desde ${fuente}.`
+          : asistenciaEstado === "AUSENTE"
+            ? `${confirmados} ${confirmados === 1 ? "persona confirmada como ausente" : "personas confirmadas como ausentes"} desde ${fuente}.`
+            : `${confirmados} registros devueltos a pendiente desde ${fuente}.`,
       );
       return confirmados === registros.length;
     } catch (requestError) {
@@ -275,6 +291,13 @@ export default function AsistentesActividadTable() {
 
   async function confirmarDesdeArchivo(registros, fileName) {
     return guardarAsistencias(registros, { origen: "EXCEL", fuente: `el archivo ${fileName}` });
+  }
+
+  async function resolverRevisionAsistencia(id, asistio) {
+    return guardarAsistencias([id], {
+      fuente: "la revisión manual",
+      asistenciaEstado: asistio ? "PRESENTE" : "AUSENTE",
+    });
   }
 
   return (
@@ -426,7 +449,7 @@ export default function AsistentesActividadTable() {
                     ? "Consultando asistentes..."
                     : `${asistenciasConfirmadas} de ${asistentes.length} asistencias confirmadas (${porcentajeAsistencia}%)`}</strong>
                   <progress value={asistenciasConfirmadas} max={Math.max(asistentes.length, 1)} aria-label="Progreso de verificación de asistencia" />
-                  <span>{Math.max(asistentes.length - asistenciasConfirmadas, 0)} pendientes</span>
+                  <span>{ausenciasConfirmadas} ausentes confirmados · {Math.max(pendientesAsistencia, 0)} pendientes</span>
                 </div>
               </div>
               {esCoordinador ? (
@@ -447,6 +470,7 @@ export default function AsistentesActividadTable() {
                     asistentes={asistentes}
                     busy={verificandoIds.length > 0 || cargandoAsistentes}
                     onConfirm={confirmarDesdeArchivo}
+                    onResolveReview={resolverRevisionAsistencia}
                   />
                 </section>
               ) : (
@@ -514,16 +538,20 @@ export default function AsistentesActividadTable() {
                                     aria-label={`Confirmar asistencia de ${asistente.apellidosNombres || asistente.identificacion}`}
                                   />
                                   <span>
-                                    {asistente.asistenciaVerificada
+                                    {asistente.asistenciaVerificada || asistente.asistenciaEstado === "PRESENTE"
                                       ? `Confirmada · ${asistente.origenAsistencia === "EXCEL" ? "Excel" : "manual"}`
-                                      : idsSeleccionados.has(asistente.id) ? "Seleccionada" : "Pendiente"}
+                                      : asistente.asistenciaEstado === "AUSENTE"
+                                        ? idsSeleccionados.has(asistente.id) ? "Seleccionada para corregir" : "No asistió · revisada"
+                                        : idsSeleccionados.has(asistente.id) ? "Seleccionada" : "Pendiente"}
                                   </span>
                                 </label>
                               ) : (
                                 <span>
-                                  {asistente.asistenciaVerificada
+                                  {asistente.asistenciaVerificada || asistente.asistenciaEstado === "PRESENTE"
                                     ? `Confirmada · ${asistente.origenAsistencia === "EXCEL" ? "Excel" : "manual"}`
-                                    : idsSeleccionados.has(asistente.id) ? "Seleccionada" : "Pendiente"}
+                                    : asistente.asistenciaEstado === "AUSENTE"
+                                      ? "No asistió · revisada"
+                                      : idsSeleccionados.has(asistente.id) ? "Seleccionada" : "Pendiente"}
                                 </span>
                               )}
                             </td>

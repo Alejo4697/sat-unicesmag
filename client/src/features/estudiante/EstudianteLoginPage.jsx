@@ -6,7 +6,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../../shared/context/AuthContext.jsx";
-import { solicitarOtp, verificarOtp } from "./api.js";
+import { solicitarOtp, verificarOtp, consultarCorreoEstudiante } from "./api.js";
 
 export default function EstudianteLoginPage() {
   const { user, iniciarSesionComo } = useAuth();
@@ -18,12 +18,13 @@ export default function EstudianteLoginPage() {
   // Formulario Solicitud
   const [documento, setDocumento] = useState("");
   const [correo, setCorreo] = useState("");
+  const [nombreEstudiante, setNombreEstudiante] = useState("");
+  const [buscandoCorreo, setBuscandoCorreo] = useState(false);
 
   // Formulario Verificación OTP
   const [otpDigits, setOtpDigits] = useState(["", "", "", "", "", ""]);
   const [correoOfuscado, setCorreoOfuscado] = useState("");
   const [segundosRestantes, setSegundosRestantes] = useState(900); // 15 min (900 seg)
-  const [codigoDev, setCodigoDev] = useState("");
 
   // Estados UI
   const [cargando, setCargando] = useState(false);
@@ -57,6 +58,34 @@ export default function EstudianteLoginPage() {
     segundosRestantes % 60,
   ).padStart(2, "0")}`;
 
+
+  // Autocompletar el correo al ingresar el documento o código estudiantil
+  useEffect(() => {
+    const docLimpio = documento.trim();
+    if (docLimpio.length < 5) {
+      setNombreEstudiante("");
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setBuscandoCorreo(true);
+      try {
+        const resp = await consultarCorreoEstudiante(docLimpio);
+        if (resp?.encontrado && resp.correo) {
+          setCorreo(resp.correo);
+          if (resp.nombre) setNombreEstudiante(resp.nombre);
+          setError("");
+        }
+      } catch {
+        // Silencioso mientras escribe
+      } finally {
+        setBuscandoCorreo(false);
+      }
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [documento]);
+
   // 1. Manejar Solicitud de OTP
   async function handleSolicitar(e) {
     e.preventDefault();
@@ -84,9 +113,8 @@ export default function EstudianteLoginPage() {
 
       setCorreoOfuscado(resp.correoOfuscado || correo.trim());
       setSegundosRestantes((resp.expiraMinutos || 15) * 60);
-      if (resp.codigoDev) setCodigoDev(resp.codigoDev);
       setPaso("verificacion");
-      setMensajeExito(resp.mensaje || "Código de verificación enviado.");
+      setMensajeExito(resp.mensaje || "Se ha enviado un código de verificación de 6 dígitos a su correo electrónico registrado.");
       setTimeout(() => inputRefs.current[0]?.focus(), 100);
     } catch (err) {
       setError(
@@ -246,54 +274,7 @@ export default function EstudianteLoginPage() {
             </div>
           )}
 
-          {/* Banner de código temporal provisional */}
-          {codigoDev && paso === "verificacion" && (
-            <div
-              style={{
-                background: "#fef3c7",
-                border: "1.5px dashed #f59e0b",
-                color: "#92400e",
-                padding: "12px 14px",
-                borderRadius: "8px",
-                fontSize: "0.875rem",
-                marginBottom: "1.25rem",
-                textAlign: "center",
-              }}
-            >
-              <div>
-                <i className="fas fa-key" style={{ marginRight: "6px" }}></i>
-                Código de acceso generado (provisional):{" "}
-                <strong
-                  style={{
-                    fontSize: "1.15rem",
-                    letterSpacing: "2px",
-                    color: "#b45309",
-                  }}
-                >
-                  {codigoDev}
-                </strong>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setOtpDigits(codigoDev.split(""));
-                }}
-                style={{
-                  marginTop: "8px",
-                  background: "#b45309",
-                  color: "#ffffff",
-                  border: "none",
-                  padding: "4px 12px",
-                  borderRadius: "4px",
-                  fontSize: "0.75rem",
-                  fontWeight: "600",
-                  cursor: "pointer",
-                }}
-              >
-                <i className="fas fa-paste"></i> Autocompletar en las casillas
-              </button>
-            </div>
-          )}
+
 
           {/* PASO 1: Ingreso de código o número de identificación y correo institucional */}
 
@@ -320,15 +301,39 @@ export default function EstudianteLoginPage() {
                     required
                   />
                 </div>
+                {nombreEstudiante && (
+                  <div style={{
+                    fontSize: "0.8rem",
+                    color: "#047857",
+                    background: "rgba(5, 150, 105, 0.08)",
+                    border: "1px solid rgba(5, 150, 105, 0.25)",
+                    borderRadius: "6px",
+                    padding: "6px 10px",
+                    marginTop: "6px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px"
+                  }}>
+                    <i className="fas fa-circle-check"></i>
+                    <span>Estudiante: <strong>{nombreEstudiante}</strong></span>
+                  </div>
+                )}
               </div>
 
               <div className="login-form-group">
-                <label htmlFor="est-email" className="login-label">
-                  <i
-                    className="fas fa-envelope"
-                    style={{ color: "var(--brand-primary)" }}
-                  ></i>
-                  Correo Electrónico Institucional
+                <label htmlFor="est-email" className="login-label" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span>
+                    <i
+                      className="fas fa-envelope"
+                      style={{ color: "var(--brand-primary)", marginRight: "6px" }}
+                    ></i>
+                    Correo Electrónico Institucional
+                  </span>
+                  {buscandoCorreo && (
+                    <span style={{ fontSize: "0.75rem", color: "#059669", fontWeight: "500" }}>
+                      <i className="fas fa-spinner fa-spin"></i> Buscando correo registrado...
+                    </span>
+                  )}
                 </label>
                 <div className="login-input-wrapper">
                   <i className="fas fa-at login-input-icon"></i>
@@ -339,6 +344,8 @@ export default function EstudianteLoginPage() {
                     placeholder="ejemplo@unicesmag.edu.co"
                     value={correo}
                     onChange={(e) => setCorreo(e.target.value)}
+                    readOnly={Boolean(nombreEstudiante && correo)}
+                    style={nombreEstudiante && correo ? { background: "#f8fafc", cursor: "default" } : {}}
                     required
                   />
                 </div>
@@ -350,8 +357,9 @@ export default function EstudianteLoginPage() {
                     display: "block",
                   }}
                 >
-                  Enviaremos un código numérico temporal de 6 dígitos a tu
-                  bandeja de correo.
+                  {nombreEstudiante && correo
+                    ? "Correo institucional oficial registrado en el sistema. El código se despachará a esta bandeja."
+                    : "Ingresa tu número de documento para cargar automáticamente tu correo registrado."}
                 </span>
               </div>
 

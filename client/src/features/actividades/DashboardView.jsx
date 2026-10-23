@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getResumenParticipantes } from "./participantesApi.js";
 import ParticipantesTable from "./ParticipantesTable.jsx";
 import ProfileBulkImport from "./ProfileBulkImport.jsx";
+import RoleProfilesManager from "./RoleProfilesManager.jsx";
 import { useAuth } from "../../shared/context/AuthContext.jsx";
 
 const CARDS = [
@@ -72,11 +73,19 @@ export default function DashboardView() {
         <p className="text-muted">Resumen basado en los registros guardados en el módulo VEC.</p>
       </section>
       {puedeAdministrar && <ProfileBulkImport onSaved={() => setActualizacion((current) => current + 1)} />}
+      {puedeAdministrar && (
+        <RoleProfilesManager
+          refreshKey={actualizacion}
+          onChanged={() => setActualizacion((current) => current + 1)}
+        />
+      )}
       <ParticipantesTable
-        key={actualizacion}
         limite={10}
         titulo="Participantes recientes"
         colapsadoInicialmente
+        puedeEliminar={puedeAdministrar}
+        refreshKey={actualizacion}
+        onChanged={() => setActualizacion((current) => current + 1)}
       />
     </section>
   );

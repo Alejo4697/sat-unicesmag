@@ -17,33 +17,35 @@ import { pool } from "../db/pool.js";
 
 const { Client } = pg;
 
-const PROGRAM_NAMES = {
-  '0': 'Arquitectura',
-  '2': 'Licenciatura en Educación Infantil',
-  '6': 'Derecho',
-  'BD': 'Especialización en Analítica y Big Data',
-  'C': 'Comunicación Social',
-  'CM': 'Especialización en Comercio y Mercadeo Digital',
-  'CS': 'Tecnología en Seguridad y Salud en el Trabajo',
-  'D': 'Administración de Empresas',
-  'E': 'Contaduría Pública Nocturna',
-  'EM': 'Especialización en Gerencia de Mercadeo',
-  'ES': 'Especialización en Seguridad Informática',
-  'I': 'Ingeniería de Sistemas',
-  'IF': 'Ingeniería Financiera',
-  'II': 'Ingeniería Industrial',
-  'K': 'Licenciatura en Educación Física',
-  'L': 'Diseño Gráfico',
-  'MD': 'Especialización en Mercadeo Digital',
-  'MG': 'Maestría en Gestión Empresarial',
-  'N': 'Contaduría Pública',
-  'O': 'Administración Turística y Hotelera',
-  'Q': 'Gestión Financiera',
-  'R': 'Psicología',
-  'SS': 'Especialización en Seguridad y Salud en el Trabajo',
-  'ST': 'Fisioterapia',
-  'TF': 'Tecnología en Finanzas',
-  'X': 'Licenciatura en Ciencias Naturales',
+const PROGRAM_NAMES_FALLBACK = {
+  '0': 'COTERMINALIDAD - ESPECIALIZACIONES',
+  '2': 'LICENCIATURA EN EDUCACION FISICA',
+  '6': 'DERECHO',
+  'BD': 'ESPECIALIZACIÓN EN BIG DATA',
+  'C': 'ESPECIALIZACIÓN EN GERENCIA DE PROYECTOS',
+  'CM': 'COTERMINALIDAD - (Esp. en Marketing Digital)',
+  'CS': 'COTERMINALIDAD - (Esp. en Seguridad / SST)',
+  'D': 'ESPECIALIZACIÓN EN GERENCIA DE PROYECTOS',
+  'E': 'DISEÑO GRÁFICO',
+  'EM': 'ESPECIALIZACIÓN EN MARKETING DIGITAL',
+  'ES': 'ESPECIALIZACIÓN EN SEGURIDAD INFORMÁTICA',
+  'I': 'INGENIERÍA DE SISTEMAS',
+  'IF': 'INGENIERÍA FINANCIERA',
+  'II': 'INGENIERÍA INDUSTRIAL',
+  'K': 'LICENCIATURA EN EDUCACIÓN INFANTIL',
+  'L': 'ARQUITECTURA',
+  'MD': 'TECNOLOGÍA EN MARKETING DIGITAL',
+  'MG': 'MAESTRÍA EN GERENCIA DE PROYECTOS',
+  'N': 'CONTADURÍA PÚBLICA',
+  'O': 'INGENIERÍA ELECTRÓNICA',
+  'Q': 'ADMINISTRACIÓN DE EMPRESAS',
+  'R': 'PSICOLOGÍA',
+  'S': 'PROFESIONALIZACIÓN EN ADMINISTRACIÓN DE EMPRESAS',
+  'SS': 'ESPECIALIZACIÓN EN GERENCIA DE LA SEGURIDAD Y SALUD EN EL TRABAJO',
+  'ST': 'FISIOTERAPIA',
+  'TF': 'INGENIERÍA FINANCIERA TRANSFERENCIA',
+  'V': 'PROFESIONALIZACIÓN EN CONTADURÍA PÚBLICA',
+  'X': 'LICENCIATURA EN QUIMICA',
   'Y': 'Inglés y Lenguas Extranjeras'
 };
 
@@ -158,73 +160,160 @@ export async function ejecutarSincronizacion() {
     // -------------------------------------------------------------
     // PASO 2: Sincronización de Programas Académicos (sat.programas_academicos)
     // -------------------------------------------------------------
-    console.log("\n PASO 2: Verificando y mapeando Programas Académicos...");
-    const progsProd = await academicClient.query(`
+    console.log("\n PASO 2: Sincronizando Programas Académicos desde vista_programas...");
+
+    // Cargar facultades disponibles para mapeo exacto
+    const facDbRes = await localClient.query(`SELECT id_facultades, UPPER(TRIM(nombre)) as nombre FROM sat.facultades;`);
+    for (const f of facDbRes.rows) {
+      facultadMap.set(f.nombre, f.id_facultades);
+    }
+
+    // Cargar SNIES únicos por CODIGO_PROGRAMA si vista_estudiantes_matriculados está disponible
+    const sniesMap = new Map();
+    if (vistasDisponibles.has("vista_estudiantes_matriculados")) {
+      const sniesRes = await academicClient.query(`
+        SELECT "CODIGO_PROGRAMA" as codigo, "CODIGO_PROGRAMA_2" as snies
+        FROM public.vista_estudiantes_matriculados
+        WHERE "CODIGO_PROGRAMA" IS NOT NULL AND "CODIGO_PROGRAMA_2" IS NOT NULL
+        GROUP BY "CODIGO_PROGRAMA", "CODIGO_PROGRAMA_2";
+      `);
+      const sniesCount = new Map();
+      for (const r of sniesRes.rows) {
+        const s = String(r.snies).trim();
+        sniesCount.set(s, (sniesCount.get(s) || 0) + 1);
+      }
+      for (const r of sniesRes.rows) {
+        const c = String(r.codigo).trim();
+        const s = String(r.snies).trim();
+        if (sniesCount.get(s) === 1 && !sniesMap.has(c)) {
+          sniesMap.set(c, s);
+        }
+      }
+    }
+
+    // Mapear programas existentes en sat.programas_academicos
+    // (Preservamos estrictamente id_programas_academicos para no romper FKs ni alterar cardinalidad)
+    const progMap = new Map(); // codigo_externo -> id_programas_academicos
+    const progMapByName = new Map();
+    const progsExistentes = await localClient.query(`
+      SELECT id_programas_academicos, codigo_externo, nombre, id_facultades, codigo_snies
+      FROM sat.programas_academicos;
+    `);
+    for (const p of progsExistentes.rows) {
+      if (p.codigo_externo) {
+        const c = String(p.codigo_externo).trim();
+        if (!progMap.has(c)) {
+          progMap.set(c, p.id_programas_academicos);
+        }
+      }
+      if (p.nombre) {
+        progMapByName.set(String(p.nombre).trim().toUpperCase(), p.id_programas_academicos);
+      }
+    }
+
+    const PRIORITY_NAMES = {
+      "BD": "ESPECIALIZACIÓN EN BIG DATA",
+      "C": "ESPECIALIZACIÓN EN GERENCIA DE PROYECTOS",
+      "CS": "ESPECIALIZACIÓN EN GERENCIA DE LA SEGURIDAD Y SALUD EN EL TRABAJO",
+      "0": "COTERMINALIDAD - ESPECIALIZACIONES"
+    };
+
+    let programasActualizados = 0;
+    let programasNuevos = 0;
+
+    if (vistasDisponibles.has("vista_programas")) {
+      const progProd = await academicClient.query(`
+        SELECT DISTINCT nombre_programa, codigo, nombre_facultad
+        FROM public.vista_programas
+        ORDER BY codigo, nombre_programa;
+      `);
+
+      for (const r of progProd.rows) {
+        const code = String(r.codigo || "").trim();
+        const nombreProg = String(r.nombre_programa || "").trim();
+        const nombreFac = String(r.nombre_facultad || "").trim().toUpperCase();
+        const idFac = facultadMap.get(nombreFac) || null;
+        const snies = sniesMap.get(code) || null;
+
+        if (!code || !nombreProg) continue;
+
+        if (progMap.has(code)) {
+          const idProg = progMap.get(code);
+          const targetName = PRIORITY_NAMES[code] || nombreProg;
+
+          await localClient.query(`
+            UPDATE sat.programas_academicos
+            SET 
+              nombre = $1,
+              id_facultades = COALESCE($2, id_facultades),
+              codigo_snies = COALESCE($3, codigo_snies),
+              activo = true,
+              actualizado_en = NOW()
+            WHERE id_programas_academicos = $4;
+          `, [targetName, idFac, snies, idProg]);
+          programasActualizados++;
+
+          // Registrar especializaciones con código '0' como programas independientes en el catálogo
+          if (code === '0' && nombreProg.toUpperCase().startsWith('ESPECIALIZACIÓN')) {
+            const uName = nombreProg.toUpperCase();
+            if (!progMapByName.has(uName)) {
+              const insEsp = await localClient.query(`
+                INSERT INTO sat.programas_academicos (
+                  codigo_externo, nombre, id_facultades, id_sedes, spadies, activo, actualizado_en
+                ) VALUES ($1, $2, $3, $4, true, true, NOW())
+                RETURNING id_programas_academicos;
+              `, [null, nombreProg, idFac, idSede]);
+              progMapByName.set(uName, insEsp.rows[0].id_programas_academicos);
+              programasNuevos++;
+            }
+          }
+        } else {
+          const targetName = PRIORITY_NAMES[code] || nombreProg;
+          const uName = targetName.toUpperCase();
+          if (!progMapByName.has(uName)) {
+            const insRes = await localClient.query(`
+              INSERT INTO sat.programas_academicos (
+                codigo_externo, nombre, id_facultades, id_sedes, codigo_snies, spadies, activo, actualizado_en
+              ) VALUES ($1, $2, $3, $4, $5, true, true, NOW())
+              RETURNING id_programas_academicos;
+            `, [code, targetName, idFac, idSede, snies]);
+
+            progMap.set(code, insRes.rows[0].id_programas_academicos);
+            progMapByName.set(uName, insRes.rows[0].id_programas_academicos);
+            programasNuevos++;
+          }
+        }
+      }
+    }
+
+    // Asegurar que cualquier programa referenciado por estudiantes en vista_informacion_estudiantes esté mapeado
+    const progsEstProd = await academicClient.query(`
       SELECT DISTINCT "CODIGO_PROGRAMA" 
       FROM public.vista_informacion_estudiantes 
       WHERE "CODIGO_PROGRAMA" IS NOT NULL;
     `);
 
-    const progMap = new Map(); // codigo_externo -> id_programas_academicos
-    const progsExistentes = await localClient.query(`SELECT id_programas_academicos, codigo_externo, nombre FROM sat.programas_academicos;`);
-    for (const p of progsExistentes.rows) {
-      if (p.codigo_externo) {
-        progMap.set(String(p.codigo_externo).trim(), p.id_programas_academicos);
-      }
-    }
-
-    for (const r of progsProd.rows) {
+    for (const r of progsEstProd.rows) {
       const code = String(r.CODIGO_PROGRAMA).trim();
       if (!progMap.has(code)) {
-        const nombreProg = PROGRAM_NAMES[code] || `Programa ${code}`;
+        const nombreProg = PROGRAM_NAMES_FALLBACK[code] || `Programa ${code}`;
         const insProg = await localClient.query(`
-          INSERT INTO sat.programas_academicos (codigo_externo, nombre, id_sedes, spadies, activo)
-          VALUES ($1, $2, $3, true, true)
+          INSERT INTO sat.programas_academicos (codigo_externo, nombre, id_sedes, spadies, activo, actualizado_en)
+          VALUES ($1, $2, $3, true, true, NOW())
           RETURNING id_programas_academicos;
         `, [code, nombreProg, idSede]);
         progMap.set(code, insProg.rows[0].id_programas_academicos);
-        console.log(`   + Nuevo programa registrado: [${code}] ${nombreProg}`);
+        programasNuevos++;
       }
     }
+
     const defaultProgId = progMap.values().next().value;
-    console.log(`[OK] ${progMap.size} programas académicos listos.`);
-
-    // Asociar facultades a sat.programas_academicos según correspondencia institucional
-    if (facultadMap.size > 0) {
-      for (const [nombreFac, idFac] of facultadMap.entries()) {
-        let pattern = null;
-        if (nombreFac.includes("INGENIERIA")) {
-          pattern = "%INGENIER%|%SISTEMAS%|%ELECTRÓNICA%|%ELECTRONICA%|%BIG DATA%|%SEGURIDAD INFORMÁTICA%";
-        } else if (nombreFac.includes("ARQUITECTURA") || nombreFac.includes("BELLAS ARTES")) {
-          pattern = "%ARQUITECT%|%DISEÑO%|%DISENO%|%BIOCLIMÁTICO%";
-        } else if (nombreFac.includes("ADMINISTRATIVAS") || nombreFac.includes("CONTABLES")) {
-          pattern = "%ADMINISTRAC%|%CONTADUR%|%FINANC%|%MARKETING%|%MERCADEO%|%GESTIÓN%|%PROYECTOS%";
-        } else if (nombreFac.includes("SOCIALES") || nombreFac.includes("HUMANAS")) {
-          pattern = "%DERECHO%|%PSICOLOG%|%COMUNICAC%";
-        } else if (nombreFac.includes("EDUCACI")) {
-          pattern = "%EDUCAC%|%LICENCIAT%|%PEDAGOG%|%DOCENCIA%";
-        } else if (nombreFac.includes("SALUD")) {
-          pattern = "%SALUD%|%FISIOTERAPIA%";
-        }
-
-        if (pattern) {
-          const keywords = pattern.split("|");
-          for (const kw of keywords) {
-            await localClient.query(`
-              UPDATE sat.programas_academicos
-              SET id_facultades = $1
-              WHERE UPPER(nombre) LIKE UPPER($2) AND (id_facultades IS NULL OR id_facultades != $1);
-            `, [idFac, kw]);
-          }
-        }
-      }
-      console.log(`[OK] Relación Programas <-> Facultades actualizada en DataBasePractica.`);
-    }
+    console.log(`[OK] Programas académicos sincronizados (${programasActualizados} actualizados in-place, ${programasNuevos} nuevos registrados, ${progMap.size} activos).`);
 
     // -------------------------------------------------------------
-    // PASO 2: Sincronización de Personas (sat.personas)
+    // PASO 3: Sincronización de Personas (sat.personas)
     // -------------------------------------------------------------
-    console.log("\n PASO 2: Leyendo vista_informacion_estudiantes de prod18sep2...");
+    console.log("\n PASO 3: Leyendo vista_informacion_estudiantes de prod18sep2...");
     const estProd = await academicClient.query(`
       SELECT 
         "CODIGO",
@@ -331,7 +420,7 @@ export async function ejecutarSincronizacion() {
         const fNac = e.FECHA_NACIMIENTO ? new Date(e.FECHA_NACIMIENTO) : null;
         const gen = (e.GENERO || "").trim() || null;
         const sem = parseInt(e.SEMESTRE_MATRICULA, 10) || 1;
-        const estadoMat = String(e.id_estado_estudiante) === "1" ? "ACTIVO" : "INACTIVO";
+        const estadoMat = (String(e.id_estado_estudiante) === "3" || String(e.id_estado_estudiante) === "1") ? "MATRICULADO" : "INACTIVO";
         const corte = (e.CORTE_INGRESO || "").trim() || null;
 
         const res = await localClient.query(`

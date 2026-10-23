@@ -8,13 +8,23 @@ import {
   validarParticipantesMasivo,
 } from "./participantesApi.js";
 
-const MAX_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_ROWS = 500;
 const ROLE_OPTIONS = [
   { value: "ESTUDIANTE", label: "Estudiante" },
   { value: "EGRESADO", label: "Egresado" },
   { value: "COLABORADOR", label: "Colaborador" },
   { value: "EXTERNO", label: "Externo" },
+];
+const UNKNOWN_ROLE_OPTIONS = ROLE_OPTIONS.filter((role) => role.value !== "ESTUDIANTE");
+const STATUS_FILTER_OPTIONS = [
+  ["valid", "Listo para inscribir"],
+  ["invalid", "Hay que revisar"],
+  ["duplicate", "Repetido"],
+  ["registered", "Inscrito"],
+  ["failed", "No se pudo inscribir"],
+  ["not_found", "Sin perfil"],
+  ["registering", "Inscribiendo"],
 ];
 
 function normalizeText(value) {
@@ -24,15 +34,6 @@ function normalizeText(value) {
     .replace(/\s+/g, " ")
     .trim()
     .toLocaleUpperCase("es");
-}
-
-function normalizeRole(value) {
-  const role = normalizeText(value).replace(/[^A-Z]/g, "");
-  if (["ESTUDIANTE", "ESTUDIANTES", "ALUMNO", "ALUMNA"].includes(role)) return "ESTUDIANTE";
-  if (["EGRESADO", "EGRESADOS", "EGRESADA", "EGRESADAS", "GRADUADO", "GRADUADOS", "GRADUADA", "GRADUADAS"].includes(role)) return "EGRESADO";
-  if (["COLABORADOR", "COLABORADORES", "DOCENTE", "FUNCIONARIO", "EMPLEADO"].includes(role)) return "COLABORADOR";
-  if (["EXTERNO", "EXTERNOS"].includes(role)) return "EXTERNO";
-  return "";
 }
 
 function normalizeDocumentType(value) {
@@ -74,13 +75,13 @@ function normalizeGender(value) {
 }
 
 function prepareUnknownParticipant(row) {
-  const tipo = row.tipo || "";
+  const tipo = UNKNOWN_ROLE_OPTIONS.some((role) => role.value === row.tipo) ? row.tipo : "";
   const externalIdentifier = tipo === "EXTERNO"
     ? row.identificacion || row.codigoInstitucional || ""
     : row.identificacion || "";
   return {
     identificacion: externalIdentifier,
-    codigoInstitucional: tipo === "ESTUDIANTE" ? row.codigoInstitucional || "" : "",
+    codigoInstitucional: "",
     nombres: row.nombres || "",
     apellidos: row.apellidos || "",
     tipoDocumento: row.tipoDocumento || "CC",
@@ -105,10 +106,9 @@ function validarBorradorNoEncontrado(draft) {
   };
   const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const namePattern = /^[\p{L}\p{M}][\p{L}\p{M}\s'.-]*$/u;
-  const student = draft.tipo === "ESTUDIANTE";
 
-  if (!ROLE_OPTIONS.some((role) => role.value === draft.tipo)) {
-    errors.tipo = "Selecciona el rol de la persona.";
+  if (!UNKNOWN_ROLE_OPTIONS.some((role) => role.value === draft.tipo)) {
+    errors.tipo = "Selecciona Egresado, Colaborador o Externo. Los estudiantes deben estar en la base institucional.";
   }
   if (!["CC", "TI", "CE", "PA", "RC", "NIT", "PPT", "PEP", "CD", "SC", "NUIP", "OTRO"].includes(draft.tipoDocumento)) {
     errors.tipoDocumento = "Selecciona un tipo de documento válido.";
@@ -117,13 +117,6 @@ function validarBorradorNoEncontrado(draft) {
   if (draft.identificacion && (!/^[\p{L}\p{N}._-]{1,64}$/u.test(draft.identificacion.trim()))) {
     errors.identificacion = "Usa máximo 64 letras o números; también se permiten punto, guion y guion bajo.";
   }
-  if (student) {
-    setRequired("codigoInstitucional", "El código institucional", draft.codigoInstitucional);
-    if (draft.codigoInstitucional && !/^[\p{L}\p{N}._-]{1,64}$/u.test(draft.codigoInstitucional.trim())) {
-      errors.codigoInstitucional = "El código debe tener máximo 64 letras o números.";
-    }
-  }
-
   for (const [field, label] of [["nombres", "Los nombres"], ["apellidos", "Los apellidos"]]) {
     setRequired(field, label, draft[field]);
     if (draft[field] && (draft[field].trim().length < 2
@@ -152,13 +145,6 @@ function validarBorradorNoEncontrado(draft) {
   setRequired("correo", "El correo personal", draft.correo);
   if (draft.correo && (!emailPattern.test(draft.correo.trim()) || draft.correo.length > 254)) {
     errors.correo = "Escribe un correo válido de máximo 254 caracteres.";
-  }
-  if (student) {
-    setRequired("correoInstitucional", "El correo institucional", draft.correoInstitucional);
-    if (draft.correoInstitucional
-      && (!emailPattern.test(draft.correoInstitucional.trim()) || draft.correoInstitucional.length > 254)) {
-      errors.correoInstitucional = "Escribe un correo institucional válido.";
-    }
   }
   for (const [field, label] of [
     ["celular", "El teléfono móvil"],
@@ -216,12 +202,11 @@ function UnknownParticipantDialog({
 
   if (!row || !draft) return null;
 
-  const student = draft.tipo === "ESTUDIANTE";
   const validationErrors = validarBorradorNoEncontrado(draft);
   const stepFields = [
-    ["tipo", "tipoDocumento", "identificacion", ...(student ? ["codigoInstitucional"] : [])],
+    ["tipo", "tipoDocumento", "identificacion"],
     ["nombres", "apellidos", "fechaNacimiento", "lugarNacimiento", "genero"],
-    [...(student ? ["correoInstitucional"] : []), "correo", "celular", "telefono", "direccion", "municipio"],
+    ["correo", "celular", "telefono", "direccion", "municipio"],
   ];
   const currentErrors = stepFields[step].filter((name) => validationErrors[name]);
   const showFieldError = (name) => attemptedSteps.includes(step) ? validationErrors[name] : "";
@@ -355,7 +340,7 @@ function UnknownParticipantDialog({
                     required
                   >
                     <option value="">Selecciona el rol</option>
-                    {ROLE_OPTIONS.map((role) => (
+                    {UNKNOWN_ROLE_OPTIONS.map((role) => (
                       <option key={role.value} value={role.value}>{role.label}</option>
                     ))}
                   </select>
@@ -389,7 +374,6 @@ function UnknownParticipantDialog({
                   {fieldError("tipoDocumento")}
                 </label>
                 {field("identificacion", "Número de documento")}
-                {student && field("codigoInstitucional", "Código institucional / estudiantil")}
                 <label className="vec-bulk-unregistered-modal__field">
                   <span>Variable o modalidad de inscripción</span>
                   <select
@@ -448,7 +432,6 @@ function UnknownParticipantDialog({
           {step === 2 && (
             <section className="vec-bulk-unregistered-modal__group">
               <div className="vec-bulk-unregistered-modal__grid">
-                {student && field("correoInstitucional", "Correo institucional", "email")}
                 {field("correo", "Correo personal", "email")}
                 {field("celular", "Teléfono móvil / celular", "tel")}
                 {field("telefono", "Teléfono alternativo", "tel")}
@@ -649,6 +632,14 @@ const COLUMN_DEFINITIONS = {
     aliases: ["ROL", "TIPODEPARTICIPANTE", "ROLDELPARTICIPANTE"],
     matches: (header) => /(?:ROL|TIPO).*(?:PARTICIPANTE|PERSONA)/.test(header),
   },
+  programa: {
+    aliases: ["PROGRAMA", "PROGRAMAACADEMICO", "PROGRAMACURSA", "PROGRAMADEFORMACION"],
+    matches: (header) => /(?:PROGRAMAACADEMICO|PROGRAMACURSA|PROGRAMADEFORMACION|PROGRAMADEESTUDIO)/.test(header),
+  },
+  dependencia: {
+    aliases: ["DEPENDENCIA", "DEPENDENCIADETRABAJO", "AREA", "FACULTAD"],
+    matches: (header) => /(?:DEPENDENCIA|FACULTAD|AREADETRABAJO)/.test(header),
+  },
   nombres: {
     aliases: ["NOMBRES", "NOMBRE", "PRIMERNOMBRE"],
     matches: (header) => /^(?:NOMBRES?|PRIMERNOMBRE)$/.test(header),
@@ -710,6 +701,14 @@ const COLUMN_DEFINITIONS = {
     aliases: ["APOYO", "TIPODEAPOYO", "TIPOAPOYO", "MODALIDAD", "VARIABLE", "PROGRAMADEAPOYO"],
     matches: (header) => /(?:APOYO|MODALIDAD|VARIABLE)/.test(header),
   },
+  actividad: {
+    aliases: ["ACTIVIDAD"],
+    matches: (header) => /^ACTIVIDAD/.test(header),
+  },
+  periodo: {
+    aliases: ["PERIODO", "PERIODOACADEMICO"],
+    matches: (header) => /^PERIODO(?:ACADEMICO)?$/.test(header),
+  },
 };
 
 function isIdentifierCandidate(value) {
@@ -718,7 +717,130 @@ function isIdentifierCandidate(value) {
     && /^[\p{L}\p{N}._-]+$/u.test(candidate);
 }
 
-function parseWorkbook(workbook) {
+function participantColumnsForRows(rows) {
+  for (let headerIndex = 0; headerIndex < Math.min(rows.length, 20); headerIndex += 1) {
+    const headers = new Map();
+    (rows[headerIndex] || []).forEach((cell, index) => {
+      const header = normalizeHeader(cellText(cell));
+      if (header) headers.set(header, index + 1);
+    });
+    const columns = Object.fromEntries(Object.entries(COLUMN_DEFINITIONS).map(([key, definition]) => [
+      key,
+      findColumn(headers, definition.aliases, definition.matches),
+    ]));
+    if (columns.identificacion || columns.codigo) {
+      return { headerNumber: headerIndex + 1, columns };
+    }
+  }
+  return null;
+}
+
+function participantEntry(row, rowNumber, columns) {
+  const identificacion = columns.identificacion ? cellText(row[columns.identificacion - 1]) : "";
+  const codigoInstitucional = columns.codigo ? cellText(row[columns.codigo - 1]) : "";
+  return {
+    rowNumber,
+    identificacion,
+    codigoInstitucional,
+    nombres: columns.nombres ? cellText(row[columns.nombres - 1]) : "",
+    nombreCompleto: columns.nombreCompleto ? cellText(row[columns.nombreCompleto - 1]) : "",
+    apellidos: columns.apellidos ? cellText(row[columns.apellidos - 1]) : "",
+    tipoDocumento: columns.tipoDocumento ? normalizeDocumentType(cellText(row[columns.tipoDocumento - 1])) : "",
+    fechaNacimiento: columns.fechaNacimiento ? normalizeSpreadsheetDate(row[columns.fechaNacimiento - 1]) : "",
+    lugarNacimiento: columns.lugarNacimiento ? cellText(row[columns.lugarNacimiento - 1]) : "",
+    genero: columns.genero ? normalizeGender(cellText(row[columns.genero - 1])) : "",
+    correo: columns.correo ? cellText(row[columns.correo - 1]) : "",
+    celular: columns.celular ? cellText(row[columns.celular - 1]) : "",
+    telefono: columns.telefono ? cellText(row[columns.telefono - 1]) : "",
+    direccion: columns.direccion ? cellText(row[columns.direccion - 1]) : "",
+    municipio: columns.municipio ? cellText(row[columns.municipio - 1]) : "",
+    rolOriginal: columns.rol ? cellText(row[columns.rol - 1]) : "",
+    programaOriginal: columns.programa ? cellText(row[columns.programa - 1]) : "",
+    dependenciaOriginal: columns.dependencia ? cellText(row[columns.dependencia - 1]) : "",
+    apoyoOriginal: columns.apoyo ? cellText(row[columns.apoyo - 1]) : "",
+  };
+}
+
+function periodKey(value) {
+  const period = normalizeText(value).replace(/[^A-Z0-9]/g, "");
+  const yearMatch = period.match(/20\d{2}/);
+  if (!yearMatch) return "";
+
+  const yearIndex = yearMatch.index;
+  const prefix = period.slice(0, yearIndex);
+  const suffix = period.slice(yearIndex + yearMatch[0].length);
+  let term = "";
+  if (/SEGUNDO|IIP|II/.test(prefix) || /^[2]/.test(suffix)) term = "2";
+  else if (/PRIMER|IP|(^|[^I])I$/.test(prefix) || /^[1I]/.test(suffix)) term = "1";
+  return term ? `${yearMatch[0]}-${term}` : yearMatch[0];
+}
+
+function parseActivityWorkbook(workbook, activityName, periodName, sheets) {
+  const selectedActivity = normalizeText(activityName);
+  const selectedPeriod = periodKey(periodName);
+  const participants = [];
+
+  for (const { name, headerNumber, columns } of sheets) {
+    const sheet = workbook.Sheets[name];
+    if (!sheet["!ref"]) continue;
+    const range = XLSX.utils.decode_range(sheet["!ref"]);
+    const readColumn = (rowIndex, column) => {
+      if (!column) return "";
+      const cell = sheet[XLSX.utils.encode_cell({ r: rowIndex, c: column - 1 })];
+      return cellText(cell?.w ?? cell?.v);
+    };
+    const lastColumn = Math.max(...Object.values(columns).filter(Boolean));
+
+    for (let rowIndex = headerNumber; rowIndex <= range.e.r; rowIndex += 1) {
+      const identificacion = readColumn(rowIndex, columns.identificacion);
+      const codigoInstitucional = readColumn(rowIndex, columns.codigo);
+      if (!identificacion && !codigoInstitucional) continue;
+      if (normalizeText(readColumn(rowIndex, columns.actividad)) !== selectedActivity) continue;
+      if (columns.periodo && selectedPeriod) {
+        const sourcePeriod = readColumn(rowIndex, columns.periodo);
+        if (!sourcePeriod || periodKey(sourcePeriod) !== selectedPeriod) continue;
+      }
+
+      const row = Array.from(
+        { length: lastColumn },
+        (_, columnIndex) => readColumn(rowIndex, columnIndex + 1),
+      );
+      participants.push(participantEntry(row, rowIndex + 1, columns));
+    }
+  }
+
+  if (!participants.length) {
+    throw new Error(
+      `No encontramos participantes para "${activityName}"${periodName ? ` en el periodo ${periodName}` : ""}. Verifica que el nombre de la actividad y el periodo coincidan con los del archivo.`,
+    );
+  }
+  return prepareRows(participants);
+}
+
+function parseWorkbook(workbook, selectedEvent) {
+  const activitySheets = [];
+  for (const name of workbook.SheetNames) {
+    const firstRows = XLSX.utils.sheet_to_json(workbook.Sheets[name], {
+      header: 1,
+      defval: "",
+      raw: false,
+      blankrows: false,
+      range: { s: { r: 0, c: 0 }, e: { r: 19, c: 51 } },
+    });
+    const header = participantColumnsForRows(firstRows);
+    if (header?.columns.actividad) {
+      activitySheets.push({ name, ...header });
+    }
+  }
+  if (activitySheets.length) {
+    return parseActivityWorkbook(
+      workbook,
+      selectedEvent?.actividad,
+      selectedEvent?.periodo,
+      activitySheets,
+    );
+  }
+
   const sheets = workbook.SheetNames
     .map((name) => ({
       name,
@@ -749,28 +871,8 @@ function parseWorkbook(workbook) {
       sheet.rows.forEach((row, index) => {
         const rowNumber = index + 1;
         if (rowNumber <= headerNumber) return;
-        const identificacion = columns.identificacion ? cellText(row[columns.identificacion - 1]) : "";
-        const codigoInstitucional = columns.codigo ? cellText(row[columns.codigo - 1]) : "";
-        const entry = {
-          rowNumber,
-          identificacion,
-          codigoInstitucional,
-          nombres: columns.nombres ? cellText(row[columns.nombres - 1]) : "",
-          nombreCompleto: columns.nombreCompleto ? cellText(row[columns.nombreCompleto - 1]) : "",
-          apellidos: columns.apellidos ? cellText(row[columns.apellidos - 1]) : "",
-          tipoDocumento: columns.tipoDocumento ? normalizeDocumentType(cellText(row[columns.tipoDocumento - 1])) : "",
-          fechaNacimiento: columns.fechaNacimiento ? normalizeSpreadsheetDate(row[columns.fechaNacimiento - 1]) : "",
-          lugarNacimiento: columns.lugarNacimiento ? cellText(row[columns.lugarNacimiento - 1]) : "",
-          genero: columns.genero ? normalizeGender(cellText(row[columns.genero - 1])) : "",
-          correo: columns.correo ? cellText(row[columns.correo - 1]) : "",
-          celular: columns.celular ? cellText(row[columns.celular - 1]) : "",
-          telefono: columns.telefono ? cellText(row[columns.telefono - 1]) : "",
-          direccion: columns.direccion ? cellText(row[columns.direccion - 1]) : "",
-          municipio: columns.municipio ? cellText(row[columns.municipio - 1]) : "",
-          rolOriginal: columns.rol ? cellText(row[columns.rol - 1]) : "",
-          apoyoOriginal: columns.apoyo ? cellText(row[columns.apoyo - 1]) : "",
-        };
-        if (identificacion || codigoInstitucional) rows.push(entry);
+        const entry = participantEntry(row, rowNumber, columns);
+        if (entry.identificacion || entry.codigoInstitucional) rows.push(entry);
       });
       if (rows.length) return prepareRows(rows);
     }
@@ -809,6 +911,8 @@ function parseWorkbook(workbook) {
           direccion: "",
           municipio: "",
           rolOriginal: "",
+          programaOriginal: "",
+          dependenciaOriginal: "",
           apoyoOriginal: "",
         });
       }
@@ -825,13 +929,10 @@ function prepareRows(entries) {
       ...entry,
       id: `${entry.rowNumber}-${identifier}`,
       identificador: identifier,
-      tipo: entry.rolOriginal ? normalizeRole(entry.rolOriginal) : "ESTUDIANTE",
+      tipo: "",
       status: "waiting",
       message: "Pendiente de validar.",
     };
-    if (entry.rolOriginal && !base.tipo) {
-      return { ...base, status: "invalid", message: `El rol "${entry.rolOriginal}" no es compatible. Usa estudiante, egresado, colaborador o externo.` };
-    }
     if (!identifier) return { ...base, status: "invalid", message: "No se encontró documento ni código institucional." };
     if ((entry.identificacion || entry.codigoInstitucional) && !isIdentifierCandidate(entry.identificacion || entry.codigoInstitucional)) {
       return { ...base, status: "invalid", message: "El documento o código no tiene un formato válido." };
@@ -841,6 +942,30 @@ function prepareRows(entries) {
   if (!rows.length) throw new Error("No se encontraron identificaciones o códigos institucionales en el Excel.");
   if (rows.length > MAX_ROWS) throw new Error(`El archivo supera el máximo de ${MAX_ROWS} participantes.`);
   return rows;
+}
+
+function roleValue(value) {
+  const normalized = normalizeHeader(value);
+  const aliases = {
+    ESTUDIANTE: "ESTUDIANTE",
+    ESTUDIANTES: "ESTUDIANTE",
+    ALUMNO: "ESTUDIANTE",
+    ALUMNA: "ESTUDIANTE",
+    EGRESADO: "EGRESADO",
+    EGRESADOS: "EGRESADO",
+    GRADUADO: "EGRESADO",
+    COLABORADOR: "COLABORADOR",
+    COLABORADORES: "COLABORADOR",
+    FUNCIONARIO: "COLABORADOR",
+    EXTERNO: "EXTERNO",
+    EXTERNOS: "EXTERNO",
+  };
+  return aliases[normalized] || "";
+}
+
+function uniqueValues(rows, field) {
+  return [...new Set(rows.map((row) => String(row[field] || "").trim()).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right, "es"));
 }
 
 async function mapConcurrent(items, limit, worker) {
@@ -868,6 +993,13 @@ export default function BulkParticipantImport({ onPendingChange }) {
   const [events, setEvents] = useState([]);
   const [selectedEventId, setSelectedEventId] = useState("");
   const [supportFilter, setSupportFilter] = useState("all");
+  const [advancedFilters, setAdvancedFilters] = useState({
+    search: "",
+    role: "all",
+    status: "all",
+    program: "all",
+    dependency: "all",
+  });
   const [bulkSupportVariable, setBulkSupportVariable] = useState("");
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -907,15 +1039,55 @@ export default function BulkParticipantImport({ onPendingChange }) {
   const notFoundRows = rows.filter((row) => row.status === "not_found");
   const editingUnknownRow = notFoundRows.find((row) => row.id === editingUnknownId);
   const duplicateCount = rows.filter((row) => row.status === "duplicate").length;
-  const reviewRows = rows.filter((row) => !["not_found", "duplicate"].includes(row.status));
+  const peopleByRole = new Map();
+  rows.forEach((row) => {
+    if (!["valid", "registered", "duplicate"].includes(row.status)) return;
+    const personKey = normalizeText(row.identificacion || row.codigoInstitucional || row.identificador);
+    if (!personKey || !row.roles?.length) return;
+    const roles = peopleByRole.get(personKey) || new Set();
+    row.roles.forEach((role) => roles.add(role));
+    peopleByRole.set(personKey, roles);
+  });
+  const roleCounts = ROLE_OPTIONS.map((role) => ({
+    ...role,
+    count: [...peopleByRole.values()].filter((roles) => roles.has(role.value)).length,
+  }));
+  const reviewRows = rows.filter((row) => row.status !== "not_found");
+  const filterByAdvancedOptions = (row) => {
+    const search = normalizeText(advancedFilters.search);
+    const searchableText = normalizeText([
+      row.identificacion,
+      row.codigoInstitucional,
+      row.nombres,
+      row.nombreCompleto,
+      row.apellidos,
+      row.correo,
+    ].filter(Boolean).join(" "));
+    const rowRoles = [...(row.roles || []), row.tipo, row.rolOriginal]
+      .map(roleValue)
+      .filter(Boolean);
+    return (!search || searchableText.includes(search))
+      && (advancedFilters.role === "all" || rowRoles.includes(advancedFilters.role))
+      && (advancedFilters.status === "all" || row.status === advancedFilters.status)
+      && (advancedFilters.program === "all"
+        || normalizeText(row.programaOriginal) === normalizeText(advancedFilters.program))
+      && (advancedFilters.dependency === "all"
+        || normalizeText(row.dependenciaOriginal) === normalizeText(advancedFilters.dependency));
+  };
   const rowsForCurrentSupport = (items) => items.filter((row) => (
     supportFilter === "all"
       || (supportFilter === "none" && !row.modalidadVariable)
       || row.modalidadVariable === supportFilter
   ));
-  const filteredReviewRows = rowsForCurrentSupport(reviewRows);
-  const filteredNotFoundRows = rowsForCurrentSupport(notFoundRows);
-  const enabledNotFoundRows = filteredNotFoundRows.filter((row) => autoCreateRoles[row.tipo]);
+  const filteredReviewRows = rowsForCurrentSupport(reviewRows).filter(filterByAdvancedOptions);
+  const supportFilteredNotFoundRows = rowsForCurrentSupport(notFoundRows);
+  const filteredNotFoundRows = supportFilteredNotFoundRows.filter(filterByAdvancedOptions);
+  const programOptions = uniqueValues(rows, "programaOriginal");
+  const dependencyOptions = uniqueValues(rows, "dependenciaOriginal");
+  const advancedFiltersActive = Object.entries(advancedFilters).some(([key, value]) => (
+    key === "search" ? Boolean(value.trim()) : value !== "all"
+  ));
+  const enabledNotFoundRows = supportFilteredNotFoundRows.filter((row) => autoCreateRoles[row.tipo]);
   const readyUnknownRows = enabledNotFoundRows.filter(
     (row) => (!requiresSupportVariable || row.modalidadVariable)
       && Object.keys(validarBorradorNoEncontrado(prepareUnknownParticipant(row))).length === 0,
@@ -1001,6 +1173,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
     setUnknownDrafts({});
     setEditingUnknownId("");
     setSupportFilter("all");
+    setAdvancedFilters({ search: "", role: "all", status: "all", program: "all", dependency: "all" });
     setBulkSupportVariable("");
     setUnknownSubmitError("");
     setUnknownBatchProgress({ completed: 0, total: 0 });
@@ -1215,7 +1388,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
       return;
     }
     if (file.size > MAX_FILE_BYTES) {
-      setError("El archivo supera el límite de 5 MB.");
+      setError("El archivo supera el límite de 25 MB.");
       return;
     }
 
@@ -1265,6 +1438,8 @@ export default function BulkParticipantImport({ onPendingChange }) {
             ...row,
             status: validated?.status || "invalid",
             message: validated?.message || "No se recibió el resultado de validación.",
+            tipo: validated?.tipo || row.tipo,
+            roles: validated?.roles || [],
             identificacion: validated?.identificacion || row.identificacion,
             codigoInstitucional: row.codigoInstitucional,
             nombres: validated?.nombres || row.nombres,
@@ -1280,12 +1455,12 @@ export default function BulkParticipantImport({ onPendingChange }) {
         const missingRows = prepared.filter((row) => row.status === "not_found");
         if (validRows.length > 0) {
           setMessage(
-            `${validRows.length} participantes únicos listos para registrar.`
-            + (duplicateRows.length ? ` Se omitieron ${duplicateRows.length} duplicados o ya inscritos.` : "")
-            + (missingRows.length ? ` ${missingRows.length} no encontrados se muestran por separado.` : ""),
+            `${validRows.length} personas listas para inscribir.`
+            + (duplicateRows.length ? ` ${duplicateRows.length} repetidas o ya inscritas no se agregarán otra vez.` : "")
+            + (missingRows.length ? ` ${missingRows.length} personas necesitan que completes su ficha.` : ""),
           );
         } else if (missingRows.length || duplicateRows.length) {
-          setMessage("No hay participantes nuevos listos para registrar; revisa las tablas de omitidos.");
+          setMessage("No hay personas listas para inscribir todavía. Revisa las que necesitan ayuda o aparecen repetidas.");
         }
         if (prepared.some((row) => row.status === "invalid")) {
           setError("Hay filas con otros errores de validación. Corrígelas y vuelve a cargar el archivo.");
@@ -1359,7 +1534,6 @@ export default function BulkParticipantImport({ onPendingChange }) {
   }
 
   async function downloadTemplate() {
-    if (!selectedEvent) return;
     const workbook = await createWorkbook();
     const sheet = workbook.addWorksheet("Participantes", {
       views: [{ state: "frozen", ySplit: 1 }],
@@ -1394,14 +1568,17 @@ export default function BulkParticipantImport({ onPendingChange }) {
       ["Completa una fila por participante usando documento o código institucional."],
       ["Para crear e inscribir en lote perfiles nuevos de egresados, colaboradores o externos, completa identificación, nombres, apellidos, tipo de documento, fecha y lugar de nacimiento, género, correo personal, celular, teléfono alternativo, dirección y municipio."],
       ["Las personas que ya existen se validan contra sus datos institucionales; los datos adicionales del Excel no reemplazan información existente."],
-      ["Indica el rol en la columna Rol de participante: Estudiante, Egresado, Colaborador o Externo. Si se omite, se conserva el comportamiento anterior y se toma como Estudiante."],
+      ["La búsqueda se hace por documento o código institucional. Si la persona existe, se mostrarán e inscribirán todos sus roles registrados; la columna Rol es opcional y no cambia los roles guardados."],
+      ["Si la persona no está registrada con ningún rol de participante, podrás crear su perfil como egresado, colaborador o externo. No se creará como estudiante."],
       ["Al marcar en la revisión los roles permitidos, se crean los perfiles en las tablas sat.egresados, sat.colaboradores o sat.externos (requiere la migración de roles) y se inscriben en la actividad seleccionada."],
       ["Para fechas usa AAAA-MM-DD o DD/MM/AAAA; el género debe coincidir con una opción permitida en el formulario."],
       ["El apoyo puede asignarse por fila en la revisión; también puedes asignar el mismo apoyo en lote."],
       ["Si incluyes una columna llamada Apoyo, Tipo de apoyo o Modalidad, el sistema intentará asociar el valor con las opciones de la actividad."],
       ["Se admiten archivos .xlsx, .xls, .xlsm, .xlsb, .ods, .csv y .tsv; encabezados en distintas filas o una columna identificable sin encabezados."],
       ["Las personas no encontradas se muestran aparte. Puedes crear su perfil con el rol correspondiente y asignar el apoyo elegido a esa inscripción."],
-      ["Actividad", eventLabel(selectedEvent)],
+      ["Actividad", selectedEvent
+        ? `${selectedEvent.actividad} · ${selectedEvent.periodo}`
+        : "Elige la actividad antes de cargar la lista."],
     ]);
     instructions.getColumn(1).width = 28;
     instructions.getColumn(2).width = 90;
@@ -1427,6 +1604,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
     const options = supportOptionsForEvent(event);
     setSelectedEventId(value);
     setSupportFilter("all");
+    setAdvancedFilters({ search: "", role: "all", status: "all", program: "all", dependency: "all" });
     setBulkSupportVariable(
       event?.variablesModalidades?.length === 1 && options.length === 1
         ? options[0].programaCompleto
@@ -1445,13 +1623,13 @@ export default function BulkParticipantImport({ onPendingChange }) {
         <span className="vec-bulk-registration__icon"><i className="fas fa-file-excel" aria-hidden="true"></i></span>
         <div>
           <span className="vec-bulk-registration__eyebrow">CARGA MASIVA</span>
-          <h2>Registrar participantes desde Excel</h2>
-          <p>Selecciona una actividad, carga la lista y revisa todos los registros antes de confirmarlos.</p>
+          <h2>Agrega varias personas de una vez</h2>
+          <p>Elige la actividad, carga una lista y revisa quiénes se van a inscribir. Te acompañamos en cada paso.</p>
         </div>
       </header>
 
       <div className="vec-bulk-registration__section">
-        <label className="form-label" htmlFor="bulk-activity">1. Actividad</label>
+        <label className="form-label" htmlFor="bulk-activity">Paso 1 · Elige la actividad</label>
         <select
           className="form-select"
           id="bulk-activity"
@@ -1459,7 +1637,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
           onChange={(event) => onActivityChange(event.target.value)}
           disabled={loading || validating || registering || creatingUnknownBatch}
         >
-          <option value="">{loading ? "Cargando actividades..." : "Selecciona una actividad"}</option>
+          <option value="">{loading ? "Cargando actividades..." : "Elige una actividad"}</option>
           {events.map((event) => (
             <option key={event.id} value={event.id} disabled={event.estado === "CANCELADA"}>
               {event.actividad}
@@ -1467,7 +1645,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
           ))}
         </select>
         {!loading && !events.length && (
-          <p className="vec-bulk-registration__hint">No hay actividades disponibles para registrar participantes.</p>
+          <p className="vec-bulk-registration__hint">Todavía no hay actividades disponibles. Pídele a la persona encargada que cree una actividad primero.</p>
         )}
         {events.some((event) => event.estado === "CANCELADA") && (
           <p className="vec-bulk-registration__hint">Las actividades canceladas aparecen en la lista, pero no se pueden seleccionar.</p>
@@ -1515,7 +1693,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
       {selectedEvent && supportOptions.length > 0 && (
         <div className="vec-bulk-registration__section">
           <label className="form-label" htmlFor="bulk-default-support">
-            2. Programa de bienestar o modalidad para esta carga
+            Paso 2 · ¿Todos tendrán la misma modalidad? <span className="vec-bulk-step-optional">Opcional</span>
           </label>
           <select
             className="form-select"
@@ -1532,7 +1710,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
             ))}
           </select>
           <p className="vec-bulk-registration__hint">
-            Si eliges una opción, se aplicará inicialmente a todas las filas. Podrás cambiar la modalidad de cada persona antes de inscribirla; el apoyo se asigna según la modalidad elegida.
+            Si todos van a la misma, elígela aquí. Si no, déjalo como está y podrás escoger una para cada persona después.
           </p>
         </div>
       )}
@@ -1541,9 +1719,9 @@ export default function BulkParticipantImport({ onPendingChange }) {
         <div className="vec-bulk-registration__file-heading">
           <div>
             <label className="form-label" htmlFor="bulk-file">
-              {supportOptions.length ? "3." : "2."} Archivo de participantes
+              Paso {supportOptions.length ? "3" : "2"} · Prepara y sube la lista
             </label>
-            <p>Incluye la columna Rol de participante para distinguir estudiantes, egresados, colaboradores y externos. Si se omite, el sistema asume Estudiante. Las personas no encontradas se pueden crear con el rol y los datos personales indicados.</p>
+            <p>Elige un archivo Excel o CSV. Buscaremos a cada persona por su documento o código y usaremos los roles que ya aparecen en el sistema.</p>
           </div>
           <button
             className="btn btn-outline btn-sm"
@@ -1552,15 +1730,44 @@ export default function BulkParticipantImport({ onPendingChange }) {
               setError("");
               downloadTemplate().catch(() => setError("Hubo un error al generar la plantilla."));
             }}
-            disabled={!selectedEvent || registering || creatingUnknownBatch}
+            disabled={registering || creatingUnknownBatch}
           >
             <i className="fas fa-download" aria-hidden="true"></i> Descargar plantilla
           </button>
         </div>
+        <div className="vec-upload-guide vec-upload-guide--participants">
+          <div className="vec-upload-guide__heading">
+            <span aria-hidden="true"><i className="fas fa-lightbulb"></i></span>
+            <div>
+              <strong>¿Cómo debe verse tu lista?</strong>
+              <p>Como una lista de clase: arriba van los títulos y debajo, una persona por fila.</p>
+            </div>
+          </div>
+          <div className="vec-upload-guide__grid">
+            <section>
+              <strong>Lo más importante</strong>
+              <p>Cada persona necesita su <b>documento o código institucional</b>. Puedes poner ambos para ayudarnos a encontrarla. El nombre es útil para revisar.</p>
+              <p>Si el libro incluye las columnas <b>Actividad</b> y <b>Periodo</b>, solo cargaremos las filas que coincidan con la actividad y el periodo elegidos.</p>
+            </section>
+            <section>
+              <strong>El rol no hace falta</strong>
+              <p>Buscamos sus roles en el sistema. Si no aparece, podrás completar sus datos y crearla como egresado, colaborador o externo; nunca la haremos estudiante automáticamente.</p>
+            </section>
+          </div>
+          <div className="vec-upload-guide__example">
+            <strong>Ejemplo de una lista correcta</strong>
+            <code>Documento | Código | Nombres | Apellidos<br />12345678 | 2024001 | Ana | Pérez</code>
+          </div>
+          <ul className="vec-bulk-file-rules">
+            <li>Una persona en cada fila.</li>
+            <li>Máximo 500 personas y 25 MB por archivo.</li>
+            <li>Se aceptan Excel, CSV y otros archivos de hojas de cálculo.</li>
+          </ul>
+        </div>
         <label className={`vec-bulk-registration__dropzone${!selectedEvent ? " is-disabled" : ""}`} htmlFor="bulk-file">
           <i className="fas fa-cloud-arrow-up" aria-hidden="true"></i>
-          <strong>{validating ? "Leyendo y verificando archivo..." : "Selecciona el archivo Excel"}</strong>
-          <span>Máximo {MAX_ROWS} participantes y 5 MB. Excel, ODS, CSV o TSV.</span>
+          <strong>{validating ? "Estamos leyendo tu lista..." : "Selecciona aquí tu archivo"}</strong>
+          <span>{selectedEvent ? "Cuando lo elijas, revisaremos la lista antes de inscribir a alguien." : "Primero elige una actividad."}</span>
           <input
             id="bulk-file"
             type="file"
@@ -1578,23 +1785,34 @@ export default function BulkParticipantImport({ onPendingChange }) {
         <div className="vec-bulk-preview">
           <div className="vec-bulk-preview__header">
             <div>
-              <span className="vec-bulk-registration__eyebrow">REVISIÓN DE LA CARGA</span>
-              <h3>Resumen de participantes</h3>
-              <p>Verifica los registros antes de confirmar. Los duplicados se omiten y las personas no encontradas se pueden crear por separado.</p>
+              <span className="vec-bulk-registration__eyebrow">PASO FINAL · REVISAR</span>
+              <h3>Mira la lista antes de inscribir</h3>
+              <p>Las personas encontradas aparecen arriba. Si algo necesita arreglarse, te lo explicaremos en su fila. {completedCount ? "Las que ya se inscribieron aparecen marcadas." : "Todavía no se ha inscrito a nadie."}</p>
             </div>
             <div className="vec-bulk-preview__counts" aria-label="Resumen de validación">
               <span className="vec-bulk-preview__count"><strong>{rows.length}</strong><small>Total</small></span>
-              <span className="vec-bulk-preview__count is-valid"><strong>{validCount}</strong><small>Válidos</small></span>
-              <span className="vec-bulk-preview__count is-invalid"><strong>{invalidCount}</strong><small>Con error</small></span>
-              {duplicateCount > 0 && <span className="vec-bulk-preview__count is-duplicate"><strong>{duplicateCount}</strong><small>Omitidos</small></span>}
-              {notFoundRows.length > 0 && <span className="vec-bulk-preview__count is-not-found"><strong>{notFoundRows.length}</strong><small>No encontrados</small></span>}
+              <span className="vec-bulk-preview__count is-valid"><strong>{validCount}</strong><small>Listos</small></span>
+              {invalidCount > 0 && <span className="vec-bulk-preview__count is-invalid"><strong>{invalidCount}</strong><small>Revisar</small></span>}
+              {duplicateCount > 0 && <span className="vec-bulk-preview__count is-duplicate"><strong>{duplicateCount}</strong><small>Repetidos</small></span>}
+              {notFoundRows.length > 0 && <span className="vec-bulk-preview__count is-not-found"><strong>{notFoundRows.length}</strong><small>Sin perfil</small></span>}
             </div>
           </div>
+          <section className="vec-bulk-role-summary" aria-label="Personas encontradas por rol">
+            <h4>Personas encontradas por rol</h4>
+            <div className="vec-bulk-role-summary__counts">
+              {roleCounts.map((role) => (
+                <span key={role.value}>
+                  <strong>{role.count}</strong>
+                  <small>{role.label}</small>
+                </span>
+              ))}
+            </div>
+          </section>
 
           {supportOptions.length > 0 && (
             <div className="vec-bulk-support-tools">
               <label className="form-group">
-                <span className="form-label">Filtrar por programa / modalidad</span>
+                <span className="form-label">Ver solo una modalidad</span>
                 <select
                   className="form-select"
                   value={supportFilter}
@@ -1610,7 +1828,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
                 </select>
               </label>
               <label className="form-group">
-                <span className="form-label">Cambiar modalidad para participantes pendientes</span>
+                <span className="form-label">Poner la misma modalidad a todos los pendientes</span>
                 <select
                   className="form-select"
                   value={bulkSupportVariable}
@@ -1633,16 +1851,109 @@ export default function BulkParticipantImport({ onPendingChange }) {
                   || !rows.some((row) => ["valid", "failed", "invalid", "not_found"].includes(row.status))
                 }
               >
-                Aplicar modalidad seleccionada
+                Poner modalidad a todos
               </button>
             </div>
           )}
 
+          <details className="vec-bulk-advanced-filters">
+            <summary>
+              <span><i className="fas fa-sliders" aria-hidden="true"></i> Filtros avanzados</span>
+              <small>Busca y acota la lista que estás revisando</small>
+            </summary>
+            <div className="vec-bulk-advanced-filters__fields">
+              <label className="form-group">
+                <span className="form-label">Nombre, documento o código</span>
+                <input
+                  className="form-control"
+                  type="search"
+                  value={advancedFilters.search}
+                  onChange={(event) => setAdvancedFilters((current) => ({ ...current, search: event.target.value }))}
+                  placeholder="Escribe para buscar"
+                />
+              </label>
+              <label className="form-group">
+                <span className="form-label">Rol</span>
+                <select
+                  className="form-select"
+                  value={advancedFilters.role}
+                  onChange={(event) => setAdvancedFilters((current) => ({ ...current, role: event.target.value }))}
+                >
+                  <option value="all">Todos los roles</option>
+                  {ROLE_OPTIONS.map((role) => (
+                    <option key={role.value} value={role.value}>{role.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="form-group">
+                <span className="form-label">Estado de validación</span>
+                <select
+                  className="form-select"
+                  value={advancedFilters.status}
+                  onChange={(event) => setAdvancedFilters((current) => ({ ...current, status: event.target.value }))}
+                >
+                  <option value="all">Todos los estados</option>
+                  {STATUS_FILTER_OPTIONS.map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              </label>
+              {programOptions.length > 0 && (
+                <label className="form-group">
+                  <span className="form-label">Programa (según el Excel)</span>
+                  <select
+                    className="form-select"
+                    value={advancedFilters.program}
+                    onChange={(event) => setAdvancedFilters((current) => ({ ...current, program: event.target.value }))}
+                  >
+                    <option value="all">Todos los programas</option>
+                    {programOptions.map((program) => <option key={program} value={program}>{program}</option>)}
+                  </select>
+                </label>
+              )}
+              {dependencyOptions.length > 0 && (
+                <label className="form-group">
+                  <span className="form-label">Dependencia (según el Excel)</span>
+                  <select
+                    className="form-select"
+                    value={advancedFilters.dependency}
+                    onChange={(event) => setAdvancedFilters((current) => ({ ...current, dependency: event.target.value }))}
+                  >
+                    <option value="all">Todas las dependencias</option>
+                    {dependencyOptions.map((dependency) => (
+                      <option key={dependency} value={dependency}>{dependency}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <button
+                className="btn btn-outline btn-sm"
+                type="button"
+                onClick={() => setAdvancedFilters({
+                  search: "",
+                  role: "all",
+                  status: "all",
+                  program: "all",
+                  dependency: "all",
+                })}
+                disabled={!advancedFiltersActive}
+              >
+                Limpiar filtros
+              </button>
+              <p className="vec-bulk-advanced-filters__note">
+                Los filtros avanzados solo cambian la lista visible; no excluyen personas de las acciones por lote.
+                {programOptions.length === 0 && dependencyOptions.length === 0
+                  ? " Los filtros por programa y dependencia aparecen cuando el Excel incluye esas columnas."
+                  : ""}
+              </p>
+            </div>
+          </details>
+
           {(registering || creatingUnknownBatch) && (
             <div className="vec-bulk-progress" role="status">
               <span>{creatingUnknownBatch
-                ? `Creando e inscribiendo perfiles: ${unknownBatchProgress.completed} de ${unknownBatchProgress.total}.`
-                : "Registrando los participantes validados; cada fila se procesa de forma independiente."}</span>
+                ? `Completando fichas e inscribiendo: ${unknownBatchProgress.completed} de ${unknownBatchProgress.total}.`
+                : "Inscribiendo las personas listas. Cada fila se guarda por separado."}</span>
               {creatingUnknownBatch
                 ? <progress value={unknownBatchProgress.completed} max={unknownBatchProgress.total || 1} />
                 : <progress />}
@@ -1656,15 +1967,15 @@ export default function BulkParticipantImport({ onPendingChange }) {
                   <i className="fas fa-clipboard-check"></i>
                 </div>
                 <div>
-                  <h4>Registros para revisar</h4>
-                  <p>Participantes encontrados y validados contra los registros disponibles.</p>
+                  <h4>Personas que encontramos</h4>
+                  <p>Comprueba sus nombres y los roles que aparecen. Si la actividad tiene modalidades, elige la correcta.</p>
                 </div>
                 <span className="vec-bulk-preview__section-total">{filteredReviewRows.length} registros</span>
               </div>
               <div className="table-responsive vec-bulk-preview__table">
                 <table className="table vec-bulk-preview__data-table">
                   <thead>
-                    <tr><th>Fila</th><th>Documento / código</th><th>Persona</th><th>Variable o modalidad</th><th>Estado de validación</th></tr>
+                    <tr><th>Fila</th><th>Documento o código</th><th>Persona</th><th>Sus roles</th><th>Modalidad</th><th>¿Qué sigue?</th></tr>
                   </thead>
                   <tbody>
                     {filteredReviewRows.map((row) => (
@@ -1672,6 +1983,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
                         <td><span className="vec-bulk-preview__row-number">{row.rowNumber}</span></td>
                         <td><span className="vec-bulk-preview__identifier">{row.identificacion || row.codigoInstitucional || "—"}</span></td>
                         <td><span className="vec-bulk-preview__person-name">{[row.nombres, row.apellidos].filter(Boolean).join(" ") || "—"}</span></td>
+                        <td>{(row.roles || []).map((role) => ROLE_OPTIONS.find((item) => item.value === role)?.label || role).join(", ") || "—"}</td>
                         <td>
                           {supportSelect(row, !["valid", "failed"].includes(row.status) || registering || creatingUnknownBatch)}
                           {row.apoyoOriginal && !row.modalidadVariable && (
@@ -1682,7 +1994,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
                         </td>
                         <td>
                           <span className={`vec-bulk-row-status vec-bulk-row-status--${row.status}`}>
-                            {row.status === "valid" ? "Válido" : row.status === "invalid" ? "Corregir" : row.status === "registered" ? "Registrado" : row.status === "failed" ? "Falló" : row.status === "registering" ? "Registrando" : "Validando"}
+                            {STATUS_FILTER_OPTIONS.find(([value]) => value === row.status)?.[1] || "Pendiente de revisión"}
                           </span>
                           <small className="vec-bulk-row-message">{row.message}</small>
                         </td>
@@ -1693,9 +2005,11 @@ export default function BulkParticipantImport({ onPendingChange }) {
               </div>
             </section>
           )}
-          {supportFilter !== "all" && filteredReviewRows.length === 0 && filteredNotFoundRows.length === 0 && (
+          {(supportFilter !== "all" || advancedFiltersActive)
+            && filteredReviewRows.length === 0
+            && filteredNotFoundRows.length === 0 && (
             <p className="vec-bulk-registration__hint" role="status">
-              No hay participantes pendientes con el apoyo seleccionado.
+              No hay participantes que coincidan con los filtros seleccionados.
             </p>
           )}
 
@@ -1706,8 +2020,8 @@ export default function BulkParticipantImport({ onPendingChange }) {
                   <i className="fas fa-user-plus"></i>
                 </div>
                 <div>
-                  <h4>Personas no registradas</h4>
-                  <p>Activa los roles que deseas crear desde esta lista. Los perfiles se guardan en su tabla de rol y quedan inscritos en la actividad seleccionada. El rol Externo es exclusivo.</p>
+                  <h4>Personas que todavía no aparecen</h4>
+                  <p>Estas personas no tienen un perfil que podamos usar. Puedes completar sus datos para crear un perfil de egresado, colaborador o externo. No se crearán estudiantes automáticamente.</p>
                 </div>
                 <span className="vec-bulk-preview__section-total">{filteredNotFoundRows.length} pendientes</span>
               </div>
@@ -1724,15 +2038,15 @@ export default function BulkParticipantImport({ onPendingChange }) {
                         }))}
                         disabled={creatingUnknownBatch || registering}
                       />
-                      <span>Crear automáticamente {role.label.toLocaleLowerCase("es")}</span>
+                      <span>Crear como {role.label.toLocaleLowerCase("es")}</span>
                     </label>
                   ))}
                 </div>
                 <div className="vec-bulk-auto-create__action">
                   <p>
-                    {readyUnknownRows.length} filas listas
-                    {incompleteUnknownCount ? ` · ${incompleteUnknownCount} sin todos los datos obligatorios` : ""}
-                    {!enabledNotFoundRows.length ? " · Selecciona uno o más roles para activar la creación." : ""}
+                    {readyUnknownRows.length} personas listas para crear
+                    {incompleteUnknownCount ? ` · ${incompleteUnknownCount} necesitan completar datos` : ""}
+                    {!enabledNotFoundRows.length ? " · Marca el rol que quieres crear." : ""}
                   </p>
                   <button
                     className="btn btn-primary btn-sm"
@@ -1749,14 +2063,14 @@ export default function BulkParticipantImport({ onPendingChange }) {
                     <i className={`fas ${creatingUnknownBatch ? "fa-spinner fa-spin" : "fa-users"}`} aria-hidden="true"></i>
                     {creatingUnknownBatch
                       ? "Creando e inscribiendo..."
-                      : `Crear e inscribir ${readyUnknownRows.length} en lote`}
+                      : `Crear e inscribir ${readyUnknownRows.length} personas`}
                   </button>
                 </div>
-                <small>Para crear en lote, el archivo debe incluir identificación, nombres, apellidos, tipo de documento, fecha y lugar de nacimiento, género, correo personal, celular, teléfono alternativo, dirección y municipio. Las filas incompletas siguen disponibles para el formulario individual.</small>
+                <small>Para crear varias personas a la vez, cada fila debe tener todos sus datos personales y de contacto. Si a alguien le falta algo, puedes completar su ficha con el botón de esa fila.</small>
               </div>
               <div className="table-responsive vec-bulk-preview__table">
                 <table className="table vec-bulk-preview__data-table">
-                  <thead><tr><th>Fila</th><th>Documento / código</th><th>Nombre en Excel</th><th>Variable o modalidad</th><th>Estado y acción</th></tr></thead>
+                  <thead><tr><th>Fila</th><th>Documento o código</th><th>Nombre de la lista</th><th>Modalidad</th><th>Ayuda</th></tr></thead>
                   <tbody>
                     {filteredNotFoundRows.map((row) => (
                       <tr key={row.id}>
@@ -1765,7 +2079,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
                         <td><span className="vec-bulk-preview__person-name">{[row.nombres, row.apellidos].filter(Boolean).join(" ") || row.nombreCompleto || "Sin nombre en el archivo"}</span></td>
                         <td>{supportSelect(row, registering || creatingUnknownBatch || creatingRowId === row.id)}</td>
                         <td className="vec-bulk-unregistered__action">
-                          <span className="vec-bulk-row-status vec-bulk-row-status--not-found">Persona no registrada</span>
+                          <span className="vec-bulk-row-status vec-bulk-row-status--not-found">Falta crear su perfil</span>
                           <small className="vec-bulk-row-message">{row.message}</small>
                           <button
                             className="btn btn-outline btn-sm"
@@ -1774,7 +2088,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
                             disabled={registering || creatingUnknownBatch || creatingRowId === row.id}
                           >
                             <i className="fas fa-user-plus" aria-hidden="true"></i>
-                            {editingUnknownId === row.id ? "Cerrar formulario" : "Crear perfil e inscribir"}
+                            {editingUnknownId === row.id ? "Cerrar ficha" : "Completar ficha"}
                           </button>
                         </td>
                       </tr>
@@ -1802,7 +2116,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
 
           {duplicateCount > 0 && (
             <p className="vec-bulk-registration__hint">
-              Se omitieron {duplicateCount} fila(s) duplicada(s) o ya inscritas; cada persona se conserva una sola vez.
+              Repetidos o ya inscritos: {duplicateCount}. No los inscribiremos otra vez.
             </p>
           )}
 
@@ -1817,7 +2131,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
               disabled={registering || creatingUnknownBatch || validating || !readyToRegister}
             >
               <i className={`fas ${registering ? "fa-spinner fa-spin" : "fa-users"}`} aria-hidden="true"></i>
-              {allRegistered ? "Participantes registrados" : registering ? "Registrando lista..." : `Registrar ${pendingValidCount} participantes pendientes`}
+              {allRegistered ? "Lista inscrita" : registering ? "Inscribiendo lista..." : `Inscribir ${pendingValidCount} personas listas`}
             </button>
           </div>
         </div>

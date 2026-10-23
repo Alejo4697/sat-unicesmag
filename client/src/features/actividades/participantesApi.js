@@ -21,6 +21,13 @@ export function getParticipantes({ limite = 100 } = {}) {
   return apiFetch(`/actividades/participantes?${params.toString()}`);
 }
 
+export function eliminarPersonaParticipanteDefinitivamente(idPerfil, confirmarIdentificacion) {
+  return apiFetch(`/actividades/participantes/perfiles/persona/${encodeURIComponent(idPerfil)}/definitivo`, {
+    method: "DELETE",
+    body: { confirmarIdentificacion },
+  });
+}
+
 export function getCatalogosEstudiante({ signal } = {}) {
   return apiFetch("/actividades/participantes/catalogos-estudiante", { signal });
 }
@@ -72,6 +79,10 @@ export function eliminarActividad(id) {
 
 export function getParticipantesActividad(id) {
   return apiFetch(`/actividades/participantes/eventos/${encodeURIComponent(id)}/participantes`);
+}
+
+export function exportarParticipantesActividad(id) {
+  return apiDownload(`/actividades/participantes/eventos/${encodeURIComponent(id)}/participantes/exportar`);
 }
 
 export function eliminarInscripcion(id) {
@@ -155,6 +166,33 @@ export function registrarPerfilesMasivo({ rol, participantes, confirmarFilas = [
   });
 }
 
+export function getPerfilesPorRol({ rol, busqueda = "" }) {
+  const params = new URLSearchParams({ rol });
+  if (busqueda) params.set("busqueda", busqueda);
+  return apiFetch(`/actividades/participantes/perfiles/roles?${params.toString()}`);
+}
+
+export function actualizarPerfilPorRol(id, perfil) {
+  return apiFetch(`/actividades/participantes/perfiles/roles/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: perfil,
+  });
+}
+
+export function agregarPerfilPorRol(id, { rol, confirmarRolAdicional }) {
+  return apiFetch(`/actividades/participantes/perfiles/roles/${encodeURIComponent(id)}/agregar`, {
+    method: "POST",
+    body: { rol, confirmarRolAdicional },
+  });
+}
+
+export function eliminarPerfilPorRol(id, { confirmarInscripciones = false } = {}) {
+  return apiFetch(`/actividades/participantes/perfiles/roles/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    body: { confirmarInscripciones },
+  });
+}
+
 export function getRegistrosEstudiante({ limite = 50 } = {}) {
   const params = new URLSearchParams({ limite: String(limite) });
   return apiFetch(`/actividades/participantes/registros-estudiante?${params.toString()}`);
@@ -185,11 +223,12 @@ export function verificarAsistencia({
   fechaFinalizacion,
   registros,
   asistenciaVerificada = true,
+  asistenciaEstado,
   origen = "MANUAL",
 }) {
   return apiFetch("/actividades/participantes/asistencia/verificar", {
     method: "POST",
-    body: { idActividad, idPeriodo, fechaInicio, fechaFinalizacion, registros, asistenciaVerificada, origen },
+    body: { idActividad, idPeriodo, fechaInicio, fechaFinalizacion, registros, asistenciaVerificada, asistenciaEstado, origen },
   });
 }
 

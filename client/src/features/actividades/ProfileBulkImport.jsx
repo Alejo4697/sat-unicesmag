@@ -5,9 +5,9 @@ import { registrarPerfilesMasivo, validarPerfilesMasivo } from "./participantesA
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_ROWS = 500;
 const ROLES = [
-  { value: "EGRESADO", label: "Egresado" },
-  { value: "COLABORADOR", label: "Colaborador" },
-  { value: "EXTERNO", label: "Externo" },
+  { value: "COLABORADOR", label: "Colaboradores", singular: "Colaborador", icon: "fa-user-tie" },
+  { value: "EGRESADO", label: "Egresados", singular: "Egresado", icon: "fa-user-graduate" },
+  { value: "EXTERNO", label: "Externos", singular: "Externo", icon: "fa-user-group" },
 ];
 const ROLE_LABELS = {
   ESTUDIANTE: "Estudiante",
@@ -21,11 +21,11 @@ const FIELDS = [
   { id: "apellidos", label: "Apellidos", aliases: ["APELLIDOS", "APELLIDO", "PRIMERAPELLIDO"], required: true },
   { id: "tipoDocumento", label: "Tipo de documento", aliases: ["TIPODOCUMENTO", "TIPODEDOCUMENTO", "TIPOIDENTIFICACION"], required: true },
   { id: "fechaNacimiento", label: "Fecha de nacimiento", aliases: ["FECHANACIMIENTO", "FECHADENACIMIENTO"], required: true },
-  { id: "lugarNacimiento", label: "Lugar de nacimiento", aliases: ["LUGARDENACIMIENTO", "LUGARNACIMIENTO"], required: true },
+  { id: "lugarNacimiento", label: "Lugar de nacimiento", aliases: ["LUGARDENACIMIENTO", "LUGARNACIMIENTO"] },
   { id: "genero", label: "Género", aliases: ["GENERO", "SEXO"], required: true },
   { id: "correo", label: "Correo personal", aliases: ["CORREOPERSONAL", "CORREO", "EMAIL", "CORREOELECTRONICO"], required: true },
   { id: "celular", label: "Celular", aliases: ["CELULAR", "MOVIL", "TELEFONOMOVIL"], required: true },
-  { id: "telefono", label: "Teléfono alternativo", aliases: ["TELEFONO", "TELEFONOFIJO", "TELEFONOALTERNATIVO"], required: true },
+  { id: "telefono", label: "Teléfono alternativo", aliases: ["TELEFONO", "TELEFONOFIJO", "TELEFONOALTERNATIVO"] },
   { id: "direccion", label: "Dirección", aliases: ["DIRECCION", "DIRECCIONRESIDENCIA"], required: true },
   { id: "municipio", label: "Municipio", aliases: ["MUNICIPIO", "CIUDAD", "MUNICIPIORESIDENCIA"], required: true },
   { id: "fechaEgreso", label: "Fecha de egreso", aliases: ["FECHAEGRESO", "FECHADEEGRESO"] },
@@ -170,6 +170,7 @@ function ProfileBulkImport({ onSaved }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [cargaOpen, setCargaOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const activeSheet = sheets.find((sheet) => sheet.name === sheetName);
@@ -290,10 +291,12 @@ function ProfileBulkImport({ onSaved }) {
     try {
       const response = await validarPerfilesMasivo({ rol: role, participantes: parsed });
       setResults(response.resultados || []);
-      const selectable = (response.resultados || []).filter((item) => item.status === "ready");
+      const selectable = (response.resultados || []).filter((item) => (
+        ["ready", "requires-confirmation"].includes(item.status)
+      ));
       setSelectedRows(new Set(selectable.map((item) => item.fila)));
       setConfirmRows(new Set());
-      setMessage("Revisa las coincidencias. Las personas ya existentes requieren confirmación explícita para agregarles el nuevo rol.");
+      setMessage("Revisa las coincidencias. Para personas existentes, confirma también la casilla que autoriza agregar el nuevo rol.");
     } catch (validationError) {
       setError(validationError.message || "No se pudo validar el archivo.");
     } finally {
@@ -348,15 +351,20 @@ function ProfileBulkImport({ onSaved }) {
     setError("");
     try {
       const response = await registrarPerfilesMasivo({
-        rol,
-        participantes: rows,
-        confirmarFilas: [...confirmRows],
+        rol: role,
+        participantes: rows.filter((row) => selectedRows.has(row.fila)),
+        confirmarFilas: [...confirmRows].filter((fila) => selectedRows.has(fila)),
       });
       const updated = response.resultados || [];
       setResults(updated);
       const created = updated.filter((item) => item.status === "created").length;
       const omitted = updated.filter((item) => ["omitted", "already-has-role", "external-conflict"].includes(item.status)).length;
-      setMessage(`${created} perfiles creados.${omitted ? ` ${omitted} filas omitidas o no compatibles; revisa sus resultados.` : ""}`);
+      const failed = updated.filter((item) => item.status === "failed").length;
+      setMessage(
+        `${created} perfiles creados.`
+        + (omitted ? ` ${omitted} filas omitidas o no compatibles; revisa sus resultados.` : "")
+        + (failed ? ` ${failed} filas no se pudieron guardar; revisa el mensaje de cada fila.` : ""),
+      );
       if (created > 0) onSaved?.();
       setSelectedRows(new Set());
       setConfirmRows(new Set());
@@ -368,7 +376,23 @@ function ProfileBulkImport({ onSaved }) {
     }
   }
 
-  const roleLabel = ROLES.find((item) => item.value === role)?.label || role;
+  const roleLabel = ROLES.find((item) => item.value === role)?.singular || role;
+
+  function selectRole(nextRole) {
+    if (busy || role === nextRole) return;
+    setRole(nextRole);
+    setResults([]);
+    setRows([]);
+    setSelectedRows(new Set());
+    setConfirmRows(new Set());
+    setMessage("");
+    setError("");
+  }
+
+  function openImporter(nextRole) {
+    if (role !== nextRole) selectRole(nextRole);
+    setCargaOpen(true);
+  }
 
   return (
     <section className="card vec-profile-import" aria-labelledby="vec-profile-import-title">
@@ -377,24 +401,110 @@ function ProfileBulkImport({ onSaved }) {
         <div>
           <span className="vec-profile-import__eyebrow">GESTIÓN DE PERFILES</span>
           <h2 id="vec-profile-import-title">Carga masiva de roles</h2>
-          <p>Importa Egresados, Colaboradores o Externos directamente a sus perfiles VEC, sin inscribirlos en una actividad.</p>
+          <p>Selecciona el rol, carga su listado y revisa los registros antes de crearlos en sus perfiles VEC, sin inscribirlos en actividades.</p>
         </div>
       </div>
 
-      {error && <div className="auth-error" role="alert">{error}</div>}
-      {message && <p className="vec-profile-import__message" role="status">{message}</p>}
+      {!cargaOpen && error && <div className="auth-error" role="alert">{error}</div>}
+      {!cargaOpen && message && <p className="vec-profile-import__message" role="status">{message}</p>}
+
+      <div className="vec-profile-import__role-shortcuts" role="group" aria-label="Seleccionar rol para importar">
+        {ROLES.map((item) => (
+          <button
+            className={`vec-profile-import__role-shortcut${role === item.value ? " is-active" : ""}`}
+            type="button"
+            key={item.value}
+            aria-pressed={role === item.value}
+            onClick={() => openImporter(item.value)}
+            disabled={busy}
+          >
+            <i className={`fas ${item.icon}`} aria-hidden="true"></i>
+            <span>Cargar {item.label.toLowerCase()}</span>
+            <i className="fas fa-arrow-right vec-profile-import__role-arrow" aria-hidden="true"></i>
+          </button>
+        ))}
+      </div>
+
+      {cargaOpen && (
+        <div
+          className="vec-profile-import__workspace-overlay"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !busy) setCargaOpen(false);
+          }}
+        >
+          <section
+            className="vec-profile-import__workspace"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="vec-profile-import-workspace-title"
+          >
+            <header className="vec-profile-import__workspace-heading">
+              <span className="vec-profile-import__icon" aria-hidden="true">
+                <i className={`fas ${ROLES.find((item) => item.value === role)?.icon || "fa-file-excel"}`}></i>
+              </span>
+              <div>
+                <span className="vec-profile-import__eyebrow">CARGA SEGURA DE PERSONAS</span>
+                <h2 id="vec-profile-import-workspace-title">Cargar {roleLabel.toLowerCase()} desde Excel</h2>
+                <p>Primero escoges el archivo, luego revisas la lista y al final decides qué personas guardar.</p>
+              </div>
+              <button
+                className="vec-profile-import__workspace-close"
+                type="button"
+                onClick={() => setCargaOpen(false)}
+                disabled={busy}
+                aria-label="Cerrar ventana de carga"
+              >
+                <i className="fas fa-xmark" aria-hidden="true"></i>
+              </button>
+            </header>
+
+            {!dialogOpen && error && <div className="auth-error" role="alert">{error}</div>}
+            {!dialogOpen && message && <p className="vec-profile-import__message" role="status">{message}</p>}
+
+            <div className="vec-profile-import__instructions">
+              <h3><i className="fas fa-circle-info" aria-hidden="true"></i> ¿Cómo debe estar organizado el Excel?</h3>
+              <p>Piensa en el Excel como una tabla: la primera fila dice qué significa cada columna y cada fila de abajo es una persona. No necesitas usar exactamente estos nombres; también aceptamos los nombres alternativos.</p>
+              <div className="vec-profile-import__requirements">
+                <section>
+                  <strong><i className="fas fa-asterisk" aria-hidden="true"></i> Estas columnas sí son necesarias</strong>
+                  <ul>
+                    <li><b>Documento de identidad</b></li>
+                    <li><b>Nombres y apellidos</b></li>
+                    <li><b>Tipo de documento:</b> CC, TI, CE, PA, entre otros.</li>
+                    <li><b>Fecha de nacimiento</b></li>
+                    <li><b>Género, correo personal, celular, dirección y municipio</b></li>
+                  </ul>
+                </section>
+                <section>
+                  <strong><i className="fas fa-plus" aria-hidden="true"></i> Estas columnas son opcionales</strong>
+                  <p>Puedes incluir Lugar de nacimiento, Teléfono alternativo, Fecha de egreso, Programa académico, Programa de posgrado, Dependencia, Cargo, Etnia o Discapacidad. Si no los tienes, déjalos fuera.</p>
+                </section>
+              </div>
+              <p className="vec-profile-import__example">
+                <strong>Ejemplo de encabezados:</strong> Documento | Nombres | Apellidos | Tipo de documento | Fecha de nacimiento | Lugar de nacimiento (opcional) | Género | Correo personal | Celular | Teléfono alternativo (opcional) | Dirección | Municipio
+              </p>
+              <ol className="vec-profile-import__steps">
+                <li>Pon los títulos arriba y una persona en cada fila.</li>
+                <li>Usa fechas como <b>21/10/2000</b> o <b>2000-10-21</b> y deja los documentos como texto para no perder ceros al inicio.</li>
+                <li>Guarda como Excel o CSV. Aceptamos archivos de hasta 5 MB y 500 personas.</li>
+                <li>El sistema busca los títulos en las primeras 20 filas. Si no los reconoce o tienen otros nombres, podrás escoger qué columna corresponde a cada dato antes de revisar.</li>
+              </ol>
+              <p className="vec-profile-import__privacy-note">
+                <i className="fas fa-shield-halved" aria-hidden="true"></i>
+                El archivo se usa para revisar y crear perfiles de {roleLabel.toLowerCase()}; no inscribe a las personas en actividades.
+              </p>
+            </div>
 
       <div className="vec-profile-import__controls">
-        <label>
-          <span>Rol para todo este archivo</span>
+        <label className="vec-profile-import__role-control">
+          <span><i className="fas fa-user-tag" aria-hidden="true"></i> Rol que tendrán las personas de este archivo</span>
           <select className="form-select" value={role} onChange={(event) => {
-            setRole(event.target.value);
-            setResults([]);
-            setRows([]);
-            setMessage("");
+            selectRole(event.target.value);
           }} disabled={busy}>
-            {ROLES.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}
+            {ROLES.map((item) => <option value={item.value} key={item.value}>{item.singular}</option>)}
           </select>
+          <small>Este rol se aplicará a todos los perfiles que guardes en esta carga.</small>
         </label>
         <label className="vec-profile-import__file">
           <span>Archivo de participantes</span>
@@ -410,41 +520,47 @@ function ProfileBulkImport({ onSaved }) {
 
       {activeSheet && (
         <>
-          <div className="vec-profile-import__mapping">
-            <label>
-              <span>Hoja</span>
-              <select className="form-select" value={sheetName} onChange={(event) => updateSheet(event.target.value)} disabled={busy}>
-                {sheets.map((sheet) => <option value={sheet.name} key={sheet.name}>{sheet.name}</option>)}
-              </select>
-            </label>
-            <label>
-              <span>Fila de encabezados (0 = sin encabezados)</span>
-              <input className="form-control" type="number" min="0" max={activeSheet.rows.length} value={headerRow} onChange={(event) => updateHeaderRow(event.target.value)} disabled={busy} />
-            </label>
-            {FIELDS.map((field) => (
-              <label key={field.id}>
-                <span>{field.label}{field.required ? " *" : ""}</span>
-                <select
-                  className="form-select"
-                  value={mapping[field.id] ?? ""}
-                  onChange={(event) => {
-                    setMapping((current) => ({ ...current, [field.id]: event.target.value }));
-                    setResults([]);
-                    setRows([]);
-                  }}
-                  disabled={busy}
-                >
-                  <option value="">No asignar</option>
-                  {headers.map((header, index) => (
-                    <option value={String(index)} key={`${index}-${cellText(header)}`}>
-                      {headerRow === 0 ? `Columna ${index + 1} (${cellText(header) || "valor"})` : cellText(header) || `Columna ${index + 1}`}
-                    </option>
-                  ))}
+          <details className="vec-profile-import__advanced">
+            <summary>
+              <span><i className="fas fa-sliders" aria-hidden="true"></i> Opciones avanzadas</span>
+              <small>Para corregir cómo se leen las columnas</small>
+            </summary>
+            <div className="vec-profile-import__mapping">
+              <label>
+                <span>Hoja</span>
+                <select className="form-select" value={sheetName} onChange={(event) => updateSheet(event.target.value)} disabled={busy}>
+                  {sheets.map((sheet) => <option value={sheet.name} key={sheet.name}>{sheet.name}</option>)}
                 </select>
               </label>
-            ))}
-          </div>
-          {headerRow === 0 && <p className="vec-profile-import__hint">El archivo no tiene encabezados. Asigna las columnas manualmente para identificar los datos de cada persona.</p>}
+              <label>
+                <span>Fila de encabezados (0 = sin encabezados)</span>
+                <input className="form-control" type="number" min="0" max={activeSheet.rows.length} value={headerRow} onChange={(event) => updateHeaderRow(event.target.value)} disabled={busy} />
+              </label>
+              {FIELDS.map((field) => (
+                <label key={field.id}>
+                  <span>{field.label}{field.required ? " *" : ""}</span>
+                  <select
+                    className="form-select"
+                    value={mapping[field.id] ?? ""}
+                    onChange={(event) => {
+                      setMapping((current) => ({ ...current, [field.id]: event.target.value }));
+                      setResults([]);
+                      setRows([]);
+                    }}
+                    disabled={busy}
+                  >
+                    <option value="">No asignar</option>
+                    {headers.map((header, index) => (
+                      <option value={String(index)} key={`${index}-${cellText(header)}`}>
+                        {headerRow === 0 ? `Columna ${index + 1} (${cellText(header) || "valor"})` : cellText(header) || `Columna ${index + 1}`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </div>
+            {headerRow === 0 && <p className="vec-profile-import__hint">El archivo no tiene encabezados. Asigna las columnas manualmente para identificar los datos de cada persona.</p>}
+          </details>
           <button className="btn btn-outline" type="button" onClick={validateFile} disabled={busy}>
             <i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-magnifying-glass"}`} aria-hidden="true"></i>
             {busy ? "Validando..." : "Validar archivo"}
@@ -455,13 +571,13 @@ function ProfileBulkImport({ onSaved }) {
       {results.length > 0 && (
         <>
           <div className="vec-profile-import__summary">
-            <span><strong>{readyResults.length}</strong> perfiles nuevos listos</span>
+            <span><strong>{readyResults.length}</strong> perfiles de {roleLabel.toLowerCase()} listos</span>
             <span><strong>{confirmationResults.length}</strong> personas requieren confirmar nuevo rol</span>
             <span><strong>{results.filter((item) => !["ready", "requires-confirmation"].includes(item.status)).length}</strong> omitidas o con errores</span>
           </div>
           <div className="table-responsive vec-profile-import__table-wrap">
             <table className="table">
-              <thead><tr><th>Incluir</th><th>Fila</th><th>Documento</th><th>Persona</th><th>Roles actuales</th><th>Resultado</th></tr></thead>
+              <thead><tr><th>Incluir</th><th>Fila</th><th>Documento</th><th>Persona</th><th>Roles actuales</th><th>Agregar rol</th><th>Resultado</th></tr></thead>
               <tbody>
                 {previewRows.map((row) => (
                   <tr key={row.fila}>
@@ -479,32 +595,37 @@ function ProfileBulkImport({ onSaved }) {
                     <td>{row.fila}</td>
                     <td>{row.identificacion || "—"}</td>
                     <td>{[row.nombres, row.apellidos].filter(Boolean).join(" ") || "—"}</td>
-                    <td>{row.roles?.map((item) => ROLE_LABELS[item] || item).join(", ") || "Sin perfil previo"}</td>
+                    <td>
+                      {row.roles?.length ? (
+                        <div className="vec-profile-import__role-badges">
+                          {row.roles.map((item) => (
+                            <span key={item}>{ROLE_LABELS[item] || item}</span>
+                          ))}
+                        </div>
+                      ) : "Sin perfil previo"}
+                    </td>
+                    <td>
+                      {row.status === "requires-confirmation" ? (
+                        <label className="vec-profile-import__inline-role">
+                          <input
+                            type="checkbox"
+                            checked={confirmRows.has(row.fila)}
+                            aria-label={`Agregar ${roleLabel} al perfil de ${row.nombres || "esta persona"}`}
+                            onChange={(event) => toggleRoleConfirmation(row.fila, event.target.checked)}
+                            disabled={busy}
+                          />
+                          <span><i className="fas fa-user-plus" aria-hidden="true"></i> Agregar {roleLabel}</span>
+                        </label>
+                      ) : row.status === "ready" ? (
+                        <span className="vec-profile-import__new-role">Se creará {roleLabel}</span>
+                      ) : "—"}
+                    </td>
                     <td><span className={`vec-profile-import__status vec-profile-import__status--${row.status}`}>{row.message}</span></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          {confirmationResults.some((item) => selectedRows.has(item.fila)) && (
-            <div className="vec-profile-import__confirm-list">
-              <strong>Confirma explícitamente la asignación de un rol nuevo:</strong>
-              {confirmationResults.filter((item) => selectedRows.has(item.fila)).map((item) => {
-                const row = rows.find((candidate) => candidate.fila === item.fila);
-                return (
-                  <label key={item.fila}>
-                    <input
-                      type="checkbox"
-                      checked={confirmRows.has(item.fila)}
-                      onChange={(event) => toggleRoleConfirmation(item.fila, event.target.checked)}
-                      disabled={busy}
-                    />
-                    <span>{[row?.nombres, row?.apellidos].filter(Boolean).join(" ")} · {row?.identificacion}: agregar {roleLabel} a sus roles actuales ({item.roles?.map((currentRole) => ROLE_LABELS[currentRole] || currentRole).join(", ") || "persona ya existente"}).</span>
-                  </label>
-                );
-              })}
-            </div>
-          )}
           <div className="vec-profile-import__footer">
             <span>Se crearán perfiles sin inscribir a las personas en actividades. Los roles Externo son exclusivos.</span>
             <button
@@ -518,12 +639,16 @@ function ProfileBulkImport({ onSaved }) {
           </div>
         </>
       )}
+          </section>
+        </div>
+      )}
 
       {dialogOpen && (
         <div className="vec-profile-import__overlay" role="presentation">
           <section className="vec-profile-import__dialog" role="dialog" aria-modal="true" aria-labelledby="vec-profile-confirm-title">
             <span className="vec-profile-import__dialog-icon" aria-hidden="true"><i className="fas fa-user-check"></i></span>
             <h3 id="vec-profile-confirm-title">Confirmar carga de perfiles</h3>
+            {error && <div className="auth-error" role="alert">{error}</div>}
             <p>Se crearán {selectedCount} perfil{selectedCount === 1 ? "" : "es"} con rol {roleLabel}. No se inscribirán en actividades.</p>
             {confirmationResults.some((item) => selectedRows.has(item.fila) && confirmRows.has(item.fila)) && (
               <p>También se agregará este rol a {confirmationResults.filter((item) => selectedRows.has(item.fila) && confirmRows.has(item.fila)).length} persona(s) existente(s), con tu confirmación explícita.</p>

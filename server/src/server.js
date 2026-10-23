@@ -1,4 +1,11 @@
-import "dotenv/config";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import dotenv from "dotenv";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
+dotenv.config();
+
 import { createApp } from "./app.js";
 import { setupTables } from "./shared/db/setup_tables.js";
 import { iniciarSincronizadorAutomatico } from "./shared/services/autoSyncScheduler.js";
@@ -13,4 +20,3 @@ app.listen(PORT, () => {
   // Iniciar servicio de sincronización automática en segundo plano (cada 30 min y por detección de cambios)
   iniciarSincronizadorAutomatico(30);
 });
-

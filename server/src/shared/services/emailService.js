@@ -2,38 +2,81 @@
    SAT-UNICESMAG - Servicio de Envío de Correos y Notificaciones OTP
    ========================================================================== */
 
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import dotenv from "dotenv";
 import nodemailer from "nodemailer";
 
-let transporter = null;
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
+dotenv.config();
 
-function obtenerTransporter() {
-  if (transporter) return transporter;
+function crearTransporterConfig(port, secure) {
+  const host = (process.env.SMTP_HOST || "smtp.gmail.com").trim();
+  const user = (process.env.SMTP_USER || process.env.EMAIL_USER || process.env.GMAIL_USER || "adviser@unicesmag.edu.co").trim();
+  const rawPass = (process.env.SMTP_PASS || process.env.EMAIL_PASS || process.env.GMAIL_PASS || "").trim();
+  const pass = rawPass.replace(/\s+/g, ""); // Normalizar contraseñas de aplicación de Google (16 caracteres continuos)
 
-  const host = process.env.SMTP_HOST;
-  const port = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 587;
-  const user = process.env.SMTP_USER || process.env.EMAIL_USER;
-  const pass = process.env.SMTP_PASS || process.env.EMAIL_PASS;
+  if (!user || !pass) return null;
 
-  if (host && user && pass) {
-    transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465,
-      tls: {
-        rejectUnauthorized: process.env.SMTP_ALLOW_INSECURE_TLS === "true" ? false : true
-      }
-    });
-  } else if (process.env.GMAIL_USER && process.env.GMAIL_PASS) {
-    transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.GMAIL_USER,
-        pass: process.env.GMAIL_PASS
-      }
-    });
+  return nodemailer.createTransport({
+    host,
+    port,
+    secure,
+    auth: {
+      user,
+      pass
+    },
+    tls: {
+      rejectUnauthorized: false
+    },
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000
+  });
+}
+
+/**
+ * Intenta despachar un correo con estrategia de fallback de puertos (587 STARTTLS -> 465 SSL)
+ */
+async function enviarConFallback(opcionesCorreo) {
+  const user = (process.env.SMTP_USER || "adviser@unicesmag.edu.co").trim();
+  const rawFrom = (process.env.SMTP_FROM || "").replace(/^["']|["']$/g, "").trim();
+  const remitente = rawFrom || `"SAT UNICESMAG" <${user}>`;
+
+  const mailOptions = {
+    ...opcionesCorreo,
+    from: remitente
+  };
+
+  // 1. Intentar primero puerto 587 (STARTTLS estándar para Google Workspace)
+  const portConfigurado = Number(process.env.SMTP_PORT) || 587;
+  const primTransporter = crearTransporterConfig(portConfigurado, portConfigurado === 465);
+
+  if (!primTransporter) {
+    return { ok: false, error: "Credenciales SMTP no configuradas en .env (SMTP_USER / SMTP_PASS faltantes)" };
   }
 
-  return transporter;
+  try {
+    const info = await primTransporter.sendMail(mailOptions);
+    console.log(`[OK] Correo enviado exitosamente vía SMTP (${portConfigurado}):`, info?.response || info?.messageId || "OK");
+    return { ok: true, info };
+  } catch (errPrim) {
+    console.warn(`[WARN] Falló envío por puerto ${portConfigurado}: ${errPrim.message}. Probando puerto alternativo...`);
+
+    // 2. Si falló 587, intentar 465 (o viceversa)
+    const altPort = portConfigurado === 587 ? 465 : 587;
+    const secTransporter = crearTransporterConfig(altPort, altPort === 465);
+
+    try {
+      const infoSec = await secTransporter.sendMail(mailOptions);
+      console.log(`[OK] Correo enviado exitosamente vía puerto alternativo (${altPort}):`, infoSec?.response || infoSec?.messageId || "OK");
+      return { ok: true, info: infoSec };
+    } catch (errSec) {
+      console.error(`[ERROR] Falló envío alternativo por puerto ${altPort}: ${errSec.message}`);
+      return { ok: false, error: `Puerto ${portConfigurado}: ${errPrim.message} | Puerto ${altPort}: ${errSec.message}` };
+    }
+  }
 }
 
 /**
@@ -66,7 +109,7 @@ export async function enviarCorreoOtp({ correo, nombre, codigoOtp, expiraMinutos
             ${codigoOtp}
           </div>
           <p style="margin: 8px 0 0; font-size: 12px; color: #64748b;">
-            <i class="fas fa-clock"></i> Este código expira en <strong>${expiraMinutos} minutos</strong>.
+            Este código expira en <strong>${expiraMinutos} minutos</strong>.
           </p>
         </div>
         
@@ -96,26 +139,11 @@ export async function enviarCorreoOtp({ correo, nombre, codigoOtp, expiraMinutos
   console.log(`CÓDIGO OTP: [ ${codigoOtp} ] (Válido por ${expiraMinutos} min)`);
   console.log("=================================================================");
 
-  const mailer = obtenerTransporter();
-  let envioRealizado = false;
-
-  if (mailer) {
-    try {
-      const remitente = process.env.SMTP_FROM || process.env.SMTP_USER || process.env.GMAIL_USER || '"SAT UNICESMAG" <no-reply@unicesmag.edu.co>';
-      await mailer.sendMail({
-        from: remitente,
-        to: correo,
-        subject: asunto,
-        html: cuerpoHtml
-      });
-      console.log(`[OK] Correo enviado exitosamente a la bandeja de ${correo}`);
-      envioRealizado = true;
-    } catch (err) {
-      console.error(`[WARN] Error al despachar correo vía SMTP a ${correo}:`, err.message);
-    }
-  } else {
-    console.log(`[INFO] [SMTP no configurado en .env]: El código OTP [${codigoOtp}] está disponible en consola y en la interfaz para pruebas.`);
-  }
+  const resultadoEnvio = await enviarConFallback({
+    to: correo,
+    subject: asunto,
+    html: cuerpoHtml
+  });
 
   return {
     ok: true,
@@ -123,7 +151,7 @@ export async function enviarCorreoOtp({ correo, nombre, codigoOtp, expiraMinutos
     codigoOtp,
     asunto,
     expiraMinutos,
-    envioRealizado
+    envioRealizado: resultadoEnvio.ok,
+    error: resultadoEnvio.error || null
   };
 }
-

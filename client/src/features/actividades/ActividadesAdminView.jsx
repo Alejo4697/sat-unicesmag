@@ -6,6 +6,7 @@ import {
   corregirTipoApoyoInscripcion,
   crearActividad,
   eliminarActividad,
+  exportarParticipantesActividad,
   eliminarInscripcion,
   getAuditoriaInscripcion,
   getActividades,
@@ -42,6 +43,21 @@ function formatoFecha(value) {
 
 function claseEstado(estado) {
   return `activity-status activity-status--${String(estado || "").toLowerCase()}`;
+}
+
+function nombreArchivoAsistencia(activity) {
+  const slug = (value) => String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("es")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+  return [
+    "asistentes",
+    slug(activity.actividad),
+    slug(activity.periodo),
+  ].filter(Boolean).join("-") + ".xlsx";
 }
 
 function Modal({ title, subtitle, onClose, children, wide = false }) {
@@ -128,6 +144,7 @@ export default function ActividadesAdminView() {
   const [auditoriaApoyo, setAuditoriaApoyo] = useState(null);
   const [guardandoApoyo, setGuardandoApoyo] = useState(false);
   const [eliminandoActividadId, setEliminandoActividadId] = useState("");
+  const [exportandoActividadId, setExportandoActividadId] = useState("");
   const [eliminandoInscripcionId, setEliminandoInscripcionId] = useState("");
   const [errorEliminacionInscripcion, setErrorEliminacionInscripcion] = useState("");
   const [confirmacionEliminacion, setConfirmacionEliminacion] = useState(null);
@@ -319,6 +336,28 @@ export default function ActividadesAdminView() {
       setError(requestError.message || "No se pudo eliminar la actividad.");
     } finally {
       setEliminandoActividadId("");
+    }
+  }
+
+  async function downloadAttendanceExcel(activity) {
+    setError("");
+    setMensaje("");
+    setExportandoActividadId(activity.id);
+    try {
+      const blob = await exportarParticipantesActividad(activity.id);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = nombreArchivoAsistencia(activity);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setMensaje(`Se descargó el Excel de asistencia de "${activity.actividad}".`);
+    } catch (requestError) {
+      setError(requestError.message || "No se pudo descargar el Excel de asistencia.");
+    } finally {
+      setExportandoActividadId("");
     }
   }
 
@@ -542,6 +581,20 @@ export default function ActividadesAdminView() {
                       <span><strong>{activity.totalParticipantes}</strong> participantes</span>
                     </button>
                     <div className="activity-card__actions">
+                      <button
+                        className="btn btn-outline btn-sm activity-card__download"
+                        type="button"
+                        onClick={() => downloadAttendanceExcel(activity)}
+                        disabled={Boolean(exportandoActividadId)}
+                        title="Descargar participantes con el formato de Asistencia y reportes"
+                        aria-label={`Descargar Excel de asistencia para ${activity.actividad}`}
+                      >
+                        <i
+                          className={`fas ${exportandoActividadId === activity.id ? "fa-spinner fa-spin" : "fa-file-excel"}`}
+                          aria-hidden="true"
+                        ></i>
+                        {exportandoActividadId === activity.id ? "Generando Excel..." : "Excel asistencia"}
+                      </button>
                       <label className="activity-card__status-control">
                         <span className="sr-only">Cambiar estado de {activity.actividad}</span>
                         <select
@@ -796,7 +849,11 @@ export default function ActividadesAdminView() {
               <span className="activity-delete-confirm__icon"><i className="fas fa-triangle-exclamation" aria-hidden="true"></i></span>
               <div className="activity-delete-confirm__copy">
                 <strong>¿Eliminar a {confirmacionEliminacion.apellidosNombres || confirmacionEliminacion.identificacion}?</strong>
-                <p>Se quitará de esta actividad. El perfil y los datos personales solo se borrarán si no tienen otros vínculos. Esta acción no se puede deshacer.</p>
+                {confirmacionEliminacion.rolParticipacion === "ESTUDIANTE" ? (
+                  <p>Solo se quitará de esta actividad. Su perfil de estudiante y sus datos institucionales se conservarán.</p>
+                ) : (
+                  <p>Se quitará de esta actividad. Si no tiene otras inscripciones, también se eliminará su perfil de este rol; si las tiene, se conservará. Otros roles de la persona no se eliminarán y los datos personales solo se borrarán si no tienen otros vínculos. Esta acción no se puede deshacer.</p>
+                )}
               </div>
               <div className="activity-delete-confirm__actions">
                 <button className="btn btn-outline btn-sm" type="button" onClick={() => setConfirmacionEliminacion(null)} disabled={Boolean(eliminandoInscripcionId)}>Cancelar</button>
@@ -844,7 +901,7 @@ export default function ActividadesAdminView() {
                     <tbody>
                       {participantesFiltrados.map((row) => (
                         <tr key={row.id}>
-                          <td>
+                          <td data-label="Persona">
                             <div className="activity-participants-person">
                               <span className="activity-participants-person__avatar" aria-hidden="true">
                                 {(row.apellidosNombres || row.identificacion || "P").trim().charAt(0).toLocaleUpperCase("es")}
@@ -856,20 +913,20 @@ export default function ActividadesAdminView() {
                               </span>
                             </div>
                           </td>
-                          <td><span className={`activity-participants-role activity-participants-role--${String(row.rolParticipacion || "").toLowerCase()}`}>{row.detalleTipoParticipante || row.rolParticipacion || "Sin rol"}</span></td>
-                          <td>
+                          <td data-label="Rol"><span className={`activity-participants-role activity-participants-role--${String(row.rolParticipacion || "").toLowerCase()}`}>{row.detalleTipoParticipante || row.rolParticipacion || "Sin rol"}</span></td>
+                          <td data-label="Programa / modalidad">
                             <span className="activity-participants-modality">
                               <strong>{row.programaBienestar || "Sin programa de Bienestar"}</strong>
                               <small>{row.programaModalidad || "Modalidad no especificada"}</small>
                             </span>
                           </td>
-                          <td><span className="activity-participants-support"><i className="fas fa-hand-holding-heart" aria-hidden="true"></i>{row.tipoApoyo || "Sin clasificar"}</span></td>
-                          <td>
+                          <td data-label="Apoyo asignado"><span className="activity-participants-support"><i className="fas fa-hand-holding-heart" aria-hidden="true"></i>{row.tipoApoyo || "Sin clasificar"}</span></td>
+                          <td data-label="Administrar">
                             <div className="activity-participants-actions">
                               <button className="btn btn-outline btn-sm" type="button" onClick={() => showHistory(row)} title="Ver historial"><i className="fas fa-clock-rotate-left" aria-hidden="true"></i><span>Historial</span></button>
                               <button className="btn btn-outline btn-sm" type="button" onClick={() => setEdicionApoyo({ id: row.id, persona: row.apellidosNombres, tipoActual: row.tipoApoyo || "Sin clasificar", idTipoApoyo: row.idTipoApoyo || "", motivo: "" })} title="Corregir tipo de apoyo"><i className="fas fa-sliders" aria-hidden="true"></i><span>Apoyo</span></button>
                               <button className="btn btn-outline btn-sm" type="button" onClick={() => showSupportAudit(row)} title="Ver auditoría del apoyo"><i className="fas fa-clipboard-list" aria-hidden="true"></i><span>Auditoría</span></button>
-                              <button className="btn btn-danger btn-sm activity-participants-actions__delete" type="button" onClick={() => setConfirmacionEliminacion(row)} disabled={Boolean(eliminandoInscripcionId)} title="Eliminar participante"><i className="fas fa-trash-can" aria-hidden="true"></i><span>Eliminar</span></button>
+                              <button className="btn btn-danger btn-sm activity-participants-actions__delete" type="button" onClick={() => setConfirmacionEliminacion(row)} disabled={Boolean(eliminandoInscripcionId)} title="Eliminar participante de esta actividad" aria-label={`Eliminar a ${row.apellidosNombres || row.identificacion} de esta actividad`}><i className="fas fa-trash-can" aria-hidden="true"></i><span>Eliminar</span></button>
                             </div>
                           </td>
                         </tr>

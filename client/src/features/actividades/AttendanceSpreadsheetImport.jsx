@@ -97,7 +97,7 @@ function suggestedHeaderRow(rows, asistentes) {
 
 function attendanceValue(value) {
   const normalized = normalizeHeader(value);
-  if (!normalized) return "unknown";
+  if (!normalized) return "blank";
   if (["NO", "N", "0", "FALSE", "FALSO", "AUSENTE", "NOASISTIO"].includes(normalized)
     || normalized.startsWith("NOASISTI")) return "absent";
   if (["SI", "S", "1", "TRUE", "VERDADERO", "PRESENTE", "ASISTIO", "ASISTENCIA", "X", "OK"].includes(normalized)
@@ -186,8 +186,17 @@ function mapFileRows({ rows, headerIndex, mapping, asistentes }) {
     }
     matchedIds.add(attendee.id);
 
-    if (asistencia === "absent") {
-      return { rowNumber, displayName, asistencia, attendee, status: "absent", message: "Marcada como no asistió." };
+    if (asistencia === "absent" || asistencia === "blank") {
+      return {
+        rowNumber,
+        displayName,
+        asistencia,
+        attendee,
+        status: "absent",
+        message: asistencia === "blank"
+          ? "La respuesta está vacía; no se marcará como presente."
+          : "Marcada como no asistió; no se marcará como presente.",
+      };
     }
     if (asistencia === "unknown") {
       return { rowNumber, displayName, asistencia, attendee, status: "unknown-answer", message: "La respuesta de asistencia no se reconoce; requiere revisión." };
@@ -213,7 +222,7 @@ function mapFileRows({ rows, headerIndex, mapping, asistentes }) {
   });
 }
 
-export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfirm }) {
+export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfirm, onResolveReview }) {
   const [fileName, setFileName] = useState("");
   const [sheets, setSheets] = useState([]);
   const [sheetName, setSheetName] = useState("");
@@ -223,10 +232,13 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
   const [loading, setLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [savedMessage, setSavedMessage] = useState("");
+  const [reviewedRows, setReviewedRows] = useState({});
+  const [identityConfirmedRows, setIdentityConfirmedRows] = useState(() => new Set());
+  const [resolvingRow, setResolvingRow] = useState(null);
 
   const activeSheet = sheets.find((sheet) => sheet.name === sheetName);
   const headers = activeSheet?.rows[headerRow === 0 ? 0 : headerRow - 1] || [];
-  const preview = useMemo(() => {
+  const mappedPreview = useMemo(() => {
     if (!activeSheet || !activeSheet.rows.length) return [];
     return mapFileRows({
       rows: activeSheet.rows,
@@ -235,6 +247,17 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
       asistentes,
     });
   }, [activeSheet, headerRow, mapping, asistentes, headers.length]);
+  const preview = mappedPreview.map((row) => {
+    const reviewed = reviewedRows[row.rowNumber];
+    if (reviewed === undefined) return row;
+    return {
+      ...row,
+      status: reviewed ? "manually-resolved-present" : "manually-resolved-absent",
+      message: reviewed
+        ? "Revisión confirmada: asistió; la asistencia quedó registrada."
+        : "Revisión confirmada: no asistió; no se marcará como presente.",
+    };
+  });
   const readyRows = preview.filter((row) => row.status === "ready");
   const selectedReadyIds = readyRows
     .filter((row) => selectedIds.has(row.attendee.id))
@@ -250,6 +273,8 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
     setMapping({});
     setSelectedIds(new Set());
     setSavedMessage("");
+    setReviewedRows({});
+    setIdentityConfirmedRows(new Set());
   }
 
   async function handleFile(event) {
@@ -258,6 +283,8 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
     setError("");
     setSavedMessage("");
     setSelectedIds(new Set());
+    setReviewedRows({});
+    setIdentityConfirmedRows(new Set());
     if (!file) return;
     const extension = file.name.split(".").pop()?.toLocaleLowerCase("es");
     if (!["xlsx", "xls", "xlsm", "xlsb", "ods", "csv", "tsv"].includes(extension)) {
@@ -319,6 +346,8 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
     setMapping(nextMapping);
     setSelectedIds(new Set());
     setSavedMessage("");
+    setReviewedRows({});
+    setIdentityConfirmedRows(new Set());
   }
 
   function changeHeaderRow(value) {
@@ -332,6 +361,8 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
     setMapping(nextMapping);
     setSelectedIds(new Set());
     setSavedMessage("");
+    setReviewedRows({});
+    setIdentityConfirmedRows(new Set());
   }
 
   function toggleAllReady(checked) {
@@ -347,6 +378,42 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
       return next;
     });
     setSavedMessage("");
+  }
+
+  function toggleIdentityConfirmation(rowNumber, checked) {
+    setIdentityConfirmedRows((current) => {
+      const next = new Set(current);
+      if (checked) next.add(rowNumber);
+      else next.delete(rowNumber);
+      return next;
+    });
+  }
+
+  async function resolveReview(row, asistio) {
+    if (!row.attendee || !onResolveReview || resolvingRow !== null) return;
+    if (row.status === "mismatch" && !identityConfirmedRows.has(row.rowNumber)) return;
+    setResolvingRow(row.rowNumber);
+    setError("");
+    setSavedMessage("");
+    try {
+      const resolved = await onResolveReview(row.attendee.id, asistio);
+      if (!resolved) {
+        throw new Error("No se pudo verificar el estado guardado. Actualiza la lista e inténtalo de nuevo.");
+      }
+      setReviewedRows((current) => ({ ...current, [row.rowNumber]: asistio }));
+      setIdentityConfirmedRows((current) => {
+        const next = new Set(current);
+        next.delete(row.rowNumber);
+        return next;
+      });
+      setSavedMessage(asistio
+        ? `${row.attendee.apellidosNombres || "La persona"} quedó marcada como asistente.`
+        : `${row.attendee.apellidosNombres || "La persona"} quedó marcada como no asistente; no contará como presente.`);
+    } catch (resolveError) {
+      setError(resolveError.message || "No se pudo resolver la revisión de asistencia.");
+    } finally {
+      setResolvingRow(null);
+    }
   }
 
   async function confirmImport() {
@@ -372,8 +439,40 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
         <span className="vec-attendance-import__icon" aria-hidden="true"><i className="fas fa-file-import"></i></span>
         <div>
           <h4 id="vec-attendance-import-title">Importar lista de asistencia</h4>
-          <p>Usa el Excel o CSV exportado desde cualquier formulario. No necesita una plantilla fija.</p>
+          <p>Elige una lista y revisa las coincidencias antes de confirmar.</p>
         </div>
+      </div>
+      <div className="vec-upload-guide vec-upload-guide--attendance">
+        <div className="vec-upload-guide__heading">
+          <span aria-hidden="true"><i className="fas fa-lightbulb"></i></span>
+          <div>
+            <strong>Tu lista puede ser muy sencilla</strong>
+            <p>Pon los títulos arriba y una persona en cada fila de abajo. No necesitas una plantilla especial.</p>
+          </div>
+        </div>
+        <div className="vec-upload-guide__grid">
+          <section>
+            <strong>Para encontrar a la persona</strong>
+            <p>Incluye por lo menos una de estas columnas:</p>
+            <ul>
+              <li>Documento</li>
+              <li>Código institucional o estudiantil</li>
+              <li>Correo electrónico</li>
+            </ul>
+          </section>
+          <section>
+            <strong>Para marcar si vino</strong>
+            <p>La columna <b>Asistencia</b> es opcional. Puedes escribir Sí o No, Presente o Ausente; una X significa que sí vino.</p>
+            <p>Las respuestas No, Ausente o vacías no se marcarán como presente. Si la respuesta no se reconoce o hay datos que no coinciden, podrás revisar esa fila y confirmar manualmente si asistió o no. Si no incluyes la columna, las coincidencias sí se tomarán como presentes.</p>
+          </section>
+        </div>
+        <div className="vec-upload-guide__example">
+          <strong>Ejemplo</strong>
+          <code>Documento | Asistencia<br />12345678 | Sí</code>
+        </div>
+        <p className="vec-upload-guide__foot">
+          Aceptamos Excel, ODS, CSV o TSV de hasta 5 MB y 5.000 filas. Solo se marca asistencia de personas ya inscritas en la actividad; podrás corregir la columna elegida y revisar el resultado antes de guardar.
+        </p>
       </div>
       <label className="vec-attendance-import__upload">
         <input
@@ -433,6 +532,8 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
                     setMapping((current) => ({ ...current, [field.id]: event.target.value }));
                     setSelectedIds(new Set());
                     setSavedMessage("");
+                    setReviewedRows({});
+                    setIdentityConfirmedRows(new Set());
                   }}
                 >
                   <option value="">No asignar</option>
@@ -453,6 +554,11 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
               No se asignó una columna de asistencia: cada fila con una coincidencia válida se interpretará como presente.
             </p>
           )}
+          {mapping.asistencia !== "" && (
+            <p className="vec-attendance-import__message vec-attendance-import__message--info" role="note">
+              Las respuestas No, Ausente o vacías no se marcan como presentes. Las filas con respuesta desconocida o identificadores que no coincidan aparecerán para revisión manual.
+            </p>
+          )}
           {mapping.codigo !== undefined && mapping.codigo !== "" && (
             <p className="vec-attendance-import__message vec-attendance-import__message--info" role="note">
               Para estudiantes, el código institucional o estudiantil se valida contra el código de la inscripción. Si el archivo incluye código y documento, ambos deben coincidir con la misma persona.
@@ -466,6 +572,7 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
 
           <div className="vec-attendance-import__summary" aria-label="Resumen de coincidencias">
             <span><strong>{readyRows.length}</strong> listas para confirmar</span>
+            <span><strong>{preview.filter((row) => row.status === "absent").length}</strong> no asistió o sin respuesta</span>
             <span><strong>{preview.filter((row) => ["not-found", "ambiguous", "missing-id", "unknown-answer", "mismatch"].includes(row.status)).length}</strong> requieren revisión</span>
             <span><strong>{preview.filter((row) => row.status === "duplicate").length}</strong> duplicadas</span>
           </div>
@@ -515,8 +622,53 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
                           && <small>Archivo: {row.displayName}</small>}
                       </div>
                     </td>
-                    <td>{mapping.asistencia === "" ? "Presente (por defecto)" : row.asistencia === "present" ? "Presente" : row.asistencia === "absent" ? "No asistió" : "Revisar respuesta"}</td>
-                    <td><span className={`vec-attendance-import__status vec-attendance-import__status--${row.status}`}>{row.message}</span></td>
+                    <td>{mapping.asistencia === ""
+                      ? "Presente (por defecto)"
+                      : row.asistencia === "present"
+                        ? "Presente"
+                        : row.asistencia === "absent"
+                          ? "No asistió"
+                          : row.asistencia === "blank"
+                            ? "Sin respuesta"
+                            : "Revisar respuesta"}</td>
+                    <td>
+                      <span className={`vec-attendance-import__status vec-attendance-import__status--${row.status}`}>{row.message}</span>
+                      {row.attendee && ["mismatch", "unknown-answer"].includes(row.status) && (
+                        <div className="vec-attendance-import__manual-review">
+                          {row.status === "mismatch" && (
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={identityConfirmedRows.has(row.rowNumber)}
+                                onChange={(event) => toggleIdentityConfirmation(row.rowNumber, event.target.checked)}
+                                disabled={busy || resolvingRow !== null}
+                              />
+                              <span>Confirmo que la persona inscrita corresponde a esta fila.</span>
+                            </label>
+                          )}
+                          <div>
+                            <button
+                              className="btn btn-outline btn-sm"
+                              type="button"
+                              onClick={() => resolveReview(row, true)}
+                              disabled={busy || resolvingRow !== null || (row.status === "mismatch" && !identityConfirmedRows.has(row.rowNumber))}
+                            >
+                              <i className={`fas ${resolvingRow === row.rowNumber ? "fa-spinner fa-spin" : "fa-user-check"}`} aria-hidden="true"></i>
+                              Sí, asistió
+                            </button>
+                            <button
+                              className="btn btn-outline btn-sm"
+                              type="button"
+                              onClick={() => resolveReview(row, false)}
+                              disabled={busy || resolvingRow !== null || (row.status === "mismatch" && !identityConfirmedRows.has(row.rowNumber))}
+                            >
+                              <i className="fas fa-user-xmark" aria-hidden="true"></i>
+                              No asistió
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </td>
                   </tr>
                 ))}
                 {previewCount === 0 && (
@@ -527,7 +679,7 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
           </div>
           {savedMessage && <p className="vec-attendance-import__message vec-attendance-import__message--success" role="status">{savedMessage}</p>}
           <div className="vec-attendance-import__footer">
-            <span>{selectedReadyIds.length} coincidencias seleccionadas. Las filas dudosas no se confirman automáticamente.</span>
+            <span>{selectedReadyIds.length} coincidencias seleccionadas. Las filas que requieren revisión se resuelven desde su misma fila.</span>
             <button
               className="btn btn-primary"
               type="button"

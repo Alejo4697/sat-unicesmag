@@ -395,6 +395,8 @@ export default function NewParticipantView({ onCancel }) {
   const rolesRegistrados = busqueda.participante?.roles || [];
   const rolesVerificados = busqueda.participante?.rolesVerificados || [];
   const rolesExistentes = [...new Set([...rolesRegistrados, ...rolesVerificados])];
+  const estudianteSinRegistroInstitucional = tipo === "ESTUDIANTE"
+    && !rolesExistentes.includes("ESTUDIANTE");
   const rolExternoIncompatible = rolesExistentes.includes("EXTERNO")
     ? tipo !== "EXTERNO" || rolesExistentes.some((role) => role !== "EXTERNO")
     : tipo === "EXTERNO" && rolesExistentes.length > 0;
@@ -563,17 +565,17 @@ export default function NewParticipantView({ onCancel }) {
             status: participante.yaRegistrado ? "duplicate" : "found",
             participante,
             mensaje: participante.yaRegistrado
-              ? `Persona encontrada y asociada al rol ${participante.tipoRegistrado || tipo}. Puedes registrarla en otra actividad con este rol.`
+              ? `Encontramos a ${[participante.nombres, participante.apellidos].filter(Boolean).join(" ")}. Ya tiene el rol ${TIPOS.find((item) => item.value === (participante.tipoRegistrado || tipo))?.label || participante.tipoRegistrado || tipo}; puedes inscribirla en otra actividad con ese rol.`
               : esRolNuevo
-                ? `Persona encontrada con otros roles. Se creará su perfil adicional como ${TIPOS.find((item) => item.value === tipo)?.label || tipo}.`
-                : "Persona encontrada en los registros institucionales. Sus datos disponibles se precargaron.",
+                ? `Encontramos a ${[participante.nombres, participante.apellidos].filter(Boolean).join(" ")} con otro rol. Si continúas, le agregaremos también el rol ${TIPOS.find((item) => item.value === tipo)?.label || tipo}.`
+                : `Encontramos a ${[participante.nombres, participante.apellidos].filter(Boolean).join(" ")}. Completamos sus datos para que puedas revisarlos.`,
           });
         } else {
           setForm({ ...EMPTY_FORM, identificacion: identificacion.trim() });
           setBusqueda({
             status: "not-found",
             participante: null,
-            mensaje: "Esta persona no se encuentra registrada. Ingresa los datos personales disponibles y continúa con la actividad.",
+            mensaje: "No encontramos a esta persona todavía. No pasa nada: completa sus datos con * y continúa.",
           });
         }
       } catch (requestError) {
@@ -738,6 +740,10 @@ export default function NewParticipantView({ onCancel }) {
       setError("No se pudo consultar la identificación. Intenta nuevamente antes de continuar.");
       return;
     }
+    if (estudianteSinRegistroInstitucional) {
+      setError("No se pueden crear estudiantes que no estén en la base institucional. Selecciona Egresado, Colaborador o Externo.");
+      return;
+    }
     if (esperandoResultado || busqueda.status === "idle") {
       setError("Espera a que termine la búsqueda por identificación.");
       return;
@@ -773,8 +779,9 @@ export default function NewParticipantView({ onCancel }) {
         .map((role) => TIPOS.find((item) => item.value === role)?.label || role)
         .join(", ");
       const rolNuevo = TIPOS.find((item) => item.value === tipo)?.label || tipo;
+      const nombrePersona = [form.nombres, form.apellidos].filter(Boolean).join(" ");
       if (!window.confirm(
-        `La persona ya tiene estos roles: ${rolesActuales}.\n\n¿Confirmas agregar el rol ${rolNuevo} y continuar con la inscripción?`,
+        `Encontramos a ${nombrePersona} con el rol ${rolesActuales}.\n\n¿Quieres agregarle también el rol ${rolNuevo} y continuar con la inscripción? Sus datos actuales se conservarán.`,
       )) return;
     }
 
@@ -838,7 +845,8 @@ export default function NewParticipantView({ onCancel }) {
     }
   }
 
-  const mostrarPerfil = ["found", "not-found", "duplicate"].includes(busqueda.status);
+  const mostrarPerfil = ["found", "not-found", "duplicate"].includes(busqueda.status)
+    && (!estudianteSinRegistroInstitucional || busqueda.status === "duplicate");
   const perfilSoloLectura = personaEncontrada && !esRolNuevoParaPersona;
   const datoAutocompletadoSoloLectura = (name) => perfilSoloLectura && Boolean(form[name]);
   const contactoActual = form.contacto || form.celular || form.telefono;
@@ -860,7 +868,7 @@ export default function NewParticipantView({ onCancel }) {
         <div>
           <span className="vec-registration-intro__eyebrow">GESTIÓN DE PARTICIPANTES</span>
           <h1>Registrar participantes</h1>
-          <p>Inscribe participantes en actividades y asigna su programa, modalidad y apoyo correspondiente.</p>
+          <p>Busca a la persona, elige la actividad y guárdala. Te guiaremos paso a paso.</p>
         </div>
       </header>
 
@@ -897,10 +905,31 @@ export default function NewParticipantView({ onCancel }) {
         </button>
       </div>
 
+      <section className="vec-registration-guide" aria-label="Pasos para registrar participantes">
+        <strong className="vec-registration-guide__title">
+          <i className="fas fa-circle-info" aria-hidden="true"></i>
+          {modoRegistro === "masivo" ? "En 3 pasos sencillos" : "En 4 pasos sencillos"}
+        </strong>
+        {modoRegistro === "masivo" ? (
+          <ol>
+            <li><span>1</span><p><strong>Elige la actividad.</strong> Así sabremos a cuál quieres agregar a las personas.</p></li>
+            <li><span>2</span><p><strong>Sube el Excel.</strong> Puedes usar la plantilla si todavía no tienes una lista.</p></li>
+            <li><span>3</span><p><strong>Revisa y confirma.</strong> Mira los nombres y las modalidades antes de inscribir.</p></li>
+          </ol>
+        ) : (
+          <ol>
+            <li><span>1</span><p><strong>Elige su rol.</strong> Indica cómo participa esta persona. Si tiene varios, escoge el que corresponde a esta inscripción.</p></li>
+            <li><span>2</span><p><strong>Busca a la persona.</strong> Escribe su documento o código y espera a que aparezca.</p></li>
+            <li><span>3</span><p><strong>Revisa sus datos.</strong> Confirma que sea la persona correcta y completa lo que tenga *.</p></li>
+            <li><span>4</span><p><strong>Elige y guarda.</strong> Selecciona la actividad, elige modalidad si aparece y pulsa “Inscribir”.</p></li>
+          </ol>
+        )}
+      </section>
+
       {modoRegistro === "masivo" ? <BulkParticipantImport onPendingChange={setCargaMasivaPendiente} /> : <>
-      <SectionCard title="Tipo de participante e identificación" icon="fa-id-card" defaultOpen>
+      <SectionCard title="Busca y elige a la persona" icon="fa-id-card" defaultOpen description="Primero elegimos cómo participa; después buscamos su documento o código en la base de datos.">
         <div className="form-group">
-          <label className="form-label" htmlFor="participant-role">Rol para esta inscripción</label>
+          <label className="form-label" htmlFor="participant-role">¿Cómo participa en esta actividad?</label>
           <select
             className="form-control"
             id="participant-role"
@@ -916,13 +945,11 @@ export default function NewParticipantView({ onCancel }) {
           >
             {TIPOS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
           </select>
-          <p className="text-muted">
-            El rol elegido se usa para esta inscripción. Estudiante, egresado y colaborador pueden coexistir; Externo es exclusivo.
-          </p>
+          <p className="text-muted">Elige el rol que usarás para esta inscripción. Si la persona tiene varios roles, podrás verlos después de buscarla. “Externo” no se combina con otros roles.</p>
         </div>
         <div className="form-group">
-          <label className="form-label" htmlFor="participant-identification" style={{ fontSize: "0.95rem" }}>
-            Cédula o código institucional <span className="vec-required-indicator" aria-hidden="true">*</span>
+          <label className="form-label" htmlFor="participant-identification">
+            Cédula, documento o código institucional <span className="vec-required-indicator" aria-hidden="true">*</span>
           </label>
           <input
             className="form-control"
@@ -945,7 +972,7 @@ export default function NewParticipantView({ onCancel }) {
             maxLength={64}
             required
           />
-          <p className="text-muted">La búsqueda se realiza automáticamente al dejar de escribir; también revisa otros roles para encontrar a la misma persona.</p>
+          <p className="text-muted">Escribe al menos 3 caracteres. La buscaremos automáticamente; no hace falta escribir su nombre.</p>
         </div>
         {["waiting", "loading"].includes(busqueda.status) && (
           <div className="autosave-banner vec-participant-status" role="status">
@@ -968,7 +995,31 @@ export default function NewParticipantView({ onCancel }) {
               className={`fas ${personaEncontrada ? "fa-check" : busqueda.status === "error" ? "fa-circle-xmark" : "fa-circle-info"} vec-participant-status-icon${personaEncontrada ? " vec-participant-status-icon-success" : ""}`}
               aria-hidden="true"
             />
-            <span>{busqueda.mensaje}</span>
+            <span>{busqueda.status === "not-found" && tipo === "ESTUDIANTE"
+              ? "No encontramos a esta persona en el registro institucional de estudiantes."
+              : busqueda.mensaje}</span>
+            {estudianteSinRegistroInstitucional
+              && ["not-found", "found"].includes(busqueda.status) && (
+              <label className="vec-participant-status__missing-role">
+                <span>Esta persona no tiene un registro institucional de estudiante. Para continuar, selecciona uno de estos roles:</span>
+                <select
+                  className="form-select"
+                  value=""
+                  onChange={(event) => {
+                    setTipo(event.target.value);
+                    setForm(EMPTY_FORM);
+                    setError("");
+                    setConfirmacion("");
+                  }}
+                  aria-label="Rol permitido para crear una persona no encontrada"
+                >
+                  <option value="" disabled>Selecciona Egresado, Colaborador o Externo</option>
+                  {TIPOS.filter((item) => ["EGRESADO", "COLABORADOR", "EXTERNO"].includes(item.value))
+                    .map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                </select>
+                <small>Los perfiles de estudiante y administrativo deben existir en la base institucional; no se crean desde aquí.</small>
+              </label>
+            )}
           </div>
         )}
         {(busqueda.participante?.roles?.length || 0) > 0 && (
@@ -1019,7 +1070,7 @@ export default function NewParticipantView({ onCancel }) {
             title="Datos básicos"
             icon="fa-address-card"
             defaultOpen
-            description="Los datos encontrados en la fuente institucional se completan automáticamente."
+            description="Si encontramos a la persona, completamos estos datos. Revisa que sean correctos."
           >
             <FormGrid>
               <Field name="identificacion" label="Identificación" value={form.identificacion || identificacion} onChange={() => {}} readOnly />
@@ -1038,56 +1089,65 @@ export default function NewParticipantView({ onCancel }) {
             </FormGrid>
           </SectionCard>
 
-          <SectionCard
-            title="Información académica e institucional"
-            icon="fa-graduation-cap"
-            summary={form.programaAcademico || form.dependencia || "Opcional"}
-          >
-            <FormGrid>
-              <Field
-                name="detalleTipoParticipante"
-                label="Clasificación en el registro VEC"
-                value={form.detalleTipoParticipante || DETALLES_POR_TIPO[tipo]?.[0]?.value || ""}
-                onChange={actualizarCampo}
-                readOnly={datoAutocompletadoSoloLectura("detalleTipoParticipante")}
-                options={opcionesConValorActual(
-                  DETALLES_POR_TIPO[tipo] || [],
-                  form.detalleTipoParticipante,
-                )}
-              />
-              {esEstudiante && (
-                <Field name="periodoFuente" label="Periodo académico (fuente)" value={form.periodo} onChange={() => {}} readOnly />
-              )}
-              <Field name="programaAcademico" label="Programa académico pregrado" value={form.programaAcademico} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("programaAcademico")} />
-              <Field name="programaPosgradoDependencia" label="Programa académico posgrado / dependencia" value={form.programaPosgradoDependencia} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("programaPosgradoDependencia")} />
-              <Field name="semestre" label="Semestre" value={form.semestre} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("semestre")} />
-              <Field name="jornada" label="Jornada" value={form.jornada} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("jornada")} />
-              <Field name="dependencia" label="Dependencia de la persona" value={form.dependencia} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("dependencia")} />
-              <Field name="cargo" label="Cargo" value={form.cargo} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("cargo")} />
-              <Field name="fechaEgreso" label="Fecha de egreso" value={form.fechaEgreso} onChange={actualizarCampo} type="date" readOnly={datoAutocompletadoSoloLectura("fechaEgreso")} />
-            </FormGrid>
-          </SectionCard>
+          <details className="vec-registration-optional">
+            <summary>
+              <span><i className="fas fa-sliders" aria-hidden="true"></i> Más datos de la persona <small>Opcional</small></span>
+              <i className="fas fa-chevron-down" aria-hidden="true"></i>
+            </summary>
+            <div className="vec-registration-optional__content">
+              <p>Estos datos no son necesarios para inscribir. Ábrelos solo si necesitas revisarlos o completarlos.</p>
+              <SectionCard
+                title="Información académica e institucional"
+                icon="fa-graduation-cap"
+                summary={form.programaAcademico || form.dependencia || "Opcional"}
+              >
+                <FormGrid>
+                  <Field
+                    name="detalleTipoParticipante"
+                    label="Clasificación en el registro VEC"
+                    value={form.detalleTipoParticipante || DETALLES_POR_TIPO[tipo]?.[0]?.value || ""}
+                    onChange={actualizarCampo}
+                    readOnly={datoAutocompletadoSoloLectura("detalleTipoParticipante")}
+                    options={opcionesConValorActual(
+                      DETALLES_POR_TIPO[tipo] || [],
+                      form.detalleTipoParticipante,
+                    )}
+                  />
+                  {esEstudiante && (
+                    <Field name="periodoFuente" label="Periodo académico (fuente)" value={form.periodo} onChange={() => {}} readOnly />
+                  )}
+                  <Field name="programaAcademico" label="Programa académico pregrado" value={form.programaAcademico} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("programaAcademico")} />
+                  <Field name="programaPosgradoDependencia" label="Programa académico posgrado / dependencia" value={form.programaPosgradoDependencia} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("programaPosgradoDependencia")} />
+                  <Field name="semestre" label="Semestre" value={form.semestre} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("semestre")} />
+                  <Field name="jornada" label="Jornada" value={form.jornada} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("jornada")} />
+                  <Field name="dependencia" label="Dependencia de la persona" value={form.dependencia} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("dependencia")} />
+                  <Field name="cargo" label="Cargo" value={form.cargo} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("cargo")} />
+                  <Field name="fechaEgreso" label="Fecha de egreso" value={form.fechaEgreso} onChange={actualizarCampo} type="date" readOnly={datoAutocompletadoSoloLectura("fechaEgreso")} />
+                </FormGrid>
+              </SectionCard>
 
-          <SectionCard title="Perfil sociodemográfico" icon="fa-people-group" summary="Opcional">
-            <FormGrid>
-              <Field name="genero" label="Género" value={form.genero} onChange={actualizarCampo} options={opcionesConValorActual([...OPCIONES_GENERO, ...catalogos.generos], form.genero)} readOnly={datoAutocompletadoSoloLectura("genero")} />
-              <Field name="fechaNacimiento" label="Fecha de nacimiento" value={form.fechaNacimiento} onChange={actualizarCampo} type="date" readOnly={datoAutocompletadoSoloLectura("fechaNacimiento")} />
-              {form.fechaNacimiento && <Field name="edad" label="Edad" value={calculateAge(form.fechaNacimiento)} onChange={() => {}} readOnly />}
-              <Field name="etnia" label="Etnia" value={form.etnia} onChange={actualizarCampo} options={opcionesConValorActual([...OPCIONES_ETNIA, ...catalogos.etnias], form.etnia)} readOnly={datoAutocompletadoSoloLectura("etnia")} />
-              <Field name="municipio" label="Municipio" value={form.municipio} onChange={actualizarCampo} options={opcionesConValorActual(catalogos.municipios, form.municipio)} readOnly={datoAutocompletadoSoloLectura("municipio")} />
-              <Field name="conflictoArmado" label="Conflicto armado" value={form.conflictoArmado} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("conflictoArmado")} />
-              <Field name="discapacidad" label="Discapacidad" value={form.discapacidad} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("discapacidad")} />
-            </FormGrid>
-          </SectionCard>
+              <SectionCard title="Perfil sociodemográfico" icon="fa-people-group" summary="Opcional">
+                <FormGrid>
+                  <Field name="genero" label="Género" value={form.genero} onChange={actualizarCampo} options={opcionesConValorActual([...OPCIONES_GENERO, ...catalogos.generos], form.genero)} readOnly={datoAutocompletadoSoloLectura("genero")} />
+                  <Field name="fechaNacimiento" label="Fecha de nacimiento" value={form.fechaNacimiento} onChange={actualizarCampo} type="date" readOnly={datoAutocompletadoSoloLectura("fechaNacimiento")} />
+                  {form.fechaNacimiento && <Field name="edad" label="Edad" value={calculateAge(form.fechaNacimiento)} onChange={() => {}} readOnly />}
+                  <Field name="etnia" label="Etnia" value={form.etnia} onChange={actualizarCampo} options={opcionesConValorActual([...OPCIONES_ETNIA, ...catalogos.etnias], form.etnia)} readOnly={datoAutocompletadoSoloLectura("etnia")} />
+                  <Field name="municipio" label="Municipio" value={form.municipio} onChange={actualizarCampo} options={opcionesConValorActual(catalogos.municipios, form.municipio)} readOnly={datoAutocompletadoSoloLectura("municipio")} />
+                  <Field name="conflictoArmado" label="Conflicto armado" value={form.conflictoArmado} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("conflictoArmado")} />
+                  <Field name="discapacidad" label="Discapacidad" value={form.discapacidad} onChange={actualizarCampo} readOnly={datoAutocompletadoSoloLectura("discapacidad")} />
+                </FormGrid>
+              </SectionCard>
 
-          <SectionCard title="Contacto" icon="fa-envelope" summary={contactoActual || form.correo || "Opcional"}>
-            <FormGrid>
-              <Field name="correo" label="Correo" value={form.correo} onChange={actualizarCampo} type="email" readOnly={datoAutocompletadoSoloLectura("correo")} />
-              <Field name="contacto" label="Contacto" value={contactoActual} onChange={(name, value) => {
-                setForm((current) => ({ ...current, contacto: value, celular: value }));
-              }} readOnly={perfilSoloLectura && Boolean(contactoActual)} />
-            </FormGrid>
-          </SectionCard>
+              <SectionCard title="Contacto" icon="fa-envelope" summary={contactoActual || form.correo || "Opcional"}>
+                <FormGrid>
+                  <Field name="correo" label="Correo" value={form.correo} onChange={actualizarCampo} type="email" readOnly={datoAutocompletadoSoloLectura("correo")} />
+                  <Field name="contacto" label="Contacto" value={contactoActual} onChange={(name, value) => {
+                    setForm((current) => ({ ...current, contacto: value, celular: value }));
+                  }} readOnly={perfilSoloLectura && Boolean(contactoActual)} />
+                </FormGrid>
+              </SectionCard>
+            </div>
+          </details>
 
           {tipo && (
             <>
@@ -1095,8 +1155,12 @@ export default function NewParticipantView({ onCancel }) {
                 title={`Actividad · ${TIPOS.find((item) => item.value === tipo)?.label || tipo}`}
                 icon="fa-calendar-check"
                 defaultOpen
-                description="Al elegir una jornada existente, sus fechas, clasificación, modalidad, apoyos y datos complementarios se completan desde Actividades. También puedes programar una nueva jornada."
+                description="Elige una actividad que ya existe. Si todavía no está, puedes programar una nueva jornada."
               >
+              <div className="vec-registration-simple-hint" role="note">
+                <i className="fas fa-lightbulb" aria-hidden="true"></i>
+                <span>Si ya existe, selecciónala en “Actividad”. Si todavía no existe, elige “Programar una nueva jornada” y completa los datos con *.</span>
+              </div>
               {catalogosStatus === "loading" && <p className="text-muted" role="status">Cargando catálogos...</p>}
               {catalogosStatus === "error" && (
                 <div className="auth-error" role="alert">
@@ -1137,7 +1201,7 @@ export default function NewParticipantView({ onCancel }) {
                   <FormGrid>
                     <Field
                       name="eventoDisponible"
-                      label="Actividad creada"
+                      label="Actividad"
                       value={actividad.idEventoExistente || "NUEVA"}
                       onChange={(_name, value) => seleccionarEvento(value)}
                       options={[
@@ -1405,7 +1469,7 @@ export default function NewParticipantView({ onCancel }) {
                     {requiereSeleccionModalidadEvento ? (
                       <Field
                         name="subdivisionPrograma"
-                        label="Variable o modalidad de inscripción"
+                        label="Modalidad para esta persona"
                         value={actividad.subdivisionPrograma}
                         onChange={(_name, value) => {
                           const modalidadSeleccionada = modalidadesEventoSeleccionado.find(
@@ -1419,7 +1483,7 @@ export default function NewParticipantView({ onCancel }) {
                           setConfirmacionRolApoyo(false);
                         }}
                         required={requiereSeleccionModalidadEvento}
-                        placeholder="Selecciona la modalidad para esta persona"
+                        placeholder="Elige una modalidad"
                         options={opcionesModalidadEvento}
                       />
                     ) : (
@@ -1443,6 +1507,11 @@ export default function NewParticipantView({ onCancel }) {
                         <p className="text-muted" role="status">
                           Esta persona se inscribirá en <strong>{modalidadesEventoSeleccionado.find((item) => item.programaCompleto === actividad.subdivisionPrograma)?.subdivision || actividad.subdivisionPrograma}</strong>
                           {actividad.idTipoApoyo && <> con el apoyo <strong>{catalogos.tiposApoyo.find((item) => String(item.id) === String(actividad.idTipoApoyo))?.nombre || "asociado a la modalidad"}</strong></>}.
+                        </p>
+                      )}
+                      {requiereSeleccionModalidadEvento && !actividad.subdivisionPrograma && (
+                        <p className="text-muted" role="status">
+                          Elige una modalidad para continuar. El apoyo correspondiente se asignará automáticamente.
                         </p>
                       )}
                       {actividadSeleccionada
@@ -1556,6 +1625,7 @@ export default function NewParticipantView({ onCancel }) {
           type="submit"
           disabled={guardando
             || !tipo
+            || (estudianteSinRegistroInstitucional && ["not-found", "found"].includes(busqueda.status))
             || !identificacion.trim()
             || esperandoResultado
             || busqueda.status === "error"
@@ -1566,8 +1636,8 @@ export default function NewParticipantView({ onCancel }) {
           {guardando
             ? "Guardando registro..."
             : actividad.idEventoExistente
-              ? "Vincular participante al evento"
-              : "Registrar participante y programar jornada"}
+              ? "Inscribir en esta actividad"
+              : "Inscribir y crear la jornada"}
         </button>
       </div>
       </>}

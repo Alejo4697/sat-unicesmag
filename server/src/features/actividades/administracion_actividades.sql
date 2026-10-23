@@ -12,6 +12,27 @@ ALTER TABLE sat.participantes_vec
   ADD COLUMN IF NOT EXISTS detalle_tipo_participante varchar(120),
   ADD COLUMN IF NOT EXISTS lugar_nacimiento varchar(250);
 
+ALTER TABLE sat.actividades_vec_participantes
+  ADD COLUMN IF NOT EXISTS estado_asistencia varchar(20) NOT NULL DEFAULT 'PENDIENTE';
+
+UPDATE sat.actividades_vec_participantes
+SET estado_asistencia = 'PRESENTE'
+WHERE asistencia_verificada = true
+  AND estado_asistencia = 'PENDIENTE';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'sat.actividades_vec_participantes'::regclass
+      AND conname = 'actividades_vec_participantes_estado_asistencia_check'
+  ) THEN
+    ALTER TABLE sat.actividades_vec_participantes
+      ADD CONSTRAINT actividades_vec_participantes_estado_asistencia_check
+      CHECK (estado_asistencia IN ('PENDIENTE', 'PRESENTE', 'AUSENTE'));
+  END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS sat.catalogo_bienestar_actividades (
   programa varchar(250) PRIMARY KEY,
   componente varchar(250),

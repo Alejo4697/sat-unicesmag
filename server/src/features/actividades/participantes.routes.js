@@ -112,15 +112,22 @@ function listarProgramasBienestar() {
 
 const ASSISTANTS_QUERY = `
   SELECT avp.id_actividades_vec_participantes AS "id",
+         pv.id_personas AS "idPersona",
          pa.nombre AS "periodo",
          p.numero_identificacion AS "identificacion",
          COALESCE(pv.tipo_documento, e.tipo_documento) AS "tipoDocumento",
          COALESCE(m.codigo_externo, e.codigo_externo, pv.codigo) AS "codigo",
          BTRIM(CONCAT_WS(' ', p.primer_apellido, p.segundo_apellido,
                           p.primer_nombre, p.segundo_nombre)) AS "apellidosNombres",
+         BTRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre)) AS "nombres",
          pv.tipo_participante AS "rolParticipacion",
          COALESCE(roles.roles, ARRAY[pv.tipo_participante]) AS roles,
          COALESCE((to_jsonb(avp)->>'asistencia_verificada')::boolean, false) AS "asistenciaVerificada",
+         COALESCE(
+           NULLIF(to_jsonb(avp)->>'estado_asistencia', ''),
+           CASE WHEN COALESCE((to_jsonb(avp)->>'asistencia_verificada')::boolean, false)
+             THEN 'PRESENTE' ELSE 'PENDIENTE' END
+         ) AS "asistenciaEstado",
          COALESCE(to_jsonb(avp)->>'asistencia_verificada_origen', 'MANUAL') AS "origenAsistencia",
          COALESCE(prog.nombre, pv.programa_academico) AS "programaPregrado",
          pv.programa_posgrado_dependencia AS "programaPosgrado",
@@ -201,11 +208,73 @@ const ASSISTANTS_QUERY = `
   LEFT JOIN sat.lineas_accion la ON la.id_lineas_accion = cb.id_lineas_accion
   LEFT JOIN sat.apoyos_actividades_vec ta ON ta.id_tipos_apoyo = avp.id_tipos_apoyo
   LEFT JOIN LATERAL (
-    SELECT ARRAY_AGG(DISTINCT other_pv.tipo_participante ORDER BY other_pv.tipo_participante) AS roles
-    FROM sat.participantes_vec other_pv
-    WHERE other_pv.id_personas = p.id
+    SELECT ARRAY(
+      SELECT DISTINCT detected.rol
+      FROM (
+        SELECT other_pv.tipo_participante AS rol
+        FROM sat.participantes_vec other_pv
+        WHERE other_pv.id_personas = p.id
+        UNION ALL
+        SELECT 'ESTUDIANTE' AS rol
+        WHERE EXISTS (
+          SELECT 1
+          FROM sat.estudiantes student_role
+          WHERE student_role.id_personas = p.id
+             OR student_role.numero_documento = p.numero_identificacion
+             OR student_role.codigo_externo = p.numero_identificacion
+             OR student_role.codigo_externo = pv.codigo
+             OR EXISTS (
+               SELECT 1
+               FROM sat.matriculas student_enrollment
+               WHERE student_enrollment.id_estudiantes = student_role.id_estudiantes
+                 AND student_enrollment.codigo_externo IN (
+                   p.numero_identificacion,
+                   pv.codigo
+                 )
+             )
+        )
+        UNION ALL
+        SELECT 'COLABORADOR' AS rol
+        WHERE EXISTS (
+          SELECT 1
+          FROM sat.usuarios employee
+          WHERE (employee.id_personas = p.id
+                 OR employee.numero_documento = p.numero_identificacion)
+            AND employee.activo = true
+            AND employee.eliminado_en IS NULL
+            AND (
+              EXISTS (
+                SELECT 1
+                FROM sat.usuarios_roles employee_role
+                JOIN sat.roles institutional_role
+                  ON institutional_role.id_roles = employee_role.id_roles
+                WHERE employee_role.id_usuarios = employee.id_usuarios
+                  AND institutional_role.activo = true
+                  AND UPPER(BTRIM(institutional_role.nombre)) IN (
+                    'ADMIN', 'ADMINISTRADOR', 'COLABORADOR', 'DIRECTIVO', 'DOCENTE', 'PROFESIONAL'
+                  )
+              )
+              OR EXISTS (
+                SELECT 1
+                FROM sat.docentes employee_teacher
+                WHERE employee_teacher.id_usuarios = employee.id_usuarios
+                  AND employee_teacher.activo = true
+              )
+            )
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM sat.docentes employee_teacher
+          WHERE employee_teacher.activo = true
+            AND (employee_teacher.id_personas = p.id
+                 OR employee_teacher.numero_documento = p.numero_identificacion)
+        )
+      ) detected
+      WHERE detected.rol IS NOT NULL
+      ORDER BY detected.rol
+    ) AS roles
   ) roles ON TRUE
-  WHERE a.estado <> 'CANCELADA'
+  WHERE ($6::boolean OR a.estado <> 'CANCELADA')
     AND a.id_actividades_vec = $1
     AND ($2::uuid IS NULL OR a.id_periodos_academicos = $2)
     AND (
@@ -221,6 +290,38 @@ const ASSISTANTS_QUERY = `
     AND ($5::date IS NULL OR a.fecha_finalizacion = $5)
   ORDER BY ta.numero NULLS LAST, LOWER(COALESCE(ta.nombre, '')),
            "apellidosNombres", p.numero_identificacion, pv.tipo_participante`;
+
+function asistentesSinIdPersona(asistentes) {
+  const asistentesPorPersona = new Map();
+  for (const asistente of asistentes) {
+    const key = String(asistente.idPersona || asistente.identificacion || asistente.id);
+    const existente = asistentesPorPersona.get(key);
+    if (!existente) {
+      asistentesPorPersona.set(key, {
+        ...asistente,
+        roles: [...new Set([...(asistente.roles || []), asistente.rolParticipacion].filter(Boolean))],
+        estadosAsistencia: new Set([asistente.asistenciaEstado]),
+      });
+      continue;
+    }
+    existente.roles = [...new Set([
+      ...existente.roles,
+      ...(asistente.roles || []),
+      asistente.rolParticipacion,
+    ].filter(Boolean))];
+    existente.estadosAsistencia.add(asistente.asistenciaEstado);
+  }
+
+  return [...asistentesPorPersona.values()].map(({ idPersona, estadosAsistencia, ...asistente }) => {
+    const estados = [...estadosAsistencia];
+    const asistenciaEstado = estados.length === 1 ? estados[0] : "PENDIENTE";
+    return {
+      ...asistente,
+      asistenciaEstado,
+      asistenciaVerificada: asistenciaEstado === "PRESENTE",
+    };
+  });
+}
 
 router.use(identifyUser, requireModule("actividades"));
 
@@ -608,12 +709,61 @@ router.get("/eventos/:id/participantes", async (req, res, next) => {
   const id = String(req.params.id || "");
   if (!UUID_PATTERN.test(id)) return res.status(400).json({ error: "Identificador de actividad inválido." });
   try {
-    const { rows } = await query(ASSISTANTS_QUERY, [id, null, null, null, null]);
-    res.json(rows);
+    const { rows } = await query(ASSISTANTS_QUERY, [id, null, null, null, null, false]);
+    res.json(asistentesSinIdPersona(rows));
   } catch (err) {
     enviarErrorBaseDatos(err, res, next);
   }
 });
+
+router.get(
+  "/eventos/:id/participantes/exportar",
+  requireRole("admin", "coordinador", "administrador"),
+  async (req, res, next) => {
+    const id = String(req.params.id || "");
+    if (!UUID_PATTERN.test(id)) {
+      return res.status(400).json({ error: "Identificador de actividad inválido." });
+    }
+
+    try {
+      const [assistantResult, activityResult] = await Promise.all([
+        query(ASSISTANTS_QUERY, [id, null, null, null, null, true]),
+        query(
+          `SELECT COALESCE(cat.actividad, a.actividad) AS actividad,
+                  pa.nombre AS periodo
+           FROM sat.actividades_vec a
+           JOIN sat.periodos_academicos pa
+             ON pa.id_periodos_academicos = a.id_periodos_academicos
+           LEFT JOIN sat.catalogo_actividades_vec cat
+             ON cat.id_catalogo_actividades_vec = a.id_catalogo_actividades_vec
+            AND cat.tipo_registro = 'ACTIVIDAD'
+           WHERE a.id_actividades_vec = $1
+           LIMIT 1`,
+          [id],
+        ),
+      ]);
+      const activity = activityResult.rows[0];
+      if (!activity) {
+        return res.status(404).json({ error: "La actividad seleccionada no existe." });
+      }
+
+      const output = await generarExcelAsistentes(
+        assistantResult.rows,
+        activity.periodo || "TODOS LOS PERIODOS",
+      );
+      const filename = [
+        "asistentes",
+        slugArchivo(activity.actividad),
+        slugArchivo(activity.periodo),
+      ].filter(Boolean).join("-") + ".xlsx";
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      return res.send(output);
+    } catch (err) {
+      return enviarErrorBaseDatos(err, res, next);
+    }
+  },
+);
 
 router.delete("/inscripciones/:id", requireRole("admin", "coordinador", "administrador"), async (req, res, next) => {
   const id = String(req.params.id || "");
@@ -871,8 +1021,9 @@ router.get("/asistentes", async (req, res, next) => {
       filters.busqueda,
       sesion.fechaInicio,
       sesion.fechaFinalizacion,
+      false,
     ]);
-    res.json(rows);
+    res.json(asistentesSinIdPersona(rows));
   } catch (err) {
     enviarErrorBaseDatos(err, res, next);
   }
@@ -928,29 +1079,62 @@ router.post("/asistencia/verificar", requireRole("admin", "coordinador", "admini
     return res.status(400).json({ error: "El origen de la verificación de asistencia no es válido." });
   }
   const registroIds = [...new Set(req.body.registros.map(String))];
-  const asistenciaVerificada = req.body.asistenciaVerificada !== false;
+  const asistenciaEstado = String(
+    req.body.asistenciaEstado
+    || (req.body.asistenciaVerificada === false ? "PENDIENTE" : "PRESENTE"),
+  ).trim().toUpperCase();
+  if (!["PENDIENTE", "PRESENTE", "AUSENTE"].includes(asistenciaEstado)) {
+    return res.status(400).json({ error: "El estado de asistencia debe ser Pendiente, Presente o Ausente." });
+  }
+  const asistenciaVerificada = asistenciaEstado === "PRESENTE";
   if (registroIds.some((id) => !UUID_PATTERN.test(id))) {
     return res.status(400).json({ error: "La lista contiene identificadores de asistencia inválidos." });
   }
 
   try {
     const { rows } = await query(
-      `UPDATE sat.actividades_vec_participantes avp
+      `WITH personas_seleccionadas AS (
+         SELECT DISTINCT pv.id_personas
+         FROM sat.actividades_vec_participantes seleccion
+         JOIN sat.participantes_vec pv
+           ON pv.id_participantes_vec = seleccion.id_participantes_vec
+         JOIN sat.actividades_vec a
+           ON a.id_actividades_vec = seleccion.id_actividades_vec
+         WHERE seleccion.id_actividades_vec_participantes = ANY($1::uuid[])
+           AND a.id_actividades_vec = $2
+           AND a.estado <> 'CANCELADA'
+           AND ($3::uuid IS NULL OR a.id_periodos_academicos = $3)
+           AND a.fecha_inicio = $4::date
+           AND a.fecha_finalizacion = $5::date
+       )
+       UPDATE sat.actividades_vec_participantes avp
        SET asistencia_verificada = $6,
-           asistencia_verificada_en = CASE WHEN $6
-             THEN COALESCE(avp.asistencia_verificada_en, now()) ELSE NULL END,
-           asistencia_verificada_por = CASE WHEN $6
-             THEN COALESCE(avp.asistencia_verificada_por, $7) ELSE NULL END,
-           asistencia_verificada_origen = CASE WHEN $6 THEN $8 ELSE 'MANUAL' END
-       FROM sat.actividades_vec a
+           estado_asistencia = $9,
+           asistencia_verificada_en = CASE WHEN $9 <> 'PENDIENTE'
+             THEN CASE WHEN avp.estado_asistencia IS DISTINCT FROM $9
+               THEN now() ELSE COALESCE(avp.asistencia_verificada_en, now()) END
+             ELSE NULL END,
+           asistencia_verificada_por = CASE WHEN $9 <> 'PENDIENTE'
+             THEN CASE WHEN avp.estado_asistencia IS DISTINCT FROM $9
+               THEN $7 ELSE COALESCE(avp.asistencia_verificada_por, $7) END
+             ELSE NULL END,
+           asistencia_verificada_origen = CASE WHEN $9 <> 'PENDIENTE' THEN $8 ELSE 'MANUAL' END
+       FROM sat.actividades_vec a, sat.participantes_vec pv
        WHERE avp.id_actividades_vec = a.id_actividades_vec
-         AND avp.id_actividades_vec_participantes = ANY($1::uuid[])
+         AND pv.id_participantes_vec = avp.id_participantes_vec
+         AND (
+           avp.id_actividades_vec_participantes = ANY($1::uuid[])
+           OR pv.id_personas IN (SELECT id_personas FROM personas_seleccionadas)
+         )
          AND a.id_actividades_vec = $2
          AND a.estado <> 'CANCELADA'
          AND ($3::uuid IS NULL OR a.id_periodos_academicos = $3)
          AND a.fecha_inicio = $4::date
          AND a.fecha_finalizacion = $5::date
-         AND avp.asistencia_verificada IS DISTINCT FROM $6
+         AND (
+           avp.asistencia_verificada IS DISTINCT FROM $6
+           OR avp.estado_asistencia IS DISTINCT FROM $9
+         )
        RETURNING avp.id_actividades_vec_participantes AS id`,
       [
         registroIds,
@@ -961,6 +1145,7 @@ router.post("/asistencia/verificar", requireRole("admin", "coordinador", "admini
         asistenciaVerificada,
         String(req.user.id),
         origen,
+        asistenciaEstado,
       ]
     );
     res.json({ idsVerificados: rows.map((row) => row.id), totalVerificados: rows.length });
@@ -983,6 +1168,7 @@ router.get("/exportar-asistentes", async (req, res, next) => {
         filters.busqueda,
         sesion.fechaInicio,
         sesion.fechaFinalizacion,
+        false,
       ]),
       query(
         `SELECT COALESCE(cat.actividad, a.actividad) AS actividad,
@@ -1663,13 +1849,39 @@ router.get("/", async (req, res, next) => {
   try {
     const { rows } = await query(
       `SELECT pv.id_participantes_vec AS id,
+              pv.id_personas AS "idPersona",
               pv.tipo_participante AS tipo,
               ARRAY(
-                SELECT DISTINCT rol.tipo_participante
-                FROM sat.participantes_vec rol
-                WHERE rol.id_personas = pv.id_personas
-                ORDER BY rol.tipo_participante
+                SELECT roles.rol
+                FROM (
+                  SELECT DISTINCT rol.tipo_participante AS rol
+                  FROM sat.participantes_vec rol
+                  WHERE rol.id_personas = pv.id_personas
+                  UNION
+                  SELECT 'ESTUDIANTE'
+                  WHERE EXISTS (
+                    SELECT 1 FROM sat.estudiantes e
+                    WHERE e.id_personas = pv.id_personas OR e.numero_documento = p.numero_identificacion
+                  )
+                ) roles
+                ORDER BY roles.rol
               ) AS roles,
+              EXISTS (
+                SELECT 1 FROM sat.estudiantes e
+                WHERE e.id_personas = pv.id_personas OR e.numero_documento = p.numero_identificacion
+              ) OR EXISTS (
+                SELECT 1 FROM sat.participantes_vec student_profile
+                WHERE student_profile.id_personas = pv.id_personas
+                  AND student_profile.tipo_participante = 'ESTUDIANTE'
+              ) AS "tieneRolEstudiante",
+              (SELECT COUNT(*)::int
+               FROM sat.actividades_vec_participantes avp
+               WHERE avp.id_participantes_vec = pv.id_participantes_vec) AS "totalInscripciones",
+              (SELECT COUNT(*)::int
+               FROM sat.actividades_vec_participantes avp
+               JOIN sat.participantes_vec all_profiles
+                 ON all_profiles.id_participantes_vec = avp.id_participantes_vec
+               WHERE all_profiles.id_personas = p.id) AS "totalInscripcionesPersona",
               p.numero_identificacion AS identificacion,
               BTRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre)) AS nombres,
               BTRIM(CONCAT_WS(' ', p.primer_apellido, p.segundo_apellido)) AS apellidos,
@@ -1867,9 +2079,6 @@ async function validarCargaMasiva(idActividad, filas) {
 
   const results = await mapConcurrent(normalizadas, 5, async (row) => {
     const { participante } = row;
-    if (!ROLES_PARTICIPANTE_VEC.has(participante.tipo)) {
-      return { ...row, status: "invalid", message: "Selecciona un rol válido: estudiante, egresado, colaborador o externo." };
-    }
     if (!row.identificadores.length) {
       return { ...row, status: "invalid", message: "La fila no contiene documento ni código institucional." };
     }
@@ -1897,78 +2106,99 @@ async function validarCargaMasiva(idActividad, filas) {
       row.idTipoApoyo = idTipoApoyo;
     }
 
-    const encontrados = [];
-    const identificadoresNoEncontrados = [];
+    const identidades = [];
     for (const identificador of row.identificadores) {
-      const encontrado = await buscarParticipante(participante.tipo, identificador)
-        || await buscarParticipanteEnPersonas(participante.tipo, identificador);
-      if (!encontrado) {
-        identificadoresNoEncontrados.push(identificador);
-        continue;
+      const coincidencias = await buscarIdentidadPorIdentificador(identificador);
+      if (coincidencias.length > 1) {
+        return {
+          ...row,
+          status: "invalid",
+          message: `El identificador ${identificador} coincide con más de una persona; verifica el documento o código.`,
+        };
       }
-      if (!encontrados.some((item) => item.idPersona === encontrado.idPersona)) {
-        encontrados.push(encontrado);
-      }
+      if (coincidencias[0]) identidades.push({ identificador, ...coincidencias[0] });
     }
-    if (identificadoresNoEncontrados.length && encontrados.length) {
+    if (identidades.length && identidades.length !== row.identificadores.length) {
       return {
         ...row,
         status: "invalid",
         message: "El documento y el código institucional no corresponden a la misma persona o uno de ellos no está registrado.",
       };
     }
-    if (identificadoresNoEncontrados.length) {
-      const identificador = identificadoresNoEncontrados[0];
-      return { ...row, status: "not_found", message: `No se encontró una persona con el identificador ${identificador}.` };
+    if (!identidades.length) {
+      return {
+        ...row,
+        status: "not_found",
+        message: `No se encontró una persona con el identificador ${row.identificadores[0]}.`,
+      };
     }
-    if (!encontrados.length) {
-      return { ...row, status: "invalid", message: "No se encontró una persona con esos datos institucionales." };
-    }
-    if (encontrados.length > 1) {
+    const personasCoincidentes = new Set(identidades.map((identity) => identity.idPersona || identity.identificacion));
+    if (personasCoincidentes.size > 1) {
       return { ...row, status: "invalid", message: "El documento y el código institucional no corresponden a la misma persona." };
     }
-    const encontrado = encontrados[0];
+    const identidad = identidades[0];
+    const identificacionCanonica = identidad.identificacion || participante.identificacion;
+    const rolesExistentes = await obtenerRolesParticipante(
+      query,
+      identidad.idPersona,
+      identificacionCanonica,
+    );
+    const roles = rolesExistentes.filter((role) => ROLES_PARTICIPANTE_VEC.has(role));
+    if (!roles.length) {
+      return {
+        ...row,
+        status: "not_found",
+        participante: { ...participante, identificacion: identificacionCanonica },
+        message: "La persona existe, pero no tiene un rol de participante registrado. Puedes crearla como egresado, colaborador o externo.",
+      };
+    }
+    if (roles.includes("EXTERNO") && roles.length > 1) {
+      return { ...row, status: "invalid", message: "El rol Externo es exclusivo y no se puede combinar con otros roles." };
+    }
+    const encontrados = await Promise.all(roles.map(async (tipo) => (
+      await buscarParticipante(tipo, identificacionCanonica)
+      || await buscarParticipanteEnPersonas(tipo, identificacionCanonica)
+    )));
+    const perfiles = encontrados.filter(Boolean);
+    const encontrado = perfiles[0] || {
+      ...participante,
+      identificacion: identificacionCanonica,
+      idPersona: identidad.idPersona,
+    };
+    const nombresInstitucionales = perfiles.find((profile) => profile.nombres && profile.apellidos) || encontrado;
     if (!encontrado.identificacion || !encontrado.nombres || !encontrado.apellidos) {
       return { ...row, participante: encontrado, status: "invalid", message: "El registro institucional no contiene cédula o nombre completo para verificar la inscripción." };
     }
     const nombresArchivoCoinciden = (!participante.nombres
       || coincideNombreImportacion(
         participante.nombres,
-        participante.apellidos ? encontrado.nombres : `${encontrado.nombres} ${encontrado.apellidos}`,
+        participante.apellidos ? nombresInstitucionales.nombres : `${nombresInstitucionales.nombres} ${nombresInstitucionales.apellidos}`,
       ))
-      && (!participante.apellidos || coincideNombreImportacion(participante.apellidos, encontrado.apellidos));
+      && (!participante.apellidos || coincideNombreImportacion(participante.apellidos, nombresInstitucionales.apellidos));
     if (!nombresArchivoCoinciden) {
       return { ...row, status: "invalid", message: "El nombre del archivo no coincide con los datos institucionales." };
     }
     if (row.nombreCompleto
       && !coincideNombreImportacion(
         row.nombreCompleto,
-        `${encontrado.nombres} ${encontrado.apellidos}`,
+        `${nombresInstitucionales.nombres} ${nombresInstitucionales.apellidos}`,
       )) {
       return { ...row, status: "invalid", message: "El nombre completo del archivo no coincide con los datos institucionales." };
-    }
-    const rolesExistentes = await obtenerRolesVerificados(
-      query,
-      encontrado.idPersona,
-      encontrado.identificacion,
-    );
-    if (participante.tipo === "EXTERNO" && rolesExistentes.some((role) => role !== "EXTERNO")) {
-      return { ...row, status: "invalid", message: "Esta persona ya tiene otro rol VEC y no puede registrarse como externa." };
-    }
-    if (participante.tipo !== "EXTERNO" && rolesExistentes.includes("EXTERNO")) {
-      return { ...row, status: "invalid", message: "Esta persona tiene el rol Externo, que es exclusivo y no admite otros roles." };
     }
     const participanteCanonico = {
       ...participante,
       ...encontrado,
-      tipo: participante.tipo,
+      tipo: roles[0],
+      roles,
+      idPersona: identidad.idPersona || encontrado.idPersona,
+      identificacion: identificacionCanonica,
       tipoDocumento: encontrado.tipoDocumento || participante.tipoDocumento || "CC",
       detalleTipoParticipante: encontrado.detalleTipoParticipante || ({
         ESTUDIANTE: "Estudiante",
         EGRESADO: "Egresado no titulado",
         COLABORADOR: "Colaborador",
         EXTERNO: "Externo",
-      }[participante.tipo]),
+      }[roles[0]]),
       semestre: encontrado.semestre == null || encontrado.semestre === ""
         ? null
         : Number(encontrado.semestre),
@@ -1987,7 +2217,7 @@ async function validarCargaMasiva(idActividad, filas) {
       ...row,
       participante: participanteCanonico,
       status: "valid",
-      message: `Los datos coinciden con el registro institucional para el rol ${participante.tipo}.`,
+      message: `Persona encontrada. Se registrará con sus roles existentes: ${roles.join(", ")}.`,
     };
   });
 
@@ -1996,18 +2226,19 @@ async function validarCargaMasiva(idActividad, filas) {
     .map((row) => row.participante.identificacion))];
   const { rows: inscritos } = identificaciones.length
     ? await query(
-      `SELECT p.numero_identificacion AS identificacion
+      `SELECT p.numero_identificacion AS identificacion, pv.tipo_participante AS rol
        FROM sat.actividades_vec_participantes avp
        JOIN sat.participantes_vec pv
          ON pv.id_participantes_vec = avp.id_participantes_vec
        JOIN sat.personas p ON p.id = pv.id_personas
        WHERE avp.id_actividades_vec = $1
-         AND pv.tipo_participante = 'ESTUDIANTE'
          AND p.numero_identificacion = ANY($2::text[])`,
       [idActividad, identificaciones]
     )
     : { rows: [] };
-  const keysInscritos = new Set(inscritos.map((row) => normalizarNombreImportacion(row.identificacion)));
+  const keysInscritos = new Set(inscritos.map((row) => (
+    `${normalizarNombreImportacion(row.identificacion)}:${row.rol}`
+  )));
   const personasIncluidas = new Set();
   return results.map((row) => {
     if (!["valid", "not_found"].includes(row.status)) return row;
@@ -2017,8 +2248,17 @@ async function validarCargaMasiva(idActividad, filas) {
         ...row.identificadores.map(normalizarNombreImportacion),
       ].filter(Boolean)
       : row.identificadores.map(normalizarNombreImportacion);
-    if (row.status === "valid" && keysInscritos.has(normalizarNombreImportacion(row.participante.identificacion))) {
-      return { ...row, status: "duplicate", message: "La persona ya está registrada en esta actividad; se omite." };
+    if (row.status === "valid") {
+      const rolesPendientes = row.participante.roles.filter((role) => (
+        !keysInscritos.has(`${normalizarNombreImportacion(row.participante.identificacion)}:${role}`)
+      ));
+      if (!rolesPendientes.length) {
+        return { ...row, status: "duplicate", message: "La persona ya está registrada en la actividad con todos sus roles; se omite." };
+      }
+      row.participante.rolesPendientes = rolesPendientes;
+      if (rolesPendientes.length !== row.participante.roles.length) {
+        row.message = `Se registrará con los roles pendientes: ${rolesPendientes.join(", ")}.`;
+      }
     }
     if (keys.some((key) => personasIncluidas.has(key))) {
       return { ...row, status: "duplicate", message: "La persona aparece más de una vez en el archivo; se conserva una sola fila." };
@@ -2043,6 +2283,7 @@ router.post("/registro-actividad/validar-masivo", async (req, res, next) => {
         fila: row.fila,
         identificacion: row.participante.identificacion,
         tipo: row.participante.tipo,
+        roles: row.participante.roles || [],
         nombres: row.participante.nombres,
         apellidos: row.participante.apellidos,
         modalidadVariable: row.variable,
@@ -2103,11 +2344,9 @@ function validarDatosPerfilImportado(participante) {
     ["apellidos", participante.apellidos],
     ["tipo de documento", participante.tipoDocumento],
     ["fecha de nacimiento", participante.fechaNacimiento],
-    ["lugar de nacimiento", participante.lugarNacimiento],
     ["género", participante.genero],
     ["correo personal", participante.correo],
     ["teléfono móvil", participante.celular],
-    ["teléfono alternativo", participante.telefono],
     ["dirección de residencia", participante.direccion],
     ["ciudad o municipio", participante.municipio],
   ];
@@ -2131,6 +2370,7 @@ function validarDatosPerfilImportado(participante) {
     return "Ingresa un correo personal válido.";
   }
   for (const [label, value] of [["teléfono móvil", participante.celular], ["teléfono alternativo", participante.telefono]]) {
+    if (!value) continue;
     const digits = value.replace(/\D/g, "");
     if (!/^\+?[\d\s().-]+$/.test(value) || digits.length < 7 || digits.length > 15) {
       return `Ingresa un ${label} válido de 7 a 15 dígitos.`;
@@ -2158,6 +2398,90 @@ function validarDatosPerfilImportado(participante) {
       || Number.isNaN(graduationDate.getTime())
       || graduationDate.toISOString().slice(0, 10) !== participante.fechaEgreso) {
       return "La fecha de egreso debe tener un formato válido.";
+    }
+  }
+  return "";
+}
+
+function validarEdicionPerfilRol(participante, datosPersonalesProtegidos) {
+  if (!datosPersonalesProtegidos) {
+    const namePattern = /^[\p{L}\p{M}][\p{L}\p{M}\s'.-]{1,119}$/u;
+    if (!namePattern.test(participante.nombres || "")
+      || !namePattern.test(participante.apellidos || "")) {
+      return "Nombres y apellidos deben tener entre 2 y 120 caracteres.";
+    }
+    if (participante.correo
+      && (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(participante.correo)
+        || participante.correo.length > 254)) {
+      return "Ingresa un correo personal válido de máximo 254 caracteres.";
+    }
+    if (participante.genero
+      && !["Femenino", "Masculino", "No binario", "Otro", "Prefiero no responder"].includes(participante.genero)) {
+      return "Selecciona una opción válida para el género.";
+    }
+    if (participante.fechaNacimiento) {
+      const fecha = new Date(`${participante.fechaNacimiento}T00:00:00.000Z`);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(participante.fechaNacimiento)
+        || Number.isNaN(fecha.getTime())
+        || fecha.toISOString().slice(0, 10) !== participante.fechaNacimiento
+        || participante.fechaNacimiento > new Date().toISOString().slice(0, 10)) {
+        return "La fecha de nacimiento debe ser real y no puede ser posterior a hoy.";
+      }
+    }
+  }
+  if (participante.tipoDocumento && !TIPOS_DOCUMENTO_PARTICIPANTE.has(participante.tipoDocumento)) {
+    return "Selecciona un tipo de documento válido.";
+  }
+  if (participante.semestre !== null
+    && (!Number.isInteger(participante.semestre) || participante.semestre < 1 || participante.semestre > 32767)) {
+    return "El semestre debe ser un número entero entre 1 y 32767.";
+  }
+  for (const [label, value, maxLength] of [
+    ["programa académico", participante.programaAcademico, 250],
+    ["programa de posgrado", participante.programaPosgradoDependencia, 250],
+    ["código institucional", participante.codigo, 100],
+    ["jornada", participante.jornada, 100],
+    ["dependencia", participante.dependencia, 250],
+    ["cargo", participante.cargo, 250],
+    ["lugar de nacimiento", participante.lugarNacimiento, 250],
+    ["etnia", participante.etnia, 150],
+    ["municipio", participante.municipio, 150],
+  ]) {
+    if (value && value.length > maxLength) {
+      return `El campo ${label} no puede superar ${maxLength} caracteres.`;
+    }
+  }
+  for (const [label, value] of [
+    ["fecha de egreso", participante.fechaEgreso],
+    ...(!datosPersonalesProtegidos ? [["fecha de nacimiento", participante.fechaNacimiento]] : []),
+  ]) {
+    if (!value) continue;
+    const date = new Date(`${value}T00:00:00.000Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)
+      || Number.isNaN(date.getTime())
+      || date.toISOString().slice(0, 10) !== value) {
+      return `La ${label} debe ser una fecha real en formato AAAA-MM-DD.`;
+    }
+  }
+  if (!datosPersonalesProtegidos) {
+    for (const [label, value, maxLength] of [
+      ["teléfono móvil", participante.celular, 32],
+      ["teléfono alternativo", participante.telefono, 32],
+      ["dirección", participante.direccion, 250],
+    ]) {
+      if (value && value.length > maxLength) {
+        return `El campo ${label} no puede superar ${maxLength} caracteres.`;
+      }
+    }
+    for (const [label, value] of [
+      ["teléfono móvil", participante.celular],
+      ["teléfono alternativo", participante.telefono],
+    ]) {
+      if (!value) continue;
+      const digits = value.replace(/\D/g, "");
+      if (!/^\+?[\d\s().-]+$/.test(value) || digits.length < 7 || digits.length > 15) {
+        return `Ingresa un ${label} válido de 7 a 15 dígitos.`;
+      }
     }
   }
   return "";
@@ -2273,6 +2597,627 @@ router.post("/perfiles/masivo/registrar", requireRole("admin", "coordinador", "a
   await importarPerfilesMasivo(req, res, next, true);
 });
 
+router.get("/perfiles/roles", requireRole("admin", "coordinador", "administrador"), async (req, res, next) => {
+  const rol = String(req.query.rol || "").trim().toUpperCase();
+  const busqueda = String(req.query.busqueda || "").trim();
+  if (!["EGRESADO", "COLABORADOR", "EXTERNO"].includes(rol)) {
+    return res.status(400).json({ error: "Selecciona Egresado, Colaborador o Externo." });
+  }
+  if (busqueda.length > 120) {
+    return res.status(400).json({ error: "La búsqueda no puede superar 120 caracteres." });
+  }
+
+  try {
+    const { rows } = await query(
+      `SELECT pv.id_participantes_vec AS id,
+              pv.tipo_participante AS rol,
+              pv.tipo_documento AS "tipoDocumento",
+              pv.codigo,
+              pv.programa_academico AS "programaAcademico",
+              pv.programa_posgrado_dependencia AS "programaPosgradoDependencia",
+              pv.semestre,
+              pv.jornada,
+              pv.dependencia,
+              pv.cargo,
+              pv.fecha_egreso AS "fechaEgreso",
+              pv.lugar_nacimiento AS "lugarNacimiento",
+              pv.etnia,
+              pv.municipio,
+              pv.discapacidad,
+              pv.conflicto_armado AS "conflictoArmado",
+              p.id AS "idPersona",
+              p.numero_identificacion AS identificacion,
+              BTRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre)) AS nombres,
+              BTRIM(CONCAT_WS(' ', p.primer_apellido, p.segundo_apellido)) AS apellidos,
+              p.genero,
+              p.fecha_nacimiento AS "fechaNacimiento",
+              COALESCE(p.correo_electronico, p.correo_electronico_opcional) AS correo,
+              p.correo_institucional AS "correoInstitucional",
+              p.celular,
+              p.telefono,
+              p.direccion,
+              ARRAY(
+                SELECT roles.rol
+                FROM (
+                  SELECT DISTINCT otro.tipo_participante AS rol
+                  FROM sat.participantes_vec otro
+                  WHERE otro.id_personas = p.id
+                  UNION
+                  SELECT 'ESTUDIANTE'
+                  WHERE EXISTS (
+                    SELECT 1 FROM sat.estudiantes e
+                    WHERE e.id_personas = p.id OR e.numero_documento = p.numero_identificacion
+                  )
+                ) roles
+                ORDER BY roles.rol
+              ) AS roles,
+              EXISTS (
+                SELECT 1
+                FROM sat.estudiantes e
+                WHERE e.id_personas = p.id
+                   OR e.numero_documento = p.numero_identificacion
+              ) OR EXISTS (
+                SELECT 1 FROM sat.participantes_vec student_profile
+                WHERE student_profile.id_personas = p.id
+                  AND student_profile.tipo_participante = 'ESTUDIANTE'
+              ) OR EXISTS (
+                SELECT 1
+                FROM sat.usuarios u
+                WHERE (u.id_personas = p.id OR u.numero_documento = p.numero_identificacion)
+                  AND u.activo = true
+                  AND u.eliminado_en IS NULL
+                  AND (
+                    EXISTS (
+                      SELECT 1
+                      FROM sat.usuarios_roles ur
+                      JOIN sat.roles r ON r.id_roles = ur.id_roles
+                      WHERE ur.id_usuarios = u.id_usuarios
+                        AND r.activo = true
+                        AND UPPER(BTRIM(r.nombre)) IN (
+                          'ADMIN', 'ADMINISTRADOR', 'COLABORADOR', 'DIRECTIVO', 'DOCENTE', 'PROFESIONAL'
+                        )
+                    )
+                    OR EXISTS (
+                      SELECT 1 FROM sat.docentes d
+                      WHERE d.id_usuarios = u.id_usuarios AND d.activo = true
+                    )
+                  )
+              ) OR EXISTS (
+                SELECT 1
+                FROM sat.docentes d
+                WHERE d.activo = true
+                  AND (d.id_personas = p.id OR d.numero_documento = p.numero_identificacion)
+              ) AS "datosPersonalesProtegidos",
+              EXISTS (
+                SELECT 1 FROM sat.estudiantes e
+                WHERE e.id_personas = p.id OR e.numero_documento = p.numero_identificacion
+              ) OR EXISTS (
+                SELECT 1 FROM sat.participantes_vec student_profile
+                WHERE student_profile.id_personas = p.id
+                  AND student_profile.tipo_participante = 'ESTUDIANTE'
+              ) AS "tieneRolEstudiante",
+              (SELECT COUNT(*)::int
+               FROM sat.actividades_vec_participantes avp
+               WHERE avp.id_participantes_vec = pv.id_participantes_vec) AS "totalInscripciones",
+              (SELECT COUNT(*)::int
+               FROM sat.actividades_vec_participantes avp
+               JOIN sat.participantes_vec all_profiles
+                 ON all_profiles.id_participantes_vec = avp.id_participantes_vec
+               WHERE all_profiles.id_personas = p.id) AS "totalInscripcionesPersona"
+       FROM sat.participantes_vec pv
+       JOIN sat.personas p ON p.id = pv.id_personas
+       WHERE pv.tipo_participante = $1
+         AND ($2::text = ''
+              OR p.numero_identificacion ILIKE '%' || $2 || '%'
+              OR BTRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre,
+                                 p.primer_apellido, p.segundo_apellido)) ILIKE '%' || $2 || '%'
+              OR COALESCE(p.correo_electronico, p.correo_electronico_opcional, '') ILIKE '%' || $2 || '%')
+       ORDER BY p.primer_apellido, p.primer_nombre, p.numero_identificacion
+       LIMIT 500`,
+      [rol, busqueda],
+    );
+    res.json(rows);
+  } catch (err) {
+    enviarErrorBaseDatos(err, res, next);
+  }
+});
+
+router.post(
+  "/perfiles/roles/:id/agregar",
+  requireRole("admin", "coordinador", "administrador"),
+  async (req, res, next) => {
+    const id = String(req.params.id || "");
+    const rol = String(req.body?.rol || "").trim().toUpperCase();
+    if (!UUID_PATTERN.test(id)) return res.status(400).json({ error: "Identificador de perfil inválido." });
+    if (!["EGRESADO", "COLABORADOR", "EXTERNO"].includes(rol)) {
+      return res.status(400).json({ error: "Selecciona Egresado, Colaborador o Externo." });
+    }
+    if (req.body?.confirmarRolAdicional !== true) {
+      return res.status(400).json({ error: "Confirma explícitamente que deseas agregar este rol adicional." });
+    }
+
+    let client;
+    try {
+      client = await pool.connect();
+      await client.query("BEGIN");
+      const { rows } = await client.query(
+        `SELECT pv.id_personas AS "idPersona",
+                p.numero_identificacion AS identificacion,
+                pv.tipo_documento AS "tipoDocumento",
+                BTRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre)) AS nombres,
+                BTRIM(CONCAT_WS(' ', p.primer_apellido, p.segundo_apellido)) AS apellidos,
+                p.genero,
+                p.fecha_nacimiento::text AS "fechaNacimiento",
+                COALESCE(p.correo_electronico, p.correo_electronico_opcional) AS correo,
+                p.correo_institucional AS "correoInstitucional",
+                p.celular,
+                p.telefono,
+                p.direccion,
+                pv.municipio
+         FROM sat.participantes_vec pv
+         JOIN sat.personas p ON p.id = pv.id_personas
+         WHERE pv.id_participantes_vec = $1
+           AND pv.tipo_participante IN ('EGRESADO', 'COLABORADOR', 'EXTERNO')
+         FOR UPDATE OF pv, p`,
+        [id],
+      );
+      const source = rows[0];
+      if (!source) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "No se encontró el perfil de referencia." });
+      }
+      if (!source.identificacion) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "No se puede asignar otro rol porque el perfil no tiene documento de identidad." });
+      }
+
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtext($1))",
+        [source.identificacion],
+      );
+      const rolesInstitucionales = await obtenerRolesVerificados(client, source.idPersona, source.identificacion);
+      const { rows: vecRoles } = await client.query(
+        `SELECT DISTINCT tipo_participante AS rol
+         FROM sat.participantes_vec
+         WHERE id_personas = $1`,
+        [source.idPersona],
+      );
+      const roles = [...new Set([
+        ...rolesInstitucionales,
+        ...vecRoles.map((row) => row.rol),
+      ])];
+      const { rows: targetProfiles } = await client.query(
+        `SELECT 1
+         FROM sat.participantes_vec
+         WHERE id_personas = $1 AND tipo_participante = $2
+         LIMIT 1`,
+        [source.idPersona, rol],
+      );
+      if (targetProfiles.length) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: `La persona ya tiene el perfil ${DETALLE_ROL_PARTICIPANTE[rol]}.` });
+      }
+      if (roles.includes("EXTERNO") || (rol === "EXTERNO" && roles.length > 0)) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "El rol Externo es exclusivo y no se puede combinar con otros roles." });
+      }
+
+      const perfil = await guardarPerfilDeActividad(client, {
+        ...source,
+        tipo: rol,
+        detalleTipoParticipante: DETALLE_ROL_PARTICIPANTE[rol],
+      });
+      await client.query("COMMIT");
+      return res.json({
+        agregado: true,
+        idPerfil: perfil.idParticipante,
+        roles: [...new Set([...roles, rol])].sort(),
+        mensaje: `Se agregó el rol ${DETALLE_ROL_PARTICIPANTE[rol]}. Los roles anteriores se conservaron.`,
+      });
+    } catch (err) {
+      if (client) await client.query("ROLLBACK").catch(() => {});
+      if (err.code === "23514" && /rol EXTERNO/i.test(err.message)) {
+        return res.status(409).json({ error: "El rol Externo es exclusivo y no se puede combinar con otros roles." });
+      }
+      if (err.code === "23502") {
+        return res.status(400).json({ error: "No se pudo agregar el rol porque faltan datos obligatorios de la persona." });
+      }
+      if (err.status) return res.status(err.status).json({ error: err.message });
+      return enviarErrorBaseDatos(err, res, next);
+    } finally {
+      client?.release();
+    }
+  },
+);
+
+router.put("/perfiles/roles/:id", requireRole("admin", "coordinador", "administrador"), async (req, res, next) => {
+  const id = String(req.params.id || "");
+  if (!UUID_PATTERN.test(id)) return res.status(400).json({ error: "Identificador de perfil inválido." });
+
+  const payload = normalizarEntrada(req.body);
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `SELECT pv.id_participantes_vec AS id, pv.tipo_participante AS rol,
+              pv.id_personas AS "idPersona", p.numero_identificacion AS identificacion
+       FROM sat.participantes_vec pv
+       JOIN sat.personas p ON p.id = pv.id_personas
+       WHERE pv.id_participantes_vec = $1
+         AND pv.tipo_participante IN ('EGRESADO', 'COLABORADOR', 'EXTERNO')
+       FOR UPDATE OF pv, p`,
+      [id],
+    );
+    const perfil = rows[0];
+    if (!perfil) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "No se encontró el perfil de rol indicado." });
+    }
+
+    const rolesInstitucionales = await obtenerRolesVerificados(
+      client,
+      perfil.idPersona,
+      perfil.identificacion,
+    );
+    const datosPersonalesProtegidos = rolesInstitucionales.some(
+      (rol) => rol === "ESTUDIANTE" || rol === "COLABORADOR",
+    );
+    const invalidacion = validarEdicionPerfilRol(payload, datosPersonalesProtegidos);
+    if (invalidacion) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: invalidacion });
+    }
+
+    await client.query(
+      `UPDATE sat.participantes_vec SET
+         tipo_documento = $2,
+         programa_academico = $3,
+         programa_posgrado_dependencia = $4,
+         semestre = $5,
+         jornada = $6,
+         dependencia = $7,
+         cargo = $8,
+         fecha_egreso = $9,
+         lugar_nacimiento = $10,
+         etnia = $11,
+         municipio = $12,
+         discapacidad = $13,
+         conflicto_armado = $14,
+         codigo = $15,
+         actualizado_en = now()
+       WHERE id_participantes_vec = $1`,
+      [
+        id,
+        payload.tipoDocumento,
+        payload.programaAcademico,
+        payload.programaPosgradoDependencia,
+        payload.semestre,
+        payload.jornada,
+        payload.dependencia,
+        payload.cargo,
+        payload.fechaEgreso,
+        payload.lugarNacimiento,
+        payload.etnia,
+        payload.municipio,
+        payload.discapacidad,
+        payload.conflictoArmado,
+        payload.codigo,
+      ],
+    );
+
+    if (!datosPersonalesProtegidos) {
+      const nombres = dividirNombre(payload.nombres);
+      const apellidos = dividirNombre(payload.apellidos);
+      await client.query(
+        `UPDATE sat.personas SET
+           primer_nombre = $2,
+           segundo_nombre = $3,
+           primer_apellido = $4,
+           segundo_apellido = $5,
+           genero = $6,
+           fecha_nacimiento = $7,
+           correo_electronico = $8,
+           celular = $9,
+           telefono = $10,
+           direccion = $11
+         WHERE id = $1`,
+        [
+          perfil.idPersona,
+          nombres.primero,
+          nombres.segundo,
+          apellidos.primero,
+          apellidos.segundo,
+          normalizarGeneroPersona(payload.genero),
+          payload.fechaNacimiento,
+          payload.correo,
+          payload.celular,
+          payload.telefono,
+          payload.direccion,
+        ],
+      );
+    }
+
+    await client.query("COMMIT");
+    return res.json({
+      actualizado: true,
+      datosPersonalesProtegidos,
+      mensaje: datosPersonalesProtegidos
+        ? "Se actualizó la ficha VEC. Los datos personales institucionales se conservaron sin cambios."
+        : "Se actualizaron los datos personales y la ficha del rol.",
+    });
+  } catch (err) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    if (err.code === "23502") {
+      return res.status(400).json({ error: "Falta un dato requerido para guardar el perfil." });
+    }
+    if (err.code === "22007" || err.code === "22P02" || err.code === "22001") {
+      return res.status(400).json({ error: "Revisa las fechas, el semestre y la longitud de los campos." });
+    }
+    return enviarErrorBaseDatos(err, res, next);
+  } finally {
+    client?.release();
+  }
+});
+
+router.delete(
+  "/perfiles/persona/:id/definitivo",
+  requireRole("admin", "coordinador", "administrador"),
+  async (req, res, next) => {
+    const id = String(req.params.id || "");
+    if (!UUID_PATTERN.test(id)) return res.status(400).json({ error: "Identificador de perfil inválido." });
+
+    let client;
+    try {
+      client = await pool.connect();
+      await client.query("BEGIN");
+      const { rows } = await client.query(
+        `SELECT pv.id_participantes_vec AS id,
+                pv.tipo_participante AS rol,
+                pv.id_personas AS "idPersona",
+                p.numero_identificacion AS identificacion,
+                BTRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre,
+                                p.primer_apellido, p.segundo_apellido)) AS nombre
+         FROM sat.participantes_vec pv
+         JOIN sat.personas p ON p.id = pv.id_personas
+         WHERE pv.id_participantes_vec = $1
+           AND pv.tipo_participante IN ('EGRESADO', 'COLABORADOR', 'EXTERNO')
+         FOR UPDATE OF pv, p`,
+        [id],
+      );
+      const persona = rows[0];
+      if (!persona) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "No se encontró una persona con un rol que pueda borrarse." });
+      }
+
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [persona.identificacion]);
+      const { rows: estudianteRows } = await client.query(
+        `SELECT EXISTS (
+           SELECT 1 FROM sat.estudiantes
+           WHERE id_personas = $1 OR numero_documento = $2 OR codigo_externo = $2
+         ) OR EXISTS (
+           SELECT 1 FROM sat.participantes_vec
+           WHERE id_personas = $1 AND tipo_participante = 'ESTUDIANTE'
+         ) AS tiene_rol_estudiante`,
+        [persona.idPersona, persona.identificacion],
+      );
+      if (estudianteRows[0].tiene_rol_estudiante) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          code: "STUDENT_ROLE_PROTECTED",
+          error: "Esta persona también es estudiante. No se puede borrar definitivamente; quita únicamente el rol extra desde la lista de personas por rol.",
+        });
+      }
+      const confirmationExpected = String(persona.identificacion || persona.nombre || "");
+      if (String(req.body?.confirmarIdentificacion || "").trim() !== confirmationExpected) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          error: "Escribe exactamente el documento de la persona para confirmar el borrado definitivo.",
+        });
+      }
+
+      if (req.user?.id) {
+        const { rows: sessionOwnerRows } = await client.query(
+          `SELECT EXISTS (
+             SELECT 1 FROM sat.usuarios
+             WHERE id_usuarios::text = $1
+               AND (id_personas = $2 OR numero_documento = $3)
+           ) AS es_usuario_actual`,
+          [String(req.user.id), persona.idPersona, persona.identificacion],
+        );
+        if (sessionOwnerRows[0].es_usuario_actual) {
+          await client.query("ROLLBACK");
+          return res.status(409).json({
+            error: "No puedes borrar tu propia cuenta activa desde esta sesión. Inicia sesión con otra cuenta administradora para hacerlo.",
+          });
+        }
+      }
+
+      const { rowCount: inscripcionesEliminadas } = await client.query(
+        `DELETE FROM sat.actividades_vec_participantes avp
+         USING sat.participantes_vec pv
+         WHERE avp.id_participantes_vec = pv.id_participantes_vec
+           AND pv.id_personas = $1`,
+        [persona.idPersona],
+      );
+      const { rowCount: perfilesEliminados } = await client.query(
+        "DELETE FROM sat.participantes_vec WHERE id_personas = $1",
+        [persona.idPersona],
+      );
+      const { rowCount: docentesEliminados } = await client.query(
+        "DELETE FROM sat.docentes WHERE id_personas = $1 OR numero_documento = $2",
+        [persona.idPersona, persona.identificacion],
+      );
+      const { rowCount: usuariosEliminados } = await client.query(
+        "DELETE FROM sat.usuarios WHERE id_personas = $1 OR numero_documento = $2",
+        [persona.idPersona, persona.identificacion],
+      );
+      const { rows: personasEliminadas } = await client.query(
+        "DELETE FROM sat.personas WHERE id = $1 RETURNING id",
+        [persona.idPersona],
+      );
+      if (!personasEliminadas[0]) {
+        throw Object.assign(new Error("No se pudo borrar completamente a la persona."), { status: 409 });
+      }
+
+      await client.query("COMMIT");
+      return res.json({
+        eliminado: true,
+        definitivo: true,
+        mensaje: `Se borró definitivamente a ${persona.nombre || "la persona"}: sus perfiles, sus ${inscripcionesEliminadas} inscripción(es) y sus datos vinculados.`,
+        perfilesEliminados,
+        inscripcionesEliminadas,
+        cuentasEliminadas: usuariosEliminados,
+        registrosDocentesEliminados: docentesEliminados,
+      });
+    } catch (err) {
+      if (client) await client.query("ROLLBACK").catch(() => {});
+      if (err.code === "23503") {
+        return res.status(409).json({
+          error: "No se borró ningún dato: existen otros registros relacionados que impiden eliminar a esta persona.",
+        });
+      }
+      if (err.status) return res.status(err.status).json({ error: err.message });
+      return enviarErrorBaseDatos(err, res, next);
+    } finally {
+      client?.release();
+    }
+  },
+);
+
+router.delete("/perfiles/roles/:id", requireRole("admin", "coordinador", "administrador"), async (req, res, next) => {
+  const id = String(req.params.id || "");
+  if (!UUID_PATTERN.test(id)) return res.status(400).json({ error: "Identificador de perfil inválido." });
+
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `SELECT pv.id_participantes_vec AS id, pv.tipo_participante AS rol,
+              pv.id_personas AS "idPersona", p.numero_identificacion AS identificacion
+       FROM sat.participantes_vec pv
+       JOIN sat.personas p ON p.id = pv.id_personas
+       WHERE pv.id_participantes_vec = $1
+         AND pv.tipo_participante IN ('EGRESADO', 'COLABORADOR', 'EXTERNO')
+       FOR UPDATE OF pv, p`,
+      [id],
+    );
+    const perfil = rows[0];
+    if (!perfil) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "No se encontró el perfil de rol indicado." });
+    }
+
+    const rolesInstitucionales = await obtenerRolesVerificados(
+      client,
+      perfil.idPersona,
+      perfil.identificacion,
+    );
+    const { rows: estudianteVec } = await client.query(
+      `SELECT EXISTS (
+         SELECT 1 FROM sat.participantes_vec
+         WHERE id_personas = $1 AND tipo_participante = 'ESTUDIANTE'
+       ) AS existe`,
+      [perfil.idPersona],
+    );
+    const datosPersonalesProtegidos = rolesInstitucionales.some(
+      (rol) => rol === "ESTUDIANTE" || rol === "COLABORADOR",
+    ) || estudianteVec[0].existe;
+    const tieneRolEstudiante = rolesInstitucionales.includes("ESTUDIANTE") || estudianteVec[0].existe;
+
+    const { rows: inscripciones } = await client.query(
+      `SELECT COUNT(*)::int AS total
+       FROM sat.actividades_vec_participantes
+       WHERE id_participantes_vec = $1`,
+      [id],
+    );
+    const totalInscripciones = inscripciones[0].total;
+    if (totalInscripciones > 0 && req.body?.confirmarInscripciones !== true) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        code: "PROFILE_DELETE_CONFIRMATION_REQUIRED",
+        totalInscripciones,
+        datosPersonalesProtegidos,
+        tieneRolEstudiante,
+        error: "Confirma que deseas quitar este rol de Actividades y sus inscripciones. La persona y sus otros roles se conservarán.",
+      });
+    }
+
+    const { rowCount: inscripcionesEliminadas } = await client.query(
+      `DELETE FROM sat.actividades_vec_participantes
+       WHERE id_participantes_vec = $1`,
+      [id],
+    );
+
+    const { rows: perfilesEliminados } = await client.query(
+      `DELETE FROM sat.participantes_vec
+       WHERE id_participantes_vec = $1
+       RETURNING id_participantes_vec`,
+      [id],
+    );
+    if (!perfilesEliminados[0]) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "No se pudo quitar el rol. Actualiza la lista e inténtalo de nuevo." });
+    }
+
+    const { rows: otrosPerfiles } = await client.query(
+      `SELECT 1 FROM sat.participantes_vec WHERE id_personas = $1 LIMIT 1`,
+      [perfil.idPersona],
+    );
+    const { rows: fuentesInstitucionales } = await client.query(
+      `SELECT (
+         EXISTS (SELECT 1 FROM sat.estudiantes
+                 WHERE id_personas = $1 OR numero_documento = $2)
+         OR EXISTS (SELECT 1 FROM sat.usuarios
+                    WHERE id_personas = $1 OR numero_documento = $2)
+         OR EXISTS (SELECT 1 FROM sat.docentes
+                    WHERE id_personas = $1 OR numero_documento = $2)
+       ) AS vinculada`,
+      [perfil.idPersona, perfil.identificacion],
+    );
+    let personaEliminada = false;
+    if (!otrosPerfiles[0] && !fuentesInstitucionales[0].vinculada) {
+      await client.query("SAVEPOINT eliminar_persona_rol");
+      try {
+        const { rows: personasEliminadas } = await client.query(
+          `DELETE FROM sat.personas WHERE id = $1 RETURNING id`,
+          [perfil.idPersona],
+        );
+        personaEliminada = Boolean(personasEliminadas[0]);
+        await client.query("RELEASE SAVEPOINT eliminar_persona_rol");
+      } catch (err) {
+        if (err.code !== "23503") throw err;
+        await client.query("ROLLBACK TO SAVEPOINT eliminar_persona_rol");
+        await client.query("RELEASE SAVEPOINT eliminar_persona_rol");
+      }
+    }
+
+    await client.query("COMMIT");
+    return res.json({
+      eliminado: true,
+      rol: perfil.rol,
+      inscripcionesEliminadas,
+      datosPersonalesProtegidos,
+      personaEliminada,
+      mensaje: datosPersonalesProtegidos
+        ? `Se quitó únicamente el rol ${perfil.rol} de Actividades y ${inscripcionesEliminadas} inscripción(es). La persona, el rol Estudiante y sus datos institucionales se conservaron.`
+        : personaEliminada
+          ? `Se eliminó el perfil ${perfil.rol} y sus ${inscripcionesEliminadas} inscripción(es).`
+          : `Se quitó el perfil ${perfil.rol} y sus ${inscripcionesEliminadas} inscripción(es). Los demás roles y datos vinculados se conservaron.`,
+    });
+  } catch (err) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    if (err.code === "23503") {
+      return res.status(409).json({ error: "No se pudo quitar el rol porque tiene otros registros relacionados." });
+    }
+    return enviarErrorBaseDatos(err, res, next);
+  } finally {
+    client?.release();
+  }
+});
+
 router.post("/registro-actividad/masivo", async (req, res, next) => {
   const idActividad = String(req.body?.idActividad || "").trim();
   const filas = req.body?.participantes;
@@ -2341,26 +3286,36 @@ router.post("/registro-actividad/masivo", async (req, res, next) => {
         } else if (row.idTipoApoyo) {
           throw Object.assign(new Error("La actividad ya no tiene modalidad para este registro."), { status: 409 });
         }
-
-        const profile = await guardarPerfilDeActividad(client, row.participante);
-        const { rows: inserted } = await client.query(
-          `INSERT INTO sat.actividades_vec_participantes
-             (id_actividades_vec, id_participantes_vec, id_tipos_apoyo, programa_modalidad)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT (id_actividades_vec, id_participantes_vec) DO NOTHING
-           RETURNING id_actividades_vec_participantes AS id`,
-          [idActividad, profile.idParticipante, row.idTipoApoyo || null, row.variable || null]
-        );
-        if (!inserted[0]) {
-          throw Object.assign(new Error("La persona ya está registrada en esta actividad."), { status: 409 });
+        const rolesRegistrados = [];
+        for (const tipo of row.participante.rolesPendientes || row.participante.roles || [row.participante.tipo]) {
+          if (tipo === "ESTUDIANTE"
+            && !await existeEstudianteInstitucional(client, row.participante.identificacion)) {
+            throw Object.assign(new Error("No se puede registrar como estudiante porque no existe en los registros institucionales."), { status: 409 });
+          }
+          const profile = await guardarPerfilDeActividad(client, {
+            ...row.participante,
+            tipo,
+          });
+          const { rows: inserted } = await client.query(
+            `INSERT INTO sat.actividades_vec_participantes
+               (id_actividades_vec, id_participantes_vec, id_tipos_apoyo, programa_modalidad)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (id_actividades_vec, id_participantes_vec) DO NOTHING
+             RETURNING id_actividades_vec_participantes AS id`,
+            [idActividad, profile.idParticipante, row.idTipoApoyo || null, row.variable || null]
+          );
+          if (!inserted[0]) {
+            throw Object.assign(new Error(`La persona ya está registrada en esta actividad con el rol ${tipo}.`), { status: 409 });
+          }
+          rolesRegistrados.push(tipo);
         }
         resultados.push({
           fila: row.fila,
           identificacion: row.participante.identificacion,
-          rol: row.participante.tipo,
-          idInscripcion: inserted[0].id,
+          rol: rolesRegistrados.join(", "),
+          roles: rolesRegistrados,
           status: "registered",
-          message: "Registro completado.",
+          message: `Registro completado con los roles: ${rolesRegistrados.join(", ")}.`,
         });
         await client.query("RELEASE SAVEPOINT registrar_participante");
       } catch (err) {
@@ -2441,8 +3396,10 @@ router.post("/registro-actividad/masivo/registrar-no-encontrado", async (req, re
   if (!participante.nombres || !participante.apellidos) {
     return res.status(400).json({ error: "Completa los nombres y apellidos antes de registrar a la persona." });
   }
-  if (!ROLES_PARTICIPANTE_VEC.has(participante.tipo)) {
-    return res.status(400).json({ error: "Selecciona un rol válido: estudiante, egresado, colaborador o externo." });
+  if (!["EGRESADO", "COLABORADOR", "EXTERNO"].includes(participante.tipo)) {
+    return res.status(400).json({
+      error: "Solo puedes crear participantes no encontrados como Egresado, Colaborador o Externo. Los estudiantes y el personal administrativo deben existir en la base institucional.",
+    });
   }
   if (!TIPOS_DOCUMENTO_PARTICIPANTE.has(participante.tipoDocumento)) {
     return res.status(400).json({ error: "Selecciona un tipo de documento válido." });
@@ -2463,24 +3420,8 @@ router.post("/registro-actividad/masivo/registrar-no-encontrado", async (req, re
   if (datoFaltante) {
     return res.status(400).json({ error: `Completa el campo obligatorio: ${datoFaltante[0]}.` });
   }
-  if (participante.tipo === "ESTUDIANTE") {
-    const codigoEstudiante = participante.codigo || String(
-      req.body?.participante?.codigoInstitucional || "",
-    ).trim();
-    if (!codigoEstudiante) {
-      return res.status(400).json({ error: "El código institucional es obligatorio para estudiantes." });
-    }
-    if (codigoEstudiante.length > MAX_IDENTIFICACION_LENGTH) {
-      return res.status(400).json({ error: "El código institucional debe tener máximo 64 caracteres." });
-    }
-    participante.codigo = codigoEstudiante;
-    if (!participante.correoInstitucional) {
-      return res.status(400).json({ error: "El correo institucional es obligatorio para estudiantes." });
-    }
-  } else {
-    participante.codigo = null;
-    participante.correoInstitucional = null;
-  }
+  participante.codigo = null;
+  participante.correoInstitucional = null;
   if (!/^[\p{L}\p{N}._-]{1,64}$/u.test(participante.identificacion)) {
     return res.status(400).json({
       error: "El número de documento debe contener máximo 64 letras o números; se permiten punto, guion y guion bajo.",
@@ -2492,17 +3433,9 @@ router.post("/registro-actividad/masivo/registrar-no-encontrado", async (req, re
   if (!/^[\p{L}\p{M}][\p{L}\p{M}\s'.-]{1,119}$/u.test(participante.apellidos)) {
     return res.status(400).json({ error: "Escribe apellidos válidos de 2 a 120 caracteres." });
   }
-  if (participante.tipo === "ESTUDIANTE"
-    && !/^[\p{L}\p{N}._-]{1,64}$/u.test(participante.codigo)) {
-    return res.status(400).json({ error: "El código institucional debe contener máximo 64 letras o números." });
-  }
   const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailPattern.test(participante.correo) || participante.correo.length > 254) {
     return res.status(400).json({ error: "Ingresa un correo personal válido de máximo 254 caracteres." });
-  }
-  if (participante.tipo === "ESTUDIANTE"
-    && (!emailPattern.test(participante.correoInstitucional) || participante.correoInstitucional.length > 254)) {
-    return res.status(400).json({ error: "Ingresa un correo institucional válido de máximo 254 caracteres." });
   }
   for (const [label, value] of [
     ["teléfono móvil", participante.celular],
@@ -2540,7 +3473,7 @@ router.post("/registro-actividad/masivo/registrar-no-encontrado", async (req, re
     [validacion] = await validarCargaMasiva(idActividad, [{
       ...participante,
       fila,
-      codigoInstitucional: participante.tipo === "ESTUDIANTE" ? participante.codigo : null,
+      codigoInstitucional: null,
       modalidadVariable: req.body?.participante?.modalidadVariable,
     }]);
     if (!["not_found", "valid"].includes(validacion.status)) {
@@ -3221,6 +4154,15 @@ async function registrarActividad(req, res, next, tipoForzado = null) {
     }
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [participante.identificacion]);
 
+    if (participante.tipo === "ESTUDIANTE") {
+      if (!await existeEstudianteInstitucional(client, participante.identificacion)) {
+        throw Object.assign(
+          new Error("No se puede crear un estudiante desde este registro. Debe existir en la base institucional; para personas no encontradas elige Egresado, Colaborador o Externo."),
+          { status: 409 },
+        );
+      }
+    }
+
     let persona = await buscarPersonaPorIdentificacion(client, participante.identificacion);
     if (!persona) persona = await buscarPersonaFuente(client, participante.identificacion);
     if (!persona) {
@@ -3449,6 +4391,14 @@ router.post("/", async (req, res, next) => {
     client = await pool.connect();
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [payload.identificacion]);
+
+    if (payload.tipo === "ESTUDIANTE"
+      && !await existeEstudianteInstitucional(client, payload.identificacion)) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        error: "No se puede crear un perfil de estudiante si no existe en la base institucional. Para personas no encontradas, usa Egresado, Colaborador o Externo.",
+      });
+    }
 
     let persona = await buscarPersonaPorIdentificacion(client, payload.identificacion);
     if (!persona) {
@@ -3705,6 +4655,58 @@ async function buscarParticipante(tipo, identificacion) {
   return null;
 }
 
+async function buscarIdentidadPorIdentificador(identificador) {
+  const { rows } = await query(
+    `SELECT id_persona AS "idPersona", identificacion
+     FROM (
+       SELECT p.id AS id_persona, p.numero_identificacion AS identificacion
+       FROM sat.personas p
+       WHERE p.numero_identificacion = $1
+       UNION
+       SELECT e.id_personas, COALESCE(p.numero_identificacion, e.numero_documento)
+       FROM sat.estudiantes e
+       LEFT JOIN sat.personas p ON p.id = e.id_personas
+       WHERE e.numero_documento = $1
+          OR e.codigo_externo = $1
+          OR EXISTS (
+            SELECT 1 FROM sat.matriculas m
+            WHERE m.id_estudiantes = e.id_estudiantes AND m.codigo_externo = $1
+          )
+       UNION
+       SELECT pv.id_personas, p.numero_identificacion
+       FROM sat.participantes_vec pv
+       JOIN sat.personas p ON p.id = pv.id_personas
+       WHERE pv.codigo = $1
+       UNION
+       SELECT u.id_personas, COALESCE(p.numero_identificacion, u.numero_documento)
+       FROM sat.usuarios u
+       LEFT JOIN sat.personas p ON p.id = u.id_personas
+       WHERE u.numero_documento = $1
+         AND u.activo = true AND u.eliminado_en IS NULL
+     ) identities
+     WHERE identificacion IS NOT NULL
+     ORDER BY id_persona NULLS LAST
+     `,
+    [identificador]
+  );
+  return rows;
+}
+
+async function obtenerRolesParticipante(db, idPersona, identificacion) {
+  const roles = new Set(await obtenerRolesVerificados(db, idPersona, identificacion));
+  const ejecutarQuery = typeof db === "function" ? db : db.query.bind(db);
+  const { rows } = await ejecutarQuery(
+    `SELECT DISTINCT pv.tipo_participante AS rol
+     FROM sat.participantes_vec pv
+     JOIN sat.personas p ON p.id = pv.id_personas
+     WHERE ($1::bigint IS NOT NULL AND p.id = $1::bigint)
+        OR p.numero_identificacion = $2`,
+    [idPersona || null, identificacion]
+  );
+  rows.forEach((row) => roles.add(row.rol));
+  return [...roles].sort();
+}
+
 /** Roles institucionales comprobados directamente en las fuentes del SAT. */
 async function obtenerRolesVerificados(db, idPersona, identificacion) {
   const ejecutarQuery = typeof db === "function" ? db : db.query.bind(db);
@@ -3932,6 +4934,35 @@ async function buscarPersonaPorIdentificacion(client, identificacion) {
     [identificacion]
   );
   return rows[0] || null;
+}
+
+async function existeEstudianteInstitucional(client, identificacion) {
+  const executeQuery = typeof client === "function"
+    ? client
+    : client.query.bind(client);
+  const { rows } = await executeQuery(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM sat.estudiantes e
+       LEFT JOIN sat.personas p ON p.id = e.id_personas
+       WHERE e.numero_documento = $1
+          OR e.codigo_externo = $1
+          OR p.numero_identificacion = $1
+       UNION ALL
+       SELECT 1
+       FROM sat.matriculas m
+       JOIN sat.estudiantes e ON e.id_estudiantes = m.id_estudiantes
+       WHERE m.codigo_externo = $1
+       UNION ALL
+       SELECT 1
+       FROM sat.participantes_vec pv
+       JOIN sat.personas vec_person ON vec_person.id = pv.id_personas
+       WHERE pv.tipo_participante = 'ESTUDIANTE'
+         AND vec_person.numero_identificacion = $1
+     ) AS existe`,
+    [identificacion]
+  );
+  return rows[0].existe;
 }
 
 async function buscarPersonaFuente(client, identificacion) {

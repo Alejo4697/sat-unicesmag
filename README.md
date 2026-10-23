@@ -152,6 +152,12 @@ por-dispositivo, como el borrador de intervenciones):
   tipo de apoyo asociado; si la jornada tiene una sola modalidad, se asigna
   automáticamente. Esta elección está disponible en el registro individual,
   por fila en la carga masiva y al crear perfiles de personas no encontradas.
+  La pantalla de registro muestra instrucciones cortas para cada forma de
+  inscripción. En el registro individual, los datos académicos, de contacto y
+  sociodemográficos aparecen dentro de una sección opcional cerrada para que la
+  búsqueda y la inscripción sean lo primero. En la carga masiva, el flujo se
+  presenta como elegir actividad, subir el archivo y revisar la lista antes de
+  guardar.
   En el registro individual se puede seleccionar estudiante, egresado,
   colaborador o externo; si la identificación ya corresponde a una persona con
   otros roles compatibles, se solicita confirmar el rol adicional antes de
@@ -204,11 +210,29 @@ por-dispositivo, como el borrador de intervenciones):
   un externo tenga otros roles. Se aplican con
   `npm --prefix server run db:roles-participantes`. Desde Resumen, los perfiles
   de Egresado, Colaborador o Externo también se pueden importar por Excel/CSV,
-  seleccionando un único rol para todo el archivo y relacionando encabezados
-  flexibles sin una plantilla fija. Esta carga crea o vincula perfiles VEC sin
-  inscribir personas en actividades; antes de agregar un rol a una persona ya
-  registrada solicita confirmación explícita. Los roles repetidos y los
-  conflictos de exclusividad de Externo se omiten. La carga masiva lista jornadas
+  con accesos directos que abren una ventana de carga para cada rol. La ventana
+  explica las columnas obligatorias y opcionales en lenguaje sencillo,
+  relaciona encabezados flexibles sin exigir una plantilla fija y permite
+  asignar manualmente las columnas si el sistema no reconoce sus nombres.
+  Se usa un único rol para todo el archivo.
+  La selección de filas controla exactamente qué personas se guardan. Esta
+  carga crea o vincula perfiles VEC en sus tablas de rol sin inscribir personas
+  en actividades; antes de agregar un rol a una persona ya registrada solicita
+  confirmación explícita. Los roles repetidos y los conflictos de exclusividad
+  de Externo se omiten. El mismo Resumen ofrece una lista consultable por rol
+  (Egresado, Colaborador o Externo), con búsqueda por nombre, documento o
+  correo y acciones para editar o eliminar perfiles. La ficha permite actualizar
+  los datos VEC; si la persona también es estudiante o funcionario institucional,
+  sus datos personales quedan protegidos y solo se permite editar la ficha del
+  rol. La eliminación requiere confirmación; si un egresado, colaborador o
+  externo tiene inscripciones, también se quita de todas sus actividades y se
+  eliminan en cascada las auditorías ligadas a esas inscripciones. Sus otros
+  roles se conservan y los datos personales solo se eliminan cuando ya no tienen
+  otros vínculos. Si la persona también figura como estudiante o funcionario,
+  la confirmación especifica que solo se quita el rol VEC seleccionado y sus
+  inscripciones; la persona y sus datos personales e institucionales no se
+  borran. Estas acciones están limitadas a administradores y
+  coordinadores. La carga masiva lista jornadas
   registradas de todos los periodos y fechas; las canceladas se muestran, pero
   no se pueden seleccionar. Al crear jornadas desde Administración o desde el
   registro se permiten fechas pasadas, siempre que la fecha final no sea
@@ -221,6 +245,14 @@ por-dispositivo, como el borrador de intervenciones):
   participante se guardan el apoyo y la modalidad exacta en
   `sat.actividades_vec_participantes`. La lista de participantes muestra el
   programa/modalidad y el apoyo asignado en columnas separadas.
+  Cada tarjeta de actividad en «Administrar actividades» incluye la descarga
+  de participantes en el formato institucional de «Asistencia y reportes»,
+  organizado en hojas por rol y con nombre de archivo por actividad y periodo;
+  también se puede descargar la lista de actividades canceladas. Si una persona
+  tiene más de un rol verificado, la columna del tipo de participante muestra
+  el rol de esa inscripción y los demás roles; la celda se resalta en amarillo
+  y aparece subrayada. La columna «ROLES DE LA PERSONA» marca con una X cada rol
+  verificado para que se identifique rápidamente.
   `npm --prefix server run db:actividades` crea esta relación, completa las
   modalidades históricas que se puedan vincular sin ambigüedad y agrega la
   columna de modalidad a cada inscripción; ejecuta el comando para aplicar el

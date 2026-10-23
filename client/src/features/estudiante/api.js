@@ -5,6 +5,14 @@
 import { apiFetch } from "../../shared/api/client.js";
 
 /**
+ * Consulta el correo institucional del estudiante a partir de su documento o código.
+ */
+export async function consultarCorreoEstudiante(documento) {
+  if (!documento || documento.trim().length < 4) return { encontrado: false };
+  return apiFetch(`/estudiante/consultar-correo?documento=${encodeURIComponent(documento.trim())}`);
+}
+
+/**
  * Solicita el código OTP de 6 dígitos enviando documento y correo institucional.
  */
 export async function solicitarOtp({ documento, correo }) {
