@@ -7,6 +7,7 @@ const SECTIONS = [
   { id: "nuevo", label: "Registrar participante", icon: "fa-user-plus" },
   { id: "apoyos", label: "Consultar apoyos", icon: "fa-hand-holding-heart" },
   { id: "registros", label: "Asistencia y reportes", icon: "fa-clipboard-check" },
+  { id: "carga-realizadas", label: "Carga y registro de actividades realizadas", icon: "fa-file-circle-plus" },
 ];
 
 export default function ActivityNavigation({ activeSection }) {
@@ -14,7 +15,7 @@ export default function ActivityNavigation({ activeSection }) {
   const { user } = useAuth();
   const puedeAdministrar = ["admin", "administrador", "coordinador"].includes(String(user?.rol || "").toLowerCase());
   const visibleSections = SECTIONS.filter((section) => (
-    puedeAdministrar || section.id !== "actividades"
+    puedeAdministrar || !["actividades", "carga-realizadas"].includes(section.id)
   ));
 
   return (

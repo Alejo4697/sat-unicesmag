@@ -6,7 +6,7 @@ import ActividadesAdminView from "./ActividadesAdminView.jsx";
 import NewParticipantView from "./NewParticipantView.jsx";
 import SectionPlaceholder from "./SectionPlaceholder.jsx";
 
-const VALID_SECTIONS = new Set(["dashboard", "actividades", "nuevo", "apoyos", "registros"]);
+const VALID_SECTIONS = new Set(["dashboard", "actividades", "nuevo", "apoyos", "registros", "carga-realizadas"]);
 
 export default function ActividadesPage() {
   const [searchParams] = useSearchParams();
@@ -21,7 +21,9 @@ export default function ActividadesPage() {
       ? "Registrar participante"
       : activeSection === "apoyos"
         ? "Consultar apoyos"
-        : "Asistencia y reportes";
+        : activeSection === "registros"
+          ? "Asistencia y reportes"
+          : "Carga y registro de actividades realizadas";
 
   return (
     <AppLayout

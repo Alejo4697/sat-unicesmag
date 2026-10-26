@@ -130,7 +130,7 @@ async function poblarUsuariosCompletos() {
       apellidos: "Cárdenas",
       correo: "docente.acompanante@unicesmag.edu.co",
       cargo: "Docente Acompañante",
-      rol: "directivo",
+      rol: "profesional",
       dependencia: "Docentes Acompañantes"
     }
   ];

@@ -31,11 +31,71 @@ const router = Router();
 
 router.use(identifyUser, requireModule("remisiones"));
 
+// --------------------------------------------------------------------------
+// Búsqueda de estudiantes por código estudiantil (seguridad institucional)
+// Disponible para todos los perfiles con acceso al módulo de remisiones.
+// --------------------------------------------------------------------------
+router.get("/buscar-estudiante", async (req, res, next) => {
+  const q = String(req.query.q || "").trim();
+  if (!q) {
+    return res.json([]);
+  }
+
+  try {
+    const { rows } = await query(
+      `SELECT DISTINCT
+         e.id_estudiantes AS id,
+         COALESCE(m.codigo_externo, e.codigo_externo) AS codigo,
+         COALESCE(per.numero_identificacion, e.numero_documento) AS documento,
+         COALESCE(CONCAT_WS(' ', per.primer_nombre, per.segundo_nombre), e.nombres) AS nombres,
+         COALESCE(CONCAT_WS(' ', per.primer_apellido, per.segundo_apellido), e.apellidos) AS apellidos,
+         CONCAT_WS(' ', 
+           COALESCE(CONCAT_WS(' ', per.primer_nombre, per.segundo_nombre), e.nombres), 
+           COALESCE(CONCAT_WS(' ', per.primer_apellido, per.segundo_apellido), e.apellidos)
+         ) AS "nombreCompleto",
+         COALESCE(per.correo_institucional, per.correo_electronico, e.correo_institucional) AS email,
+         COALESCE(p.nombre, 'Programa Institucional') AS programa,
+         COALESCE(m.semestre, e.semestre_actual, 1) AS semestre,
+         COALESCE(rr.nombre, 'Sin evaluar') AS riesgo
+       FROM sat.estudiantes e
+       LEFT JOIN sat.personas per ON per.id = e.id_personas
+       LEFT JOIN sat.matriculas m ON m.id_estudiantes = e.id_estudiantes
+       LEFT JOIN sat.programas_academicos p ON p.id_programas_academicos = COALESCE(m.id_programas_academicos, e.id_programas_academicos)
+       LEFT JOIN LATERAL (
+         SELECT cr_1.id_rangos_riesgo
+         FROM sat.calificaciones_riesgo cr_1
+         WHERE cr_1.id_estudiantes = e.id_estudiantes AND cr_1.vigente = true
+         ORDER BY cr_1.calculado_en DESC
+         LIMIT 1
+       ) cr ON true
+       LEFT JOIN sat.rangos_riesgo rr ON rr.id_rangos_riesgo = cr.id_rangos_riesgo
+       WHERE e.codigo_externo = $1
+          OR m.codigo_externo = $1
+          OR e.codigo_externo ILIKE $2
+          OR m.codigo_externo ILIKE $2
+       ORDER BY "nombreCompleto" ASC
+       LIMIT 20`,
+      [q, `%${q}%`]
+    );
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get("/", async (req, res, next) => {
   try {
     const { rows } = await query(
       `SELECT r.id_remisiones AS id,
               e.codigo_externo AS "codigoEstudiante",
+              COALESCE(per.numero_identificacion, e.numero_documento) AS "documentoEstudiante",
+              COALESCE(CONCAT_WS(' ', per.primer_nombre, per.segundo_nombre), e.nombres) AS "nombresEstudiante",
+              COALESCE(CONCAT_WS(' ', per.primer_apellido, per.segundo_apellido), e.apellidos) AS "apellidosEstudiante",
+              CONCAT_WS(' ', 
+                COALESCE(CONCAT_WS(' ', per.primer_nombre, per.segundo_nombre), e.nombres), 
+                COALESCE(CONCAT_WS(' ', per.primer_apellido, per.segundo_apellido), e.apellidos)
+              ) AS "nombreEstudiante",
+              p.nombre AS "programaEstudiante",
               CONCAT(ur.nombres, ' ', ur.apellidos) AS "remitidoPor",
               d.nombre AS "areaDestino",
               COALESCE(CONCAT(up.nombres, ' ', up.apellidos), 'Bandeja General / Por Asignar') AS "profesionalAsignado",
@@ -48,12 +108,15 @@ router.get("/", async (req, res, next) => {
        FROM sat.remisiones r
        JOIN sat.casos c ON r.id_casos = c.id_casos
        JOIN sat.estudiantes e ON c.id_estudiantes = e.id_estudiantes
+       LEFT JOIN sat.personas per ON per.id = e.id_personas
+       LEFT JOIN sat.matriculas m ON m.id_estudiantes = e.id_estudiantes
+       LEFT JOIN sat.programas_academicos p ON p.id_programas_academicos = COALESCE(m.id_programas_academicos, e.id_programas_academicos)
        LEFT JOIN sat.dependencias d ON r.id_dependencias = d.id_dependencias
        LEFT JOIN sat.estados_remision er ON r.id_estados_remision = er.id_estados_remision
        LEFT JOIN sat.usuarios ur ON r.id_usuarios_remitente = ur.id_usuarios
        LEFT JOIN sat.usuarios up ON r.id_usuarios_profesional = up.id_usuarios
        ORDER BY r.generada_en DESC
-       LIMIT 100`
+       LIMIT 150`
     );
 
     const idsDb = new Set(rows.map((r) => r.id));
@@ -207,15 +270,36 @@ router.post("/", async (req, res, next) => {
   }
 
   let idRemisionGenerada = null;
+  let nombreEstudianteFinal = null;
+  let codigoEstudianteReal = codigoEstudiante;
+  let documentoEstudianteFinal = null;
+  let programaEstudianteFinal = null;
+
   try {
-    // 1. Obtener estudiante en DB
+    // 1. Obtener estudiante en DB exclusivamente por código estudiantil
     const { rows: estRows } = await query(
-      `SELECT id_estudiantes FROM sat.estudiantes WHERE codigo_externo = $1 OR numero_documento = $1 OR id_estudiantes::text = $1 LIMIT 1`,
+      `SELECT e.id_estudiantes, COALESCE(m.codigo_externo, e.codigo_externo) AS codigo,
+              COALESCE(per.numero_identificacion, e.numero_documento) AS documento,
+              COALESCE(CONCAT_WS(' ', per.primer_nombre, per.segundo_nombre), e.nombres) AS nombres,
+              COALESCE(CONCAT_WS(' ', per.primer_apellido, per.segundo_apellido), e.apellidos) AS apellidos,
+              p.nombre AS programa
+       FROM sat.estudiantes e
+       LEFT JOIN sat.personas per ON per.id = e.id_personas
+       LEFT JOIN sat.matriculas m ON m.id_estudiantes = e.id_estudiantes
+       LEFT JOIN sat.programas_academicos p ON p.id_programas_academicos = COALESCE(m.id_programas_academicos, e.id_programas_academicos)
+       WHERE e.codigo_externo = $1
+          OR m.codigo_externo = $1
+          OR e.id_estudiantes::text = $1
+       LIMIT 1`,
       [codigoEstudiante]
     );
 
     if (estRows.length > 0) {
       const idEstudiante = estRows[0].id_estudiantes;
+      codigoEstudianteReal = estRows[0].codigo || codigoEstudiante;
+      documentoEstudianteFinal = estRows[0].documento;
+      nombreEstudianteFinal = `${estRows[0].nombres} ${estRows[0].apellidos}`.trim();
+      programaEstudianteFinal = estRows[0].programa;
 
       // 2. Obtener o crear caso
       const { rows: casos } = await query(
@@ -269,7 +353,10 @@ router.post("/", async (req, res, next) => {
 
   const nueva = {
     id: idRemisionGenerada || `REM-2026-${Math.floor(100 + Math.random() * 900)}`,
-    codigoEstudiante,
+    codigoEstudiante: codigoEstudianteReal,
+    documentoEstudiante: documentoEstudianteFinal,
+    nombreEstudiante: nombreEstudianteFinal,
+    programaEstudiante: programaEstudianteFinal,
     remitidoPor: `${req.user?.nombre || "Personal Institucional"} (${req.user?.cargo || "Docente"})`,
     ...destino,
     nivelRiesgo: nivelRiesgo || "Medio",

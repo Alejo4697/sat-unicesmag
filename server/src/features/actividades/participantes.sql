@@ -32,3 +32,7 @@ CREATE INDEX IF NOT EXISTS idx_participantes_vec_tipo_persona
   ON sat.participantes_vec (tipo_participante, id_personas);
 
 COMMIT;
+
+
+
+Create index if not exists para poder confimar todo 

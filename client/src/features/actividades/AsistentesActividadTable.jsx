@@ -54,6 +54,7 @@ export default function AsistentesActividadTable() {
   const [cargandoActividades, setCargandoActividades] = useState(true);
   const [cargandoAsistentes, setCargandoAsistentes] = useState(false);
   const [exportando, setExportando] = useState(false);
+  const [exportandoListaSimple, setExportandoListaSimple] = useState(false);
   const [error, setError] = useState("");
   const actividadSeleccionada = actividades.find((actividad) => actividad.id === actividadId);
   const asistenciasConfirmadas = asistentes.filter((item) => item.asistenciaEstado === "PRESENTE" || item.asistenciaVerificada).length;
@@ -212,6 +213,55 @@ export default function AsistentesActividadTable() {
     }
   }
 
+  async function descargarListaSimple() {
+    setExportandoListaSimple(true);
+    setError("");
+    try {
+      const { default: ExcelJS } = await import("exceljs");
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet("Asistencia");
+      sheet.columns = [
+        { header: "Documento", key: "documento", width: 22 },
+        { header: "Nombre y apellidos", key: "nombre", width: 42 },
+        { header: "Asistió", key: "asistio", width: 24 },
+      ];
+      sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+      sheet.getRow(1).fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FF002855" },
+      };
+      asistentes.forEach((asistente) => {
+        const estado = asistente.asistenciaEstado
+          || (asistente.asistenciaVerificada ? "PRESENTE" : "PENDIENTE");
+        sheet.addRow({
+          documento: asistente.identificacion || "",
+          nombre: asistente.apellidosNombres || "",
+          asistio: estado === "PRESENTE"
+            ? "Sí"
+            : estado === "AUSENTE"
+              ? "No"
+              : "Pendiente de confirmar",
+        });
+      });
+      sheet.autoFilter = { from: "A1", to: "C1" };
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `asistencia-simple-${nombreArchivoActividad(actividadSeleccionada?.actividad).replace(/^asistentes-/, "")}`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (requestError) {
+      setError(requestError.message || "No se pudo generar el Excel sencillo de asistencia.");
+    } finally {
+      setExportandoListaSimple(false);
+    }
+  }
+
   const asistentesPendientesVisibles = asistentesFiltrados.filter((item) => (
     !item.asistenciaVerificada && item.asistenciaEstado !== "AUSENTE"
   ));
@@ -246,7 +296,7 @@ export default function AsistentesActividadTable() {
     setError("");
     setResultadoLote("");
     try {
-      await verificarAsistencia({
+      const result = await verificarAsistencia({
         idActividad: actividadId,
         idPeriodo: actividadSeleccionada.idPeriodo,
         fechaInicio: fechaCorta(actividadSeleccionada.fechaInicio),
@@ -256,18 +306,38 @@ export default function AsistentesActividadTable() {
         asistenciaEstado,
         origen,
       });
-      const actualizados = await getAsistentes({
-        idActividad: actividadId,
-        idPeriodo: actividadSeleccionada.idPeriodo,
-        fechaInicio: fechaCorta(actividadSeleccionada.fechaInicio),
-        fechaFinalizacion: fechaCorta(actividadSeleccionada.fechaFinalizacion),
-      });
-      setAsistentes(actualizados);
-      setIdsSeleccionados(new Set());
-      const confirmados = actualizados.filter((item) => (
-        registros.includes(item.id)
-        && (item.asistenciaEstado || (item.asistenciaVerificada ? "PRESENTE" : "PENDIENTE")) === asistenciaEstado
+      if (!Array.isArray(result?.idsVerificados)) {
+        throw new Error("El servidor no devolvió el resultado de la confirmación. Actualiza la página e inténtalo de nuevo.");
+      }
+      const verifiedIds = new Set(result.idsVerificados.map((id) => String(id).toLocaleLowerCase("en")));
+      const confirmados = registros.filter((id) => (
+        verifiedIds.has(String(id).toLocaleLowerCase("en"))
       )).length;
+      let actualizados;
+      try {
+        actualizados = await getAsistentes({
+          idActividad: actividadId,
+          idPeriodo: actividadSeleccionada.idPeriodo,
+          fechaInicio: fechaCorta(actividadSeleccionada.fechaInicio),
+          fechaFinalizacion: fechaCorta(actividadSeleccionada.fechaFinalizacion),
+        });
+        setAsistentes(actualizados);
+      } catch (refreshError) {
+        setAsistentes((current) => current.map((item) => (
+          registros.includes(item.id)
+            ? {
+              ...item,
+              asistenciaVerificada: asistenciaEstado === "PRESENTE",
+              asistenciaEstado,
+              origenAsistencia: asistenciaEstado === "PENDIENTE" ? "MANUAL" : origen,
+            }
+            : item
+        )));
+        setError(
+          `La asistencia se guardó, pero no se pudo actualizar la lista. Vuelve a cargar la actividad. ${refreshError.message || ""}`.trim(),
+        );
+      }
+      setIdsSeleccionados(new Set());
       setResultadoLote(
         asistenciaEstado === "PRESENTE"
           ? `${confirmados} ${confirmados === 1 ? "asistencia confirmada" : "asistencias confirmadas"} desde ${fuente}.`
@@ -275,10 +345,17 @@ export default function AsistentesActividadTable() {
             ? `${confirmados} ${confirmados === 1 ? "persona confirmada como ausente" : "personas confirmadas como ausentes"} desde ${fuente}.`
             : `${confirmados} registros devueltos a pendiente desde ${fuente}.`,
       );
-      return confirmados === registros.length;
+      if (confirmados !== registros.length) {
+        const noConfirmados = registros.length - confirmados;
+        const message = `Se confirmaron ${confirmados} de ${registros.length} personas; ${noConfirmados} no se guardaron. Recarga la actividad y verifica que estas personas estén inscritas en ella.`;
+        setError(message);
+        return { confirmed: false, message };
+      }
+      return { confirmed: true };
     } catch (requestError) {
-      setError(requestError.message || "No se pudieron confirmar las asistencias seleccionadas.");
-      return false;
+      const message = requestError.message || "No se pudieron confirmar las asistencias seleccionadas.";
+      setError(message);
+      return { confirmed: false, message };
     } finally {
       setVerificandoIds([]);
     }
@@ -428,15 +505,26 @@ export default function AsistentesActividadTable() {
                 ].filter(Boolean).join(" · ")}
               </p>
             </div>
-            <button
-              className="btn btn-primary"
-              type="button"
-              onClick={descargarExcel}
-              disabled={cargandoAsistentes || exportando}
-            >
-              <i className={`fas ${exportando ? "fa-spinner fa-spin" : "fa-file-excel"}`} aria-hidden="true"></i>
-              {exportando ? "Generando reporte..." : "Descargar reporte Excel"}
-            </button>
+            <div className="vec-attendance-export-actions">
+              <button
+                className="btn btn-outline"
+                type="button"
+                onClick={descargarListaSimple}
+                disabled={cargandoAsistentes || exportando || exportandoListaSimple}
+              >
+                <i className={`fas ${exportandoListaSimple ? "fa-spinner fa-spin" : "fa-file-excel"}`} aria-hidden="true"></i>
+                {exportandoListaSimple ? "Generando lista..." : "Excel sencillo de asistencia"}
+              </button>
+              <button
+                className="btn btn-primary"
+                type="button"
+                onClick={descargarExcel}
+                disabled={cargandoAsistentes || exportando || exportandoListaSimple}
+              >
+                <i className={`fas ${exportando ? "fa-spinner fa-spin" : "fa-file-excel"}`} aria-hidden="true"></i>
+                {exportando ? "Generando reporte..." : "Descargar reporte Excel"}
+              </button>
+            </div>
           </div>
 
               <div className="vec-attendance-summary" role="status">

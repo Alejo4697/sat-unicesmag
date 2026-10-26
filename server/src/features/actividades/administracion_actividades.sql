@@ -13,12 +13,27 @@ ALTER TABLE sat.participantes_vec
   ADD COLUMN IF NOT EXISTS lugar_nacimiento varchar(250);
 
 ALTER TABLE sat.actividades_vec_participantes
+  ADD COLUMN IF NOT EXISTS asistencia_verificada boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS asistencia_verificada_en timestamptz,
+  ADD COLUMN IF NOT EXISTS asistencia_verificada_por text,
+  ADD COLUMN IF NOT EXISTS asistencia_verificada_origen text NOT NULL DEFAULT 'MANUAL',
   ADD COLUMN IF NOT EXISTS estado_asistencia varchar(20) NOT NULL DEFAULT 'PENDIENTE';
 
-UPDATE sat.actividades_vec_participantes
-SET estado_asistencia = 'PRESENTE'
-WHERE asistencia_verificada = true
-  AND estado_asistencia = 'PENDIENTE';
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'sat'
+      AND table_name = 'actividades_vec_participantes'
+      AND column_name = 'asistencia_verificada'
+  ) THEN
+    UPDATE sat.actividades_vec_participantes
+    SET estado_asistencia = 'PRESENTE'
+    WHERE asistencia_verificada = true
+      AND estado_asistencia = 'PENDIENTE';
+  END IF;
+END $$;
 
 DO $$
 BEGIN

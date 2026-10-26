@@ -1,11 +1,17 @@
 import AsistentesActividadTable from "./AsistentesActividadTable.jsx";
 import ApoyosView from "./ApoyosView.jsx";
+import ImportarActividadesRealizadas from "./ImportarActividadesRealizadas.jsx";
 
 const SECTION_CONTENT = {
   registros: {
     title: "Asistencia y reportes",
     icon: "fa-clipboard-check",
     message: "Selecciona una actividad registrada para revisar sus participantes, confirmar la asistencia y descargar el reporte correspondiente.",
+  },
+  "carga-realizadas": {
+    title: "Carga y registro de actividades realizadas",
+    icon: "fa-file-circle-plus",
+    message: "Este apartado servirá para cargar información de actividades que ya se realizaron y preparar su registro automático.",
   },
   apoyos: {
     title: "Consultar apoyos",
@@ -41,6 +47,24 @@ export default function SectionPlaceholder({ section }) {
           <li><span>03</span><div><strong>Revisa y confirma</strong><small>Solo las coincidencias verificadas quedan registradas.</small></div></li>
         </ol>
         <AsistentesActividadTable />
+      </section>
+    );
+  }
+
+  if (section === "carga-realizadas") {
+    return (
+      <section className="vec-attendance-page" aria-labelledby={`vec-section-${section}`}>
+        <header className="vec-attendance-hero">
+          <span className="vec-attendance-hero__icon" aria-hidden="true">
+            <i className={`fas ${content.icon}`}></i>
+          </span>
+          <div>
+            <span className="vec-attendance-hero__eyebrow">ACTIVIDADES VEC</span>
+            <h1 id={`vec-section-${section}`}>{content.title}</h1>
+            <p>{content.message}</p>
+          </div>
+        </header>
+        <ImportarActividadesRealizadas />
       </section>
     );
   }

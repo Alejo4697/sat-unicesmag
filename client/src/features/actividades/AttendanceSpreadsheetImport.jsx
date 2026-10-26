@@ -229,6 +229,7 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
   const [headerRow, setHeaderRow] = useState(1);
   const [mapping, setMapping] = useState({});
   const [error, setError] = useState("");
+  const [confirmationError, setConfirmationError] = useState("");
   const [loading, setLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [savedMessage, setSavedMessage] = useState("");
@@ -273,6 +274,7 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
     setMapping({});
     setSelectedIds(new Set());
     setSavedMessage("");
+    setConfirmationError("");
     setReviewedRows({});
     setIdentityConfirmedRows(new Set());
   }
@@ -346,6 +348,7 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
     setMapping(nextMapping);
     setSelectedIds(new Set());
     setSavedMessage("");
+    setConfirmationError("");
     setReviewedRows({});
     setIdentityConfirmedRows(new Set());
   }
@@ -361,6 +364,7 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
     setMapping(nextMapping);
     setSelectedIds(new Set());
     setSavedMessage("");
+    setConfirmationError("");
     setReviewedRows({});
     setIdentityConfirmedRows(new Set());
   }
@@ -368,6 +372,7 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
   function toggleAllReady(checked) {
     setSelectedIds(checked ? new Set(readyRows.map((row) => row.attendee.id)) : new Set());
     setSavedMessage("");
+    setConfirmationError("");
   }
 
   function toggleReady(id, checked) {
@@ -378,6 +383,7 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
       return next;
     });
     setSavedMessage("");
+    setConfirmationError("");
   }
 
   function toggleIdentityConfirmation(rowNumber, checked) {
@@ -396,9 +402,9 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
     setError("");
     setSavedMessage("");
     try {
-      const resolved = await onResolveReview(row.attendee.id, asistio);
-      if (!resolved) {
-        throw new Error("No se pudo verificar el estado guardado. Actualiza la lista e inténtalo de nuevo.");
+      const result = await onResolveReview(row.attendee.id, asistio);
+      if (!result?.confirmed) {
+        throw new Error(result?.message || "No se pudo verificar el estado guardado. Actualiza la lista e inténtalo de nuevo.");
       }
       setReviewedRows((current) => ({ ...current, [row.rowNumber]: asistio }));
       setIdentityConfirmedRows((current) => {
@@ -419,14 +425,17 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
   async function confirmImport() {
     if (!selectedReadyIds.length) return;
     setError("");
+    setConfirmationError("");
     try {
-      const confirmed = await onConfirm(selectedReadyIds, fileName);
-      if (confirmed) {
+      const result = await onConfirm(selectedReadyIds, fileName);
+      if (result?.confirmed) {
         setSavedMessage(`${selectedReadyIds.length} ${selectedReadyIds.length === 1 ? "asistencia importada y confirmada" : "asistencias importadas y confirmadas"} desde ${fileName}.`);
         setSelectedIds(new Set());
+      } else {
+        setConfirmationError(result?.message || "El servidor no confirmó todas las filas seleccionadas. Revisa el resultado y vuelve a intentarlo.");
       }
     } catch (confirmError) {
-      setError(confirmError.message || "No se pudieron confirmar las asistencias del archivo.");
+      setConfirmationError(confirmError.message || "No se pudieron confirmar las asistencias del archivo.");
     }
   }
 
@@ -678,6 +687,11 @@ export default function AttendanceSpreadsheetImport({ asistentes, busy, onConfir
             </table>
           </div>
           {savedMessage && <p className="vec-attendance-import__message vec-attendance-import__message--success" role="status">{savedMessage}</p>}
+          {confirmationError && (
+            <p className="vec-attendance-import__message vec-attendance-import__message--error" role="alert">
+              {confirmationError}
+            </p>
+          )}
           <div className="vec-attendance-import__footer">
             <span>{selectedReadyIds.length} coincidencias seleccionadas. Las filas que requieren revisión se resuelven desde su misma fila.</span>
             <button

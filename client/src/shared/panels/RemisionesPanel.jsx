@@ -32,6 +32,7 @@ const listRemisiones = () => apiFetch("/remisiones");
 const crearRemision = (data) => apiFetch("/remisiones", { method: "POST", body: data });
 const actualizarRemision = (id, data) => apiFetch(`/remisiones/${id}`, { method: "PATCH", body: data });
 const listEstudiantes = () => apiFetch("/estudiantes");
+const buscarEstudiantesRemision = (q) => apiFetch(`/remisiones/buscar-estudiante?q=${encodeURIComponent(q)}`);
 // Catálogos administrables (schema `sat`): solo devuelven los ítems activos.
 // Ver server/src/features/administracion/catalogos.routes.js.
 const listAreasRemision = () => apiFetch("/remisiones/areas");
@@ -63,6 +64,12 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
   const [areas, setAreas] = useState([]);
   const [estados, setEstados] = useState([]);
   const [rutas, setRutas] = useState([]);
+  const [busquedaEstudiante, setBusquedaEstudiante] = useState("");
+  const [resultadosBusqueda, setResultadosBusqueda] = useState([]);
+  const [buscando, setBuscando] = useState(false);
+  const [estudianteSeleccionado, setEstudianteSeleccionado] = useState(null);
+  const [busquedaEjecutada, setBusquedaEjecutada] = useState(false);
+  const [filtroBandeja, setFiltroBandeja] = useState("");
   const [form, setForm] = useState({
     ...ESTADO_INICIAL_FORM,
     codigoEstudiante: codigoEstudiante || searchParams.get("estudiante") || ""
@@ -117,12 +124,85 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
     return e ? `${e.nombres} ${e.apellidos}` : codigo;
   }
 
+  // Búsqueda de estudiantes por código estudiantil (por seguridad institucional)
+  const ejecutarBusquedaEstudiante = async (termino) => {
+    const q = String(termino !== undefined ? termino : busquedaEstudiante).trim();
+    if (!q) {
+      setResultadosBusqueda([]);
+      setBusquedaEjecutada(false);
+      return;
+    }
+    setBuscando(true);
+    setBusquedaEjecutada(true);
+    setError("");
+    try {
+      const res = await buscarEstudiantesRemision(q);
+      setResultadosBusqueda(res);
+      if (res.length === 1 && !estudianteSeleccionado) {
+        seleccionarEstudiante(res[0]);
+      }
+    } catch (err) {
+      console.warn("Fallo en búsqueda:", err.message);
+      setResultadosBusqueda([]);
+    } finally {
+      setBuscando(false);
+    }
+  };
+
+  // Debounce para búsqueda automática por código estudiantil
+  useEffect(() => {
+    if (fijo || estudianteSeleccionado) return;
+    const term = busquedaEstudiante.trim();
+    if (term.length < 3) {
+      setResultadosBusqueda([]);
+      setBusquedaEjecutada(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      ejecutarBusquedaEstudiante(term);
+    }, 350);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busquedaEstudiante]);
+
+  // Si viene estudiante fijado o por parámetro, pre-cargar sus datos
+  useEffect(() => {
+    const cod = codigoEstudiante || searchParams.get("estudiante");
+    if (cod && !estudianteSeleccionado) {
+      buscarEstudiantesRemision(cod)
+        .then((res) => {
+          if (res && res.length > 0) {
+            setEstudianteSeleccionado(res[0]);
+            setForm((prev) => ({ ...prev, codigoEstudiante: res[0].codigo }));
+          }
+        })
+        .catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [codigoEstudiante, searchParams]);
+
+  function seleccionarEstudiante(est) {
+    setEstudianteSeleccionado(est);
+    setForm((prev) => ({ ...prev, codigoEstudiante: est.codigo }));
+    setResultadosBusqueda([]);
+    setBusquedaEstudiante("");
+    setBusquedaEjecutada(false);
+  }
+
+  function deseleccionarEstudiante() {
+    setEstudianteSeleccionado(null);
+    setForm((prev) => ({ ...prev, codigoEstudiante: "" }));
+    setBusquedaEstudiante("");
+    setResultadosBusqueda([]);
+    setBusquedaEjecutada(false);
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     const codigo = codigoEstudiante || form.codigoEstudiante;
     const destinoOk = esDirecta ? !!form.areaDestino : !!form.idRuta;
     if (!codigo || !destinoOk || !form.motivoRemision) {
-      setError("Por favor complete todos los campos obligatorios.");
+      setError("Por favor seleccione un estudiante por su código estudiantil y complete los campos obligatorios.");
       return;
     }
     setEnviando(true);
@@ -137,6 +217,9 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
       const nueva = await crearRemision(payload);
       setRemisiones((prev) => [nueva, ...prev]);
       setForm({ ...ESTADO_INICIAL_FORM, codigoEstudiante: codigoEstudiante || "" });
+      if (!fijo) {
+        deseleccionarEstudiante();
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -164,6 +247,29 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
     ? remisiones.filter((r) => r.codigoEstudiante === codigoEstudiante)
     : remisiones;
 
+  // Filtrado de bandeja por código estudiantil, cédula o nombre
+  const remisionesFiltradas = useMemo(() => {
+    const q = filtroBandeja.trim().toLowerCase();
+    const qClean = q.replace(/[^0-9a-zA-Z]/g, "");
+    if (!q) return remisionesVisibles;
+
+    return remisionesVisibles.filter((r) => {
+      const cod = String(r.codigoEstudiante || "").toLowerCase();
+      const doc = String(r.documentoEstudiante || "").toLowerCase().replace(/[^0-9a-zA-Z]/g, "");
+      const nom = String(r.nombreEstudiante || nombreDeEstudiante(r.codigoEstudiante) || "").toLowerCase();
+      const area = String(r.areaDestino || "").toLowerCase();
+      const prof = String(r.profesionalAsignado || "").toLowerCase();
+      const idStr = String(r.id || "").toLowerCase();
+
+      return cod.includes(q) ||
+             (qClean && doc.includes(qClean)) ||
+             nom.includes(q) ||
+             area.includes(q) ||
+             prof.includes(q) ||
+             idStr.includes(q);
+    });
+  }, [remisionesVisibles, filtroBandeja, estudiantes]);
+
   // Opciones del modal "Gestionar Estado": los estados activos del catálogo,
   // más el estado actual de la remisión si quedó inhabilitado (para no
   // perderlo ni bloquear el guardado de los demás campos).
@@ -184,30 +290,183 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
 
           <form onSubmit={handleSubmit}>
             {fijo ? (
-              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "0 0 1rem" }}>
+              <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: "0 0 1rem" }}>
                 <i className="fas fa-user-graduate"></i> Generando remisión para{" "}
                 <strong>{nombreEstudiante || codigoEstudiante}</strong>.
               </p>
-            ) : (
-              <div className="form-group">
-                <label className="form-label" htmlFor="remision-estudiante">
-                  Estudiante
-                </label>
-                <select
-                  id="remision-estudiante"
-                  className="form-select"
-                  required
-                  value={form.codigoEstudiante}
-                  onChange={(e) => setForm({ ...form, codigoEstudiante: e.target.value })}
+            ) : estudianteSeleccionado ? (
+              <div
+                style={{
+                  background: "#f0fdf4",
+                  border: "1px solid #bbf7d0",
+                  borderRadius: "8px",
+                  padding: "1rem 1.25rem",
+                  marginBottom: "1.25rem",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "1rem",
+                  flexWrap: "wrap"
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                  <div
+                    style={{
+                      width: "42px",
+                      height: "42px",
+                      borderRadius: "50%",
+                      background: "#16a34a",
+                      color: "#ffffff",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: "1.2rem",
+                      flexShrink: 0
+                    }}
+                  >
+                    <i className="fas fa-user-check"></i>
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: "1rem", color: "#14532d" }}>
+                      {estudianteSeleccionado.nombreCompleto}
+                    </div>
+                    <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", fontSize: "0.8rem", color: "#166534", marginTop: "3px" }}>
+                      <span><i className="fas fa-barcode"></i> Código: <strong>{estudianteSeleccionado.codigo}</strong></span>
+                      {estudianteSeleccionado.documento && (
+                        <span><i className="fas fa-id-card"></i> Cédula: <strong>{estudianteSeleccionado.documento}</strong></span>
+                      )}
+                      <span><i className="fas fa-graduation-cap"></i> {estudianteSeleccionado.programa} (Semestre {estudianteSeleccionado.semestre || "1"})</span>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={deseleccionarEstudiante}
+                  className="btn btn-outline btn-sm"
+                  style={{ borderColor: "#15803d", color: "#15803d", fontWeight: 600 }}
+                  title="Cambiar estudiante"
                 >
-                  <option value="">-- Seleccionar estudiante --</option>
-                  {estudiantes.map((e) => (
-                    <option key={e.codigo} value={e.codigo}>
-                      {e.nombres} {e.apellidos} ({e.programa})
-                    </option>
-                  ))}
-                </select>
+                  <i className="fas fa-rotate"></i> Cambiar Estudiante
+                </button>
               </div>
+            ) : (
+              <div className="form-group" style={{ marginBottom: "1.25rem" }}>
+                <label className="form-label" style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: "6px" }}>
+                  <i className="fas fa-barcode text-primary"></i>
+                  Buscar Estudiante por Código Estudiantil
+                  <span style={{ color: "#e11d48" }}>*</span>
+                </label>
+                
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <div style={{ position: "relative", flex: 1 }}>
+                    <input
+                      type="text"
+                      className="form-control"
+                      placeholder="Ingresa el código del estudiante (ej. 1221104037)..."
+                      value={busquedaEstudiante}
+                      onChange={(e) => setBusquedaEstudiante(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          ejecutarBusquedaEstudiante();
+                        }
+                      }}
+                      style={{ paddingRight: "36px" }}
+                    />
+                    {buscando && (
+                      <span style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", color: "#64748b" }}>
+                        <i className="fas fa-spinner fa-spin"></i>
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => ejecutarBusquedaEstudiante()}
+                    disabled={buscando || !busquedaEstudiante.trim()}
+                    style={{ display: "inline-flex", alignItems: "center", gap: "6px", whiteSpace: "nowrap" }}
+                  >
+                    <i className="fas fa-search"></i> Buscar
+                  </button>
+                </div>
+
+                <div style={{ marginTop: "4px", fontSize: "0.75rem", color: "#64748b" }}>
+                  <i className="fas fa-shield-halved" style={{ marginRight: "4px", color: "#0284c7" }}></i>
+                  Por seguridad institucional, la búsqueda se realiza exclusivamente ingresando el código del estudiante.
+                </div>
+
+                {/* Lista desplegable de resultados encontrados */}
+                {resultadosBusqueda.length > 0 && (
+                  <div
+                    style={{
+                    marginTop: "8px",
+                    background: "#ffffff",
+                    border: "1px solid #cbd5e1",
+                    borderRadius: "8px",
+                    boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1)",
+                    maxHeight: "260px",
+                    overflowY: "auto",
+                    zIndex: 20
+                  }}
+                >
+                  <div style={{ padding: "6px 12px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", fontSize: "0.75rem", fontWeight: 700, color: "#64748b" }}>
+                    {resultadosBusqueda.length} estudiante(s) con código coincidente — Haz clic para seleccionar:
+                  </div>
+                  {resultadosBusqueda.map((est) => (
+                    <div
+                      key={est.id || est.codigo}
+                      onClick={() => seleccionarEstudiante(est)}
+                      style={{
+                        padding: "10px 14px",
+                        borderBottom: "1px solid #f1f5f9",
+                        cursor: "pointer",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        transition: "background-color 0.15s ease"
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#f0f9ff")}
+                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
+                    >
+                      <div>
+                        <strong style={{ color: "#002855", fontSize: "0.9rem" }}>{est.nombreCompleto}</strong>
+                        <div style={{ display: "flex", gap: "10px", fontSize: "0.78rem", color: "#64748b", marginTop: "2px", flexWrap: "wrap" }}>
+                          <span><i className="fas fa-barcode"></i> Cód: <strong>{est.codigo}</strong></span>
+                          <span><i className="fas fa-graduation-cap"></i> {est.programa}</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-outline btn-sm"
+                        style={{ fontSize: "0.75rem", padding: "4px 8px" }}
+                      >
+                        Seleccionar
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {busquedaEjecutada && !buscando && resultadosBusqueda.length === 0 && (
+                <div
+                  style={{
+                    marginTop: "8px",
+                    padding: "10px 14px",
+                    background: "#fff1f2",
+                    border: "1px solid #fecdd3",
+                    borderRadius: "6px",
+                    color: "#9f1239",
+                    fontSize: "0.825rem",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px"
+                  }}
+                >
+                  <i className="fas fa-circle-exclamation"></i>
+                  <span>No se encontró ningún estudiante con el código "<strong>{busquedaEstudiante}</strong>". Verifica los dígitos del código e intenta nuevamente.</span>
+                </div>
+              )}
+            </div>
             )}
 
             <div className="form-group">
@@ -333,8 +592,38 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
         </div>
 
         <div className="card" style={{ gridColumn: "span 12" }}>
-          <div className="card-header">
-            <h3 className="card-title">{fijo ? "Remisiones del Estudiante" : "Bandeja de Casos Remitidos"}</h3>
+          <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem" }}>
+            <h3 className="card-title" style={{ margin: 0 }}>
+              {fijo ? "Remisiones del Estudiante" : "Bandeja de Casos Remitidos"}
+            </h3>
+
+            {!fijo && (
+              <div style={{ minWidth: "260px", maxWidth: "380px", flex: 1 }}>
+                <div style={{ position: "relative" }}>
+                  <input
+                    type="text"
+                    className="form-control form-control-sm"
+                    placeholder="Filtrar bandeja por código, cédula o nombre..."
+                    value={filtroBandeja}
+                    onChange={(e) => setFiltroBandeja(e.target.value)}
+                    style={{ paddingLeft: "32px", paddingRight: "28px", height: "34px", fontSize: "0.85rem" }}
+                  />
+                  <span style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }}>
+                    <i className="fas fa-search"></i>
+                  </span>
+                  {filtroBandeja && (
+                    <button
+                      type="button"
+                      onClick={() => setFiltroBandeja("")}
+                      style={{ position: "absolute", right: "8px", top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#94a3b8", cursor: "pointer" }}
+                      title="Limpiar filtro"
+                    >
+                      <i className="fas fa-xmark"></i>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="table-responsive">
@@ -350,14 +639,16 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
                 </tr>
               </thead>
               <tbody>
-                {remisionesVisibles.length === 0 && (
+                {remisionesFiltradas.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="text-muted" style={{ textAlign: "center" }}>
-                      Sin remisiones registradas.
+                    <td colSpan={6} className="text-muted" style={{ textAlign: "center", padding: "1.5rem" }}>
+                      {filtroBandeja
+                        ? `No se encontraron remisiones para el criterio "${filtroBandeja}".`
+                        : "Sin remisiones registradas."}
                     </td>
                   </tr>
                 )}
-                {remisionesVisibles.map((r) => (
+                {remisionesFiltradas.map((r) => (
                   <tr key={r.id}>
                     <td>
                       <strong>{r.id}</strong>{" "}
@@ -368,9 +659,20 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
                       )}
                     </td>
                     <td>
-                      {nombreDeEstudiante(r.codigoEstudiante)}
-                      <br />
-                      <small className="text-muted">Cód: {r.codigoEstudiante}</small>
+                      <strong style={{ color: "#002855" }}>
+                        {r.nombreEstudiante || nombreDeEstudiante(r.codigoEstudiante)}
+                      </strong>
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "2px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                        <span><i className="fas fa-barcode"></i> Cód: <strong>{r.codigoEstudiante}</strong></span>
+                        {r.documentoEstudiante && (
+                          <span><i className="fas fa-id-card"></i> Doc: <strong>{r.documentoEstudiante}</strong></span>
+                        )}
+                      </div>
+                      {r.programaEstudiante && (
+                        <small className="text-muted" style={{ display: "block", fontSize: "0.725rem", marginTop: "1px" }}>
+                          {r.programaEstudiante}
+                        </small>
+                      )}
                     </td>
                     <td>
                       <strong style={{ color: "var(--brand-primary)" }}>{r.areaDestino}</strong>

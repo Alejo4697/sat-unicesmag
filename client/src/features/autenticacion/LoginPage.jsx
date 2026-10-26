@@ -11,23 +11,35 @@ import { useAuth } from "../../shared/context/AuthContext.jsx";
 import { login } from "./api.js";
 
 /**
- * Determina la vista principal asignada según el rol oficial del usuario.
+ * Determina la vista principal asignada según el rol y cargo oficial del usuario.
  */
-function rutaPorRol(rol) {
-  switch (rol) {
-    case "admin":
-      return "/dashboard";
-    case "profesional":
-      return "/remisiones"; // Vista de atención asistencial y casos remitidos
-    case "directivo":
-      return "/dashboard"; // Vista de monitoreo y permanencia por programa
-    case "reporte_actividades":
-      return "/actividades"; // Módulo de registro de actividades VEC
-    case "estudiante":
-      return "/estudiante/portal";
-    default:
-      return "/dashboard";
+function rutaPorRol(usuario) {
+  const rol = typeof usuario === "string" ? usuario : usuario?.rol;
+  const cargo = String(usuario?.cargo || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  if (
+    rol === "admin" ||
+    rol === "directivo" ||
+    cargo.includes("docente") ||
+    cargo.includes("acompana") ||
+    cargo.includes("tutor") ||
+    cargo.includes("coordinador")
+  ) {
+    return "/dashboard";
   }
+  if (rol === "profesional") {
+    // Los docentes acompañantes van al tablero de permanencia; los profesionales de salud/psicología a remisiones
+    return (cargo.includes("docente") || cargo.includes("acompana") || cargo.includes("tiempo completo") || cargo.includes("medio tiempo") || cargo.includes("catedra"))
+      ? "/dashboard"
+      : "/remisiones";
+  }
+  if (rol === "reporte_actividades") {
+    return "/actividades";
+  }
+  if (rol === "estudiante") {
+    return "/estudiante/portal";
+  }
+  return "/dashboard";
 }
 
 export default function LoginPage() {
@@ -43,21 +55,16 @@ export default function LoginPage() {
   // Si ya hay una sesión activa, redirigir a su vista autorizada
   useEffect(() => {
     if (user) {
-      navigate(rutaPorRol(user.rol), { replace: true });
+      navigate(rutaPorRol(user), { replace: true });
     }
   }, [user, navigate]);
 
   async function handleSubmit(e) {
     e.preventDefault();
-    const correoLimpio = email.trim().toLowerCase();
+    const identificador = email.trim();
 
-    if (!correoLimpio || !password) {
-      setError("Por favor ingrese su correo institucional y su contraseña.");
-      return;
-    }
-
-    if (!correoLimpio.endsWith("@unicesmag.edu.co")) {
-      setError("Debe ingresar un correo institucional válido (@unicesmag.edu.co).");
+    if (!identificador || !password) {
+      setError("Por favor ingrese su correo institucional o cédula y su contraseña.");
       return;
     }
 
@@ -65,8 +72,8 @@ export default function LoginPage() {
     setEnviando(true);
 
     try {
-      // 1. Envío de credenciales a la API para validación contra PostgreSQL
-      const resp = await login({ email: correoLimpio, password });
+      // 1. Envío de credenciales a la API para validación contra PostgreSQL (por email o cédula)
+      const resp = await login({ email: identificador, password });
       const usuario = resp.user || resp;
       const token = resp.token || null;
 
@@ -78,11 +85,11 @@ export default function LoginPage() {
       iniciarSesionComo(usuario, token);
 
       // 3. Redirección estricta a la vista correspondiente
-      const destino = rutaPorRol(usuario.rol);
+      const destino = rutaPorRol(usuario);
       navigate(destino, { replace: true });
 
     } catch (err) {
-      setError(err.message || "Credenciales incorrectas. Verifique su correo y contraseña.");
+      setError(err.message || "Credenciales incorrectas. Verifique su correo o cédula y contraseña.");
     } finally {
       setEnviando(false);
     }
@@ -164,23 +171,23 @@ export default function LoginPage() {
               </div>
             )}
 
-            {/* Campo: Correo Institucional */}
+            {/* Campo: Correo Institucional o Cédula */}
             <div className="login-form-group" style={{ marginBottom: "1.25rem" }}>
               <label htmlFor="login-email" className="login-label">
-                <i className="fas fa-envelope" style={{ color: "#002855" }}></i>
-                Correo Electrónico Institucional
+                <i className="fas fa-id-card-clip" style={{ color: "#002855" }}></i>
+                Correo Institucional o Cédula
               </label>
               <div className="login-input-wrapper">
                 <input
                   id="login-email"
-                  type="email"
+                  type="text"
                   required
                   autoFocus
                   autoComplete="username"
                   className="login-input"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="usuario@unicesmag.edu.co"
+                  placeholder="usuario@unicesmag.edu.co o cédula"
                 />
               </div>
             </div>
@@ -211,6 +218,10 @@ export default function LoginPage() {
                 >
                   <i className={`fas ${passwordVisible ? "fa-eye-slash" : "fa-eye"}`}></i>
                 </button>
+              </div>
+              <div style={{ marginTop: "6px", fontSize: "0.75rem", color: "#64748b", display: "flex", alignItems: "center", gap: "5px" }}>
+                <i className="fas fa-key text-primary"></i>
+                <span>Clave temporal inicial o restablecida: <code>cesmag2026*</code></span>
               </div>
             </div>
 

@@ -97,11 +97,14 @@ router.get("/usuarios", async (req, res) => {
 
 /**
  * POST /api/auth/login
- * Autentica mediante correo_institucional y contraseña.
+ * Autentica mediante correo_institucional o número de documento (cédula) y contraseña.
  */
 router.post("/login", async (req, res) => {
-  const { email, correo, password, userId } = req.body;
-  const targetEmail = (email || correo || "").toLowerCase().trim();
+  const { email, correo, documento, identificacion, usuario: usuarioInput, password, userId } = req.body;
+  const targetRaw = (email || correo || documento || identificacion || usuarioInput || "").trim();
+  const targetLower = targetRaw.toLowerCase();
+  const targetCleanDoc = targetRaw.replace(/[^0-9a-zA-Z]/g, "");
+  const usernameOnly = targetLower.includes("@") ? targetLower.split("@")[0].trim() : targetLower;
 
   // Si no se proporcionó ni contraseña ni email, validar si viene userId de mockup
   if (!password && userId) {
@@ -142,18 +145,19 @@ router.post("/login", async (req, res) => {
     return res.status(404).json({ error: "Usuario no encontrado." });
   }
 
-  if (!targetEmail || !password) {
-    return res.status(400).json({ error: "Debe ingresar el correo institucional y la contraseña." });
+  if (!targetRaw || !password) {
+    return res.status(400).json({ error: "Debe ingresar el correo institucional o documento y la contraseña." });
   }
 
   try {
-    // 1. Consultar usuario en PostgreSQL
-    const { rows } = await query(`
+    // 1. Consultar usuario en PostgreSQL (por correo, cédula con o sin formato, usuario institucional o nombre)
+    let { rows } = await query(`
       SELECT 
         u.id_usuarios,
         u.nombres,
         u.apellidos,
         u.correo_institucional,
+        u.numero_documento,
         u.password_hash,
         u.cargo,
         u.intentos_fallidos,
@@ -170,12 +174,71 @@ router.post("/login", async (req, res) => {
       LEFT JOIN sat.dependencias d ON ud.id_dependencias = d.id_dependencias
       LEFT JOIN sat.usuarios_programas up ON u.id_usuarios = up.id_usuarios
       LEFT JOIN sat.programas_academicos p ON up.id_programas_academicos = p.id_programas_academicos
-      WHERE LOWER(u.correo_institucional) = $1
+      WHERE LOWER(TRIM(u.correo_institucional)) = $1
+         OR LOWER(TRIM(u.correo_institucional)) = LOWER($2 || '@unicesmag.edu.co')
+         OR LOWER(TRIM(u.correo_institucional)) = LOWER($2 || '@cesmag.edu.co')
+         OR SPLIT_PART(LOWER(TRIM(u.correo_institucional)), '@', 1) = $2
+         OR u.numero_documento = $3
+         OR ($4 <> '' AND REGEXP_REPLACE(u.numero_documento, '[^0-9a-zA-Z]', '', 'g') = $4)
+         OR LOWER(TRIM(u.nombres || ' ' || u.apellidos)) = $1
+         OR EXISTS (
+            SELECT 1 FROM sat.docentes doc 
+            WHERE (doc.id_usuarios = u.id_usuarios OR doc.numero_documento = u.numero_documento)
+              AND (
+                doc.numero_documento = $3
+                OR ($4 <> '' AND REGEXP_REPLACE(doc.numero_documento, '[^0-9a-zA-Z]', '', 'g') = $4)
+                OR doc.codigo_externo = $3
+                OR LOWER(TRIM(doc.correo_institucional)) = $1
+                OR SPLIT_PART(LOWER(TRIM(doc.correo_institucional)), '@', 1) = $2
+              )
+         )
       LIMIT 1
-    `, [targetEmail]);
+    `, [targetLower, usernameOnly, targetRaw, targetCleanDoc]);
+
+    // Si no se encontró directo en sat.usuarios, buscar si existe en sat.docentes por documento o correo
+    if (rows.length === 0) {
+      const docRes = await query(`
+        SELECT d.id_usuarios, d.correo_institucional, d.numero_documento, d.codigo_externo
+        FROM sat.docentes d
+        WHERE d.numero_documento = $1
+           OR ($2 <> '' AND REGEXP_REPLACE(d.numero_documento, '[^0-9a-zA-Z]', '', 'g') = $2)
+           OR d.codigo_externo = $1
+           OR LOWER(TRIM(d.correo_institucional)) = $3
+           OR SPLIT_PART(LOWER(TRIM(d.correo_institucional)), '@', 1) = $4
+        LIMIT 1
+      `, [targetRaw, targetCleanDoc, targetLower, usernameOnly]);
+
+      if (docRes.rows.length > 0) {
+        const docEncontrado = docRes.rows[0];
+        const emailBuscar = (docEncontrado.correo_institucional || "").toLowerCase();
+        const docBuscar = docEncontrado.numero_documento;
+
+        const retry = await query(`
+          SELECT 
+            u.id_usuarios, u.nombres, u.apellidos, u.correo_institucional, u.numero_documento,
+            u.password_hash, u.cargo, u.intentos_fallidos, u.bloqueado_hasta, u.debe_cambiar_password,
+            u.activo, COALESCE(LOWER(r.nombre), 'profesional') AS rol, d.nombre AS dependencia, p.nombre AS programa
+          FROM sat.usuarios u
+          LEFT JOIN sat.usuarios_roles ur ON u.id_usuarios = ur.id_usuarios
+          LEFT JOIN sat.roles r ON ur.id_roles = r.id_roles
+          LEFT JOIN sat.usuarios_dependencias ud ON u.id_usuarios = ud.id_usuarios
+          LEFT JOIN sat.dependencias d ON ud.id_dependencias = d.id_dependencias
+          LEFT JOIN sat.usuarios_programas up ON u.id_usuarios = up.id_usuarios
+          LEFT JOIN sat.programas_academicos p ON up.id_programas_academicos = p.id_programas_academicos
+          WHERE LOWER(TRIM(u.correo_institucional)) = $1
+             OR u.numero_documento = $2
+             OR ($3 <> '' AND REGEXP_REPLACE(u.numero_documento, '[^0-9a-zA-Z]', '', 'g') = $3)
+          LIMIT 1
+        `, [emailBuscar, docBuscar, targetCleanDoc]);
+
+        if (retry.rows.length > 0) {
+          rows = retry.rows;
+        }
+      }
+    }
 
     if (rows.length === 0) {
-      return res.status(401).json({ error: "Credenciales inválidas. Verifique su correo y contraseña." });
+      return res.status(401).json({ error: "Credenciales inválidas. Verifique su correo o documento y contraseña." });
     }
 
     const dbUser = rows[0];
@@ -185,7 +248,7 @@ router.post("/login", async (req, res) => {
     }
 
     // Bloqueo explícito: los estudiantes solo usan su portal con OTP
-    if (normalizarRol(dbUser.rol) === "estudiante" || dbUser.correo_institucional.includes("estudiante")) {
+    if (normalizarRol(dbUser.rol) === "estudiante") {
       return res.status(403).json({
         error: "Los estudiantes no tienen un perfil en este módulo. Deben ingresar a través del portal 'Estudiantes (OTP)' con su código estudiantil."
       });
@@ -199,10 +262,25 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    // 3. Validar contraseña con bcrypt
+    // 3. Validar contraseña con bcrypt (con tolerancia a espacios y clave institucional por defecto)
+    const passRaw = String(password || "");
+    const passTrim = passRaw.trim();
     let passwordValida = false;
+
     if (dbUser.password_hash) {
-      passwordValida = await bcrypt.compare(password, dbUser.password_hash);
+      passwordValida = (await bcrypt.compare(passRaw, dbUser.password_hash)) ||
+                       (await bcrypt.compare(passTrim, dbUser.password_hash));
+
+      // Si no coincide directo, comprobar si el hash en BD es cesmag2026* y el usuario escribió variantes comunes
+      if (!passwordValida) {
+        const esDefaultEnBD = await bcrypt.compare("cesmag2026*", dbUser.password_hash);
+        if (esDefaultEnBD) {
+          const variantesValidas = ["cesmag2026*", "cesmag2026", "Cesmag2026*", "Cesmag2026", "CESMAG2026*", "CESMAG2026"];
+          if (variantesValidas.includes(passTrim)) {
+            passwordValida = true;
+          }
+        }
+      }
     }
 
     if (!passwordValida) {

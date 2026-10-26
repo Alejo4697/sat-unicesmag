@@ -273,8 +273,9 @@ por-dispositivo, como el borrador de intervenciones):
   hojas de apoyo, validaciones de captura y macros de la plantilla.
   La verificacion de listas fisicas usa
   `server/src/features/actividades/verificacion_elegibilidad.sql`, aplicada a
-  la base conectada; anade marcas de asistencia desactivadas por defecto. La
-  restricción única actividad-participante evita inscripciones repetidas en una
+  la base conectada; anade marcas de asistencia desactivadas por defecto y el
+  estado pendiente/presente/ausente que usa la confirmación. La restricción
+  única actividad-participante evita inscripciones repetidas en una
   misma sesión. Los perfiles de estudiantes, egresados, colaboradores y externos
   se registran según el rol de cada persona; la columna de rol es opcional en
   archivos antiguos y, si falta, se conserva el valor predeterminado de estudiante.
@@ -282,6 +283,17 @@ por-dispositivo, como el borrador de intervenciones):
   actividad, periodo y jornada; luego se puede comparar un Excel `.xlsx` con
   documentos pegados o confirmar cada asistente en el checklist. El archivo se
   procesa localmente y solo se verifican personas ya inscritas en esa jornada.
+  También se puede descargar un Excel sencillo con documento, nombre y
+  apellidos y estado de asistencia (Sí, No o Pendiente de confirmar).
+  «Carga y registro de actividades realizadas» acepta los libros `.xlsx`, `.xlsm`
+  y `.xls` con hojas `ESTUDIANTES`, `COLABORADORES`, `EGRESADOS` y `EXTERNOS`.
+  Agrupa por periodo, actividad, proyecto, fechas y programa de Bienestar, y
+  presenta una vista previa de catálogos, perfiles existentes, duplicados y
+  datos pendientes antes de guardar. Al confirmar, crea o reutiliza las
+  actividades como `FINALIZADA`, inscribe solo perfiles VEC que ya existen y
+  deja sin crear las personas o roles no encontrados. La importación no cambia
+  datos de asistencia; las filas con catálogos o datos obligatorios sin resolver
+  quedan pendientes para corregir el Excel y volver a cargarlo.
   «Consultar apoyos» consulta los beneficiarios registrados en las tablas
   institucionales y conserva el catálogo de tipos de apoyo.
   En «Registrar participante», el formulario permite escoger una jornada futura
@@ -303,8 +315,10 @@ por-dispositivo, como el borrador de intervenciones):
   plantilla institucional, prioriza el orden de los tipos de apoyo (1 a 5) y
   muestra «No aplica» cuando un campo del reporte no tiene dato. El periodo se
   presenta en el encabezado del libro, no en la columna «Tipo actividad».
-  La base conectada ya tiene aplicada la migracion de asistencia; para una
-  nueva instalacion ejecuta `server/src/features/actividades/verificacion_elegibilidad.sql`.
+  La migración estándar `npm run db:actividades` desde `server/` prepara también
+  las columnas que requiere la confirmación manual y desde Excel. En una base ya
+  configurada puede usarse de forma idempotente
+  `npm run db:seed -- ../../features/actividades/verificacion_elegibilidad.sql`.
 
 - **Reportes y SNIES**: las 3 exportaciones CSV reales (SNIES/MEN,
   Intervenciones, Remisiones) descargadas desde datos reales del backend,

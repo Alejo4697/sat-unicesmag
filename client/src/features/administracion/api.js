@@ -1,8 +1,21 @@
 import { apiFetch } from "../../shared/api/client.js";
 
-export const listUsuariosAdmin = () => apiFetch("/administracion/usuarios");
+export const listUsuariosAdmin = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.q) query.set("q", params.q);
+  if (params.tipo) query.set("tipo", params.tipo);
+  const qStr = query.toString();
+  return apiFetch(`/administracion/usuarios${qStr ? `?${qStr}` : ""}`);
+};
+
 export const crearUsuarioAdmin = (data) => apiFetch("/administracion/usuarios", { method: "POST", body: data });
 export const eliminarUsuarioAdmin = (id) => apiFetch(`/administracion/usuarios/${id}`, { method: "DELETE" });
+export const getProgramasAcademicos = () => apiFetch("/administracion/programas");
+export const getCargosCatalogo = () => apiFetch("/administracion/cargos-catalogo");
+export const gestionarAccesoUsuario = (data) => apiFetch("/administracion/usuarios/gestionar-acceso", { method: "POST", body: data });
+export const toggleEstadoUsuario = (id) => apiFetch(`/administracion/usuarios/${id}/toggle-estado`, { method: "PATCH" });
+export const resetPasswordUsuario = (id) => apiFetch(`/administracion/usuarios/${id}/reset-password`, { method: "POST" });
+
 export const getUmbralesRiesgo = () => apiFetch("/administracion/umbrales-riesgo");
 export const actualizarUmbralesRiesgo = (data) => apiFetch("/administracion/umbrales-riesgo", { method: "PUT", body: data });
 export const sincronizarAcademico = () => apiFetch("/administracion/sincronizar", { method: "POST" });
