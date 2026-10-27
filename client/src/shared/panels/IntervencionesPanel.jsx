@@ -27,6 +27,7 @@ import { formatDateTime, formatTime } from "../utils/formatDateTime.js";
 
 const listIntervenciones = () => apiFetch("/intervenciones");
 const crearIntervencion = (data) => apiFetch("/intervenciones", { method: "POST", body: data });
+const actualizarEstadoIntervencion = (id, data) => apiFetch(`/intervenciones/${id}`, { method: "PATCH", body: data });
 const listEstudiantes = () => apiFetch("/estudiantes");
 // Catálogo administrable (schema `sat`): solo devuelve los tipos activos.
 // Ver server/src/features/administracion/catalogos.routes.js.
@@ -61,6 +62,9 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
   const [enviando, setEnviando] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [expandidos, setExpandidos] = useState(() => new Set());
+  const [modalIntervencion, setModalIntervencion] = useState(null);
+  const [modalEstado, setModalEstado] = useState("Cerrada");
+  const [guardandoEstado, setGuardandoEstado] = useState(false);
   const fileInputRef = useRef(null);
   const debounceRef = useRef(null);
 
@@ -152,6 +156,7 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
       setForm(formVacio());
       setAdjuntos([]);
       descartarBorrador();
+      window.dispatchEvent(new Event("sat:casos-updated"));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -162,6 +167,32 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
   const intervencionesVisibles = fijo
     ? intervenciones.filter((i) => i.codigoEstudiante === codigoEstudiante)
     : intervenciones;
+
+  function abrirModal(intervencion) {
+    setModalIntervencion(intervencion);
+    setModalEstado(intervencion.estado || (intervencion.cerrado ? "Atendida" : "Pendiente"));
+  }
+
+  async function guardarEstado() {
+    if (!modalIntervencion) return;
+    try {
+      setGuardandoEstado(true);
+      const cerrado = modalEstado === "Atendida";
+      const actualizada = await actualizarEstadoIntervencion(modalIntervencion.id, {
+        estado: modalEstado,
+        cerrado
+      });
+      setIntervenciones((prev) =>
+        prev.map((i) => (i.id === modalIntervencion.id ? { ...i, ...actualizada, cerrado, estado: modalEstado } : i))
+      );
+      window.dispatchEvent(new Event("sat:casos-updated"));
+      setModalIntervencion(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setGuardandoEstado(false);
+    }
+  }
 
   return (
     <>
@@ -377,14 +408,24 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
                         <span className="timeline-user">
                           <strong>{i.id}</strong> — {i.atendidoPor} ({i.cargoAtendio})
                         </span>
-                        <button
-                          type="button"
-                          className="btn btn-outline btn-sm"
-                          onClick={() => toggleExpandido(i.id)}
-                          aria-expanded={expandido}
-                        >
-                          <i className={`fas fa-chevron-${expandido ? "up" : "down"}`}></i> {expandido ? "Ver menos" : "Ver más"}
-                        </button>
+                        <div style={{ display: "inline-flex", gap: "6px" }}>
+                          <button
+                            type="button"
+                            className="btn btn-outline btn-sm"
+                            onClick={() => abrirModal(i)}
+                            title="Cambiar estado de la intervención"
+                          >
+                            <i className="fas fa-edit"></i> Estado: {i.estado || (i.cerrado ? "Atendida" : "Pendiente")}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-outline btn-sm"
+                            onClick={() => toggleExpandido(i.id)}
+                            aria-expanded={expandido}
+                          >
+                            <i className={`fas fa-chevron-${expandido ? "up" : "down"}`}></i> {expandido ? "Ver menos" : "Ver más"}
+                          </button>
+                        </div>
                       </div>
 
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, fontSize: "0.75rem", color: "var(--text-muted)", margin: "4px 0" }}>
@@ -472,13 +513,14 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
                     <th>Profesional</th>
                     <th>Fecha</th>
                     <th>Tipo</th>
+                    <th>Estado</th>
                     <th>Acción</th>
                   </tr>
                 </thead>
                 <tbody>
                   {intervencionesVisibles.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="text-muted" style={{ textAlign: "center" }}>
+                      <td colSpan={7} className="text-muted" style={{ textAlign: "center" }}>
                         Sin intervenciones registradas.
                       </td>
                     </tr>
@@ -508,20 +550,43 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
                         )}
                       </td>
                       <td>
-                        {i.detalleVisible ? (
-                          <Link
-                            to={`/ficha-estudiante?codigo=${i.codigoEstudiante}`}
+                        <span
+                          className={`badge ${
+                            String(i.estado || "").toLowerCase() === "atendida" || i.cerrado
+                              ? "badge-status-closed"
+                              : String(i.estado || "").toLowerCase() === "en seguimiento"
+                              ? "badge-status-process"
+                              : "badge-status-pending"
+                          }`}
+                        >
+                          {i.estado || (i.cerrado ? "Atendida" : "Pendiente")}
+                        </span>
+                      </td>
+                      <td>
+                        <div style={{ display: "inline-flex", gap: "6px" }}>
+                          <button
+                            type="button"
                             className="btn btn-outline btn-sm"
-                            title="Ver Ficha"
-                            aria-label="Ver Ficha"
+                            onClick={() => abrirModal(i)}
+                            title="Cambiar Estado"
                           >
-                            <i className="fas fa-eye"></i>
-                          </Link>
-                        ) : (
-                          <span className="badge badge-risk-high">
-                            <i className="fas fa-eye-slash"></i> Protegido
-                          </span>
-                        )}
+                            <i className="fas fa-edit"></i>
+                          </button>
+                          {i.detalleVisible ? (
+                            <Link
+                              to={`/ficha-estudiante?codigo=${i.codigoEstudiante}`}
+                              className="btn btn-outline btn-sm"
+                              title="Ver Ficha"
+                              aria-label="Ver Ficha"
+                            >
+                              <i className="fas fa-eye"></i>
+                            </Link>
+                          ) : (
+                            <span className="badge badge-risk-high" title="Protegido por confidencialidad">
+                              <i className="fas fa-eye-slash"></i>
+                            </span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -531,6 +596,97 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
           </div>
         )}
       </div>
+
+      {modalIntervencion && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0,0,0,0.6)",
+            zIndex: 1100,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center"
+          }}
+          onClick={() => setModalIntervencion(null)}
+        >
+          <div
+            className="card"
+            style={{ width: 480, maxWidth: "92%", margin: 0, padding: "2rem" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="card-header" style={{ marginBottom: "1rem" }}>
+              <h3 className="card-title">
+                <i className="fas fa-tasks"></i> Actualizar Estado de Intervención
+              </h3>
+              <button
+                type="button"
+                onClick={() => setModalIntervencion(null)}
+                style={{ background: "none", border: "none", fontSize: "1.2rem", cursor: "pointer" }}
+              >
+                &times;
+              </button>
+            </div>
+
+            <p style={{ fontSize: "0.875rem", marginBottom: "0.5rem" }}>
+              <strong>ID:</strong> {modalIntervencion.id} · <strong>Estudiante:</strong> {modalIntervencion.codigoEstudiante}
+            </p>
+            {modalIntervencion.motivo && (
+              <p style={{ fontSize: "0.85rem", color: "#64748B", marginBottom: "1.25rem" }}>
+                <strong>Motivo:</strong> {modalIntervencion.motivo}
+              </p>
+            )}
+
+            <div className="form-group" style={{ marginBottom: "1.5rem" }}>
+              <label className="form-label" style={{ fontWeight: 600 }}>Estado de la Intervención</label>
+              <select
+                className="form-select"
+                value={modalEstado}
+                onChange={(e) => setModalEstado(e.target.value)}
+              >
+                <option value="Pendiente">Pendiente</option>
+                <option value="En Seguimiento">En Seguimiento</option>
+                <option value="Atendida">Atendida</option>
+              </select>
+              <small className="text-muted" style={{ display: "block", marginTop: "6px" }}>
+                {modalEstado === "Atendida"
+                  ? "Al marcarla como Atendida, se concluye la atención y se retira del contador de notificaciones."
+                  : "Los estados Pendiente y En Seguimiento mantienen activa la intervención para seguimiento."}
+              </small>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: "1rem" }}>
+              <button
+                type="button"
+                onClick={() => setModalIntervencion(null)}
+                className="btn btn-outline"
+                disabled={guardandoEstado}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={guardarEstado}
+                className="btn btn-primary"
+                disabled={guardandoEstado}
+              >
+                {guardandoEstado ? (
+                  <>
+                    <i className="fas fa-spinner fa-spin"></i> Guardando...
+                  </>
+                ) : (
+                  <>
+                    <i className="fas fa-check"></i> Actualizar Estado
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

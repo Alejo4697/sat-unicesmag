@@ -56,6 +56,10 @@ function estadoBadgeClass(estado) {
   return "badge-status-pending";
 }
 
+// Reemplaza separadores " + ", " - " (o " + - ") por comas en los nombres de servicio.
+const formatearProyecto = (nombre) =>
+  String(nombre || "").replace(/\s+[+-](?:\s+[+-])*\s+/g, ", ");
+
 export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudiante = null }) {
   const fijo = codigoEstudiante != null;
   const [searchParams] = useSearchParams();
@@ -138,8 +142,16 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
     try {
       const res = await buscarEstudiantesRemision(q);
       setResultadosBusqueda(res);
-      if (res.length === 1 && !estudianteSeleccionado) {
-        seleccionarEstudiante(res[0]);
+      // Selección automática: coincidencia exacta por documento o código, o resultado único.
+      if (!estudianteSeleccionado) {
+        const exacto = res.find(
+          (x) => String(x.documento || "").trim() === q || String(x.codigo || "").trim() === q
+        );
+        if (exacto) {
+          seleccionarEstudiante(exacto);
+        } else if (res.length === 1) {
+          seleccionarEstudiante(res[0]);
+        }
       }
     } catch (err) {
       console.warn("Fallo en búsqueda:", err.message);
@@ -216,6 +228,7 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
       };
       const nueva = await crearRemision(payload);
       setRemisiones((prev) => [nueva, ...prev]);
+      window.dispatchEvent(new Event("sat:casos-updated"));
       setForm({ ...ESTADO_INICIAL_FORM, codigoEstudiante: codigoEstudiante || "" });
       if (!fijo) {
         deseleccionarEstudiante();
@@ -237,6 +250,7 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
     try {
       const actualizada = await actualizarRemision(modalRemision.id, { estado: modalEstado, recomendacionesAula: modalRecomendaciones });
       setRemisiones((prev) => prev.map((r) => (r.id === actualizada.id ? actualizada : r)));
+      window.dispatchEvent(new Event("sat:casos-updated"));
       setModalRemision(null);
     } catch (err) {
       setError(err.message);
@@ -353,7 +367,7 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
               <div className="form-group" style={{ marginBottom: "1.25rem" }}>
                 <label className="form-label" style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: "6px" }}>
                   <i className="fas fa-barcode text-primary"></i>
-                  Buscar Estudiante por Código Estudiantil
+                  Buscar Estudiante por Código o Documento de Identidad
                   <span style={{ color: "#e11d48" }}>*</span>
                 </label>
                 
@@ -362,7 +376,7 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
                     <input
                       type="text"
                       className="form-control"
-                      placeholder="Ingresa el código del estudiante (ej. 1221104037)..."
+                      placeholder="Ingresa el código o documento del estudiante (ej. 1221104037)..."
                       value={busquedaEstudiante}
                       onChange={(e) => setBusquedaEstudiante(e.target.value)}
                       onKeyDown={(e) => {
@@ -391,8 +405,7 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
                 </div>
 
                 <div style={{ marginTop: "4px", fontSize: "0.75rem", color: "#64748b" }}>
-                  <i className="fas fa-shield-halved" style={{ marginRight: "4px", color: "#0284c7" }}></i>
-                  Por seguridad institucional, la búsqueda se realiza exclusivamente ingresando el código del estudiante.
+                  La búsqueda se realiza exclusivamente ingresando el código del estudiante o documento de identidad.
                 </div>
 
                 {/* Lista desplegable de resultados encontrados */}
@@ -507,7 +520,7 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
                     <optgroup key={programa} label={programa}>
                       {servicios.map((r) => (
                         <option key={r.id} value={r.id}>
-                          {r.proyecto}
+                          {formatearProyecto(r.proyecto)}
                         </option>
                       ))}
                     </optgroup>
@@ -593,8 +606,22 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
 
         <div className="card" style={{ gridColumn: "span 12" }}>
           <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem" }}>
-            <h3 className="card-title" style={{ margin: 0 }}>
-              {fijo ? "Remisiones del Estudiante" : "Bandeja de Casos Remitidos"}
+            <h3 className="card-title" style={{ margin: 0, display: "inline-flex", alignItems: "center", gap: "8px" }}>
+              <span>{fijo ? "Remisiones del Estudiante" : "Bandeja de Casos Remitidos"}</span>
+              <span
+                className="badge"
+                title="Remisiones pendientes por atender"
+                style={{
+                  backgroundColor: remisionesFiltradas.filter((r) => r.estado !== "Atendida").length > 0 ? "#DC2626" : "#64748B",
+                  color: "#fff",
+                  borderRadius: "999px",
+                  padding: "0.2rem 0.55rem",
+                  fontSize: "0.75rem",
+                  fontWeight: 700
+                }}
+              >
+                {remisionesFiltradas.filter((r) => r.estado !== "Atendida").length} pendiente(s)
+              </span>
             </h3>
 
             {!fijo && (

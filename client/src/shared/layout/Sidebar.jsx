@@ -4,16 +4,54 @@
    El listado de módulos reemplaza a renderDynamicMenu() de menu.js.
    ========================================================================== */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
 import { menuForRole } from "../config/menuConfig.js";
+import { getNotificacionesCasos } from "../../features/monitoreo/api.js";
 import CambiarPasswordModal from "./CambiarPasswordModal.jsx";
+
+// Cada cuánto se consulta si llegaron remisiones/intervenciones nuevas.
+const INTERVALO_NOTIFICACIONES_MS = 5000;
 
 export default function Sidebar({ onCambiarPassword }) {
   const { user, cerrarSesion, permisos } = useAuth();
   const navigate = useNavigate();
   const [modalLocalAbierto, setModalLocalAbierto] = useState(false);
+  const [notificaciones, setNotificaciones] = useState(0);
+
+  const cargoLower = String(user?.cargo || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const esDocenteAcompanante =
+    !cargoLower.includes("asistencial") &&
+    !cargoLower.includes("psicolog") &&
+    (cargoLower.includes("docente") ||
+      cargoLower.includes("acompana") ||
+      cargoLower.includes("tutor") ||
+      cargoLower.includes("tiempo completo") ||
+      cargoLower.includes("medio tiempo") ||
+      cargoLower.includes("catedra"));
+  const esAdmin = user?.rol === "admin" && !esDocenteAcompanante;
+
+  // Contador de la bandeja de casos (todos los roles excepto administrador y estudiante).
+  useEffect(() => {
+    if (!user || esAdmin || user.rol === "estudiante") {
+      setNotificaciones(0);
+      return undefined;
+    }
+    let activo = true;
+    const cargar = () =>
+      getNotificacionesCasos()
+        .then((n) => activo && setNotificaciones(n?.total || 0))
+        .catch(() => {});
+    cargar();
+    window.addEventListener("sat:casos-updated", cargar);
+    const timer = setInterval(cargar, INTERVALO_NOTIFICACIONES_MS);
+    return () => {
+      activo = false;
+      window.removeEventListener("sat:casos-updated", cargar);
+      clearInterval(timer);
+    };
+  }, [user, esAdmin]);
 
   // `permisos` = matriz editable desde Administración (null -> por defecto).
   const secciones = user ? menuForRole(user.rol, permisos) : [];
@@ -75,6 +113,22 @@ export default function Sidebar({ onCambiarPassword }) {
                   >
                     <i className={`fas ${item.icon}`}></i>
                     <span>{item.name}</span>
+                    {(item.id === "remisiones" || item.id === "dashboard") && notificaciones > 0 && (
+                      <span
+                        title="Casos nuevos en tu bandeja"
+                        style={{
+                          marginLeft: "auto",
+                          backgroundColor: "#DC2626",
+                          color: "#fff",
+                          borderRadius: "999px",
+                          padding: "0.1rem 0.5rem",
+                          fontSize: "0.7rem",
+                          fontWeight: 700
+                        }}
+                      >
+                        {notificaciones}
+                      </span>
+                    )}
                   </NavLink>
                 </li>
               ))}

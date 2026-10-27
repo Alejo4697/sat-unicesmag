@@ -28,6 +28,12 @@ import { getDashboardStats, getRiesgoPorDimensiones, getResultadosCaracterizacio
 import { useAuth } from "../../shared/context/AuthContext.jsx";
 import { descargarExcel } from "../../shared/utils/excel.js";
 import { formatDateTime } from "../../shared/utils/formatDateTime.js";
+import { apiFetch } from "../../shared/api/client.js";
+
+// Máximo de registros visibles en la tabla de estudiantes (evita saturar el sistema)
+const LIMITE_REGISTROS_TABLA = 10;
+// Semestres en los que la encuesta de caracterización no se aplica
+const SEMESTRES_SIN_ENCUESTA = [2, 3, 5, 6, 8, 9, 10];
 
 const DIM_LABELS = {
   IND: "Individual (IND)",
@@ -55,17 +61,35 @@ export default function DashboardPage() {
 
   // Pestaña activa (para roles con casos asignados)
   const [tabActiva, setTabActiva] = useState("caracterizacion"); // 'caracterizacion' | 'casos'
+  const [modalIntervencion, setModalIntervencion] = useState(null);
+  const [modalEstadoInt, setModalEstadoInt] = useState("Pendiente");
+  const [guardandoInt, setGuardandoInt] = useState(false);
 
   // Determinar permisos de rol y restricción de programa
   const rol = user?.rol;
   const cargoLower = String(user?.cargo || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  const esAdmin = rol === "admin";
-  const esCoordinador = esAdmin || cargoLower.includes("coordinador");
-  const esDocenteAcompanante = cargoLower.includes("docente") || cargoLower.includes("acompana") || cargoLower.includes("tutor") || cargoLower.includes("tiempo completo") || cargoLower.includes("medio tiempo") || cargoLower.includes("catedra");
+  const esDocenteAcompanante =
+    !cargoLower.includes("asistencial") &&
+    !cargoLower.includes("psicolog") &&
+    (cargoLower.includes("docente") ||
+      cargoLower.includes("acompana") ||
+      cargoLower.includes("tutor") ||
+      cargoLower.includes("tiempo completo") ||
+      cargoLower.includes("medio tiempo") ||
+      cargoLower.includes("catedra"));
+  const esAdmin = rol === "admin" && !esDocenteAcompanante;
+  const esCoordinador =
+    esAdmin ||
+    cargoLower.includes("coordinador de acompanamiento") ||
+    cargoLower.includes("coordinadora de acompanamiento");
   const esDirectivo = rol === "directivo";
-  const puedeVerCaracterizacion = esAdmin || esCoordinador || esDocenteAcompanante || esDirectivo || rol === "profesional";
-  const esRestringidoAPrograma = (esDocenteAcompanante || esDirectivo) && !esCoordinador && !esAdmin;
-  const programaAsignado = user?.programa || null;
+  const puedeVerCaracterizacion = esAdmin || esCoordinador || esDocenteAcompanante || esDirectivo;
+  const tieneProgFijo =
+    Boolean(user?.programa) &&
+    String(user.programa).toLowerCase() !== "todos" &&
+    String(user.programa).toLowerCase() !== "no asignado";
+  const esRestringidoAPrograma = (esDocenteAcompanante || esDirectivo) && !esCoordinador && !esAdmin && tieneProgFijo;
+  const programaAsignado = tieneProgFijo ? user?.programa : null;
 
   // Cargar estadísticas generales del dashboard
   useEffect(() => {
@@ -76,6 +100,21 @@ export default function DashboardPage() {
       })
       .catch((err) => setError(err.message));
   }, []);
+
+  // Refrescar la bandeja de casos periódicamente y ante eventos para que el
+  // contador y las tablas muestren las remisiones e intervenciones al instante.
+  useEffect(() => {
+    if (esAdmin) return undefined;
+    const recargar = () => {
+      getDashboardStats().then(setStats).catch(() => {});
+    };
+    window.addEventListener("sat:casos-updated", recargar);
+    const timer = setInterval(recargar, 5000);
+    return () => {
+      window.removeEventListener("sat:casos-updated", recargar);
+      clearInterval(timer);
+    };
+  }, [esAdmin]);
 
   // Cargar / refrescar resultados de caracterización dinámicamente cuando cambian los filtros
   useEffect(() => {
@@ -104,6 +143,33 @@ export default function DashboardPage() {
         setCargandoCarac(false);
       });
   }, [puedeVerCaracterizacion, periodo, semestre, campo, programa, busqueda, esRestringidoAPrograma, programaAsignado]);
+
+  function abrirModalIntervencion(intervencion) {
+    setModalIntervencion(intervencion);
+    setModalEstadoInt(intervencion.estado || (intervencion.cerrado ? "Atendida" : "Pendiente"));
+  }
+
+  async function guardarEstadoIntervencion() {
+    if (!modalIntervencion) return;
+    try {
+      setGuardandoInt(true);
+      const cerrado = modalEstadoInt === "Atendida";
+      await apiFetch(`/intervenciones/${modalIntervencion.id}`, {
+        method: "PATCH",
+        body: { estado: modalEstadoInt, cerrado }
+      });
+      // Recargar de inmediato los datos del dashboard desde el servidor
+      const s = await getDashboardStats();
+      setStats(s);
+      // Notificar a toda la aplicación (Sidebar y otros componentes) para actualizar contadores
+      window.dispatchEvent(new Event("sat:casos-updated"));
+      setModalIntervencion(null);
+    } catch (err) {
+      alert("Error al actualizar la intervención: " + err.message);
+    } finally {
+      setGuardandoInt(false);
+    }
+  }
 
   // Exportar los resultados filtrados a Excel
   const handleExportarExcel = async () => {
@@ -266,38 +332,101 @@ export default function DashboardPage() {
     ? `Monitoreo / Programa: ${programaAsignado || "Mi Programa"} / Periodo ${periodo}`
     : `Monitoreo Institucional / Periodo ${periodo}`;
 
-  const tieneCasosAsignados = stats?.vista === "profesional" || (esDocenteAcompanante && stats?.misIntervenciones);
+  // La bandeja de casos está disponible para todos los roles excepto el administrador.
+  const tieneCasosAsignados = !esAdmin && rol !== "estudiante";
+  const tabEfectiva = puedeVerCaracterizacion ? tabActiva : "casos";
+  const remisionesNotificadas = stats?.notificaciones?.remisiones ?? stats?.resumen?.remisionesPendientes ?? 0;
+  const intervencionesNotificadas = stats?.notificaciones?.intervenciones ?? stats?.resumen?.intervencionesTotal ?? 0;
+  const notificacionesCasos = stats?.notificaciones?.total ?? (remisionesNotificadas + intervencionesNotificadas);
 
   return (
     <AppLayout titulo={titulo} breadcrumb={breadcrumb}>
       {error && <div className="auth-error mb-3">{error}</div>}
 
-      {/* Pestañas para roles con Casos asignados (Docente Acompañante o Profesional) */}
-      {tieneCasosAsignados && puedeVerCaracterizacion && (
-        <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.25rem", borderBottom: "1px solid var(--border-light)", paddingBottom: "0.5rem" }}>
-          <button
-            type="button"
-            className={`btn ${tabActiva === "caracterizacion" ? "btn-primary" : "btn-light"}`}
-            onClick={() => setTabActiva("caracterizacion")}
-            style={{ fontWeight: 600 }}
-          >
-            <i className="fas fa-chart-pie me-2"></i>Resultados de la Encuesta de Permanencia
-          </button>
-          <button
-            type="button"
-            className={`btn ${tabActiva === "casos" ? "btn-primary" : "btn-light"}`}
-            onClick={() => setTabActiva("casos")}
-            style={{ fontWeight: 600 }}
-          >
-            <i className="fas fa-clipboard-user me-2"></i>Mi Bandeja de Casos ({stats?.resumen?.intervencionesAbiertas || 0})
-          </button>
-        </div>
+      {/* Pestañas y notificación de Mi Bandeja de Casos (todos los roles excepto Administrador) */}
+      {tieneCasosAsignados && (
+        <>
+          <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem", borderBottom: "1px solid var(--border-light)", paddingBottom: "0.5rem", flexWrap: "wrap" }}>
+            {puedeVerCaracterizacion && (
+              <button
+                type="button"
+                className={`btn ${tabEfectiva === "caracterizacion" ? "btn-primary" : "btn-light"}`}
+                onClick={() => setTabActiva("caracterizacion")}
+                style={{ fontWeight: 600 }}
+              >
+                <i className="fas fa-chart-pie me-2"></i>Resultados de la Encuesta de Permanencia
+              </button>
+            )}
+            <button
+              type="button"
+              className={`btn ${tabEfectiva === "casos" ? "btn-primary" : "btn-light"}`}
+              onClick={() => setTabActiva("casos")}
+              style={{ fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "8px" }}
+            >
+              <i className="fas fa-clipboard-user"></i>
+              <span>Mi Bandeja de Casos</span>
+              <span
+                className="badge"
+                title={`${remisionesNotificadas} remisión(es) pendiente(s) y ${intervencionesNotificadas} intervención(es) registrada(s)`}
+                style={{
+                  backgroundColor: notificacionesCasos > 0 ? "#DC2626" : "#64748B",
+                  color: "#fff",
+                  borderRadius: "999px",
+                  padding: "0.2rem 0.55rem",
+                  fontSize: "0.75rem",
+                  fontWeight: 700
+                }}
+              >
+                {notificacionesCasos}
+              </span>
+            </button>
+          </div>
+
+          {notificacionesCasos > 0 && (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: "0.75rem",
+                backgroundColor: "#FEF2F2",
+                border: "1px solid #FECACA",
+                borderLeft: "4px solid #DC2626",
+                borderRadius: "8px",
+                padding: "0.75rem 1rem",
+                marginBottom: "1.25rem",
+                color: "#991B1B",
+                fontSize: "0.875rem"
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <i className="fas fa-bell" style={{ color: "#DC2626", fontSize: "1.05rem" }}></i>
+                <span>
+                  <strong>Notificación en Mi Bandeja de Casos ({notificacionesCasos}):</strong> Tienes{" "}
+                  <strong>{remisionesNotificadas}</strong> remisión(es) pendiente(s) y{" "}
+                  <strong>{intervencionesNotificadas}</strong> intervención(es) abierta(s) para seguimiento.
+                </span>
+              </div>
+              {tabEfectiva !== "casos" && (
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={() => setTabActiva("casos")}
+                  style={{ backgroundColor: "#DC2626", color: "#fff", fontWeight: 600, border: "none" }}
+                >
+                  Ver Mi Bandeja de Casos ({notificacionesCasos})
+                </button>
+              )}
+            </div>
+          )}
+        </>
       )}
 
       {/* =========================================================================
           SECCIÓN: RESULTADOS DE LA ENCUESTA DE CARACTERIZACIÓN Y PERMANENCIA
           ========================================================================= */}
-      {puedeVerCaracterizacion && tabActiva === "caracterizacion" && (
+      {puedeVerCaracterizacion && tabEfectiva === "caracterizacion" && (
         <div className="caracterizacion-dashboard-section mb-4">
           {/* Encabezado y banner de alcance */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", flexWrap: "wrap", gap: "1rem" }}>
@@ -572,7 +701,7 @@ export default function DashboardPage() {
                   Estudiantes y Alertas de Permanencia
                 </h3>
                 <small className="text-muted">
-                  Mostrando {caracData?.estudiantes?.length || 0} de {caracData?.kpis?.totalEstudiantes || 0} estudiantes según los filtros aplicados.
+                  Mostrando {Math.min(caracData?.estudiantes?.length || 0, LIMITE_REGISTROS_TABLA)} de {caracData?.kpis?.totalEstudiantes || 0} estudiantes según los filtros aplicados.
                 </small>
               </div>
 
@@ -622,7 +751,7 @@ export default function DashboardPage() {
                       </td>
                     </tr>
                   ) : (
-                    caracData.estudiantes.map((est) => {
+                    caracData.estudiantes.slice(0, LIMITE_REGISTROS_TABLA).map((est) => {
                       const badgeRiesgoClass =
                         est.riesgoGlobal === "Alto"
                           ? "badge-risk-high"
@@ -679,7 +808,11 @@ export default function DashboardPage() {
                           </td>
                           <td style={{ textAlign: "center", fontWeight: 600 }}>{est.semestre}</td>
                           <td style={{ textAlign: "center" }}>
-                            {est.estadoEncuesta === "RESPONDIDA" ? (
+                            {SEMESTRES_SIN_ENCUESTA.includes(Number(est.semestre)) ? (
+                              <span className="badge" style={{ backgroundColor: "#F1F5F9", color: "#64748B", border: "1px solid #E2E8F0" }}>
+                                No se aplica
+                              </span>
+                            ) : est.estadoEncuesta === "RESPONDIDA" ? (
                               <span className="badge" style={{ backgroundColor: "#ECFDF5", color: "#059669", border: "1px solid #A7F3D0" }}>
                                 <i className="fas fa-check-circle me-1"></i>Respondida
                               </span>
@@ -720,15 +853,15 @@ export default function DashboardPage() {
       )}
 
       {/* =========================================================================
-          SECCIÓN: BANDEJA DE CASOS (Para rol profesional o pestaña de casos)
+          SECCIÓN: BANDEJA DE CASOS (Todos los roles excepto Administrador)
           ========================================================================= */}
-      {tieneCasosAsignados && tabActiva === "casos" && stats && (
+      {tieneCasosAsignados && tabEfectiva === "casos" && (
         <>
           <div className="dashboard-grid">
             <div className="kpi-card">
               <div className="kpi-body">
-                <span className="kpi-label">Intervenciones Abiertas</span>
-                <span className="kpi-value">{stats.resumen?.intervencionesAbiertas?.toLocaleString("es-CO") || 0}</span>
+                <span className="kpi-label">Intervenciones Abiertas / Activas</span>
+                <span className="kpi-value">{stats?.resumen?.intervencionesAbiertas?.toLocaleString("es-CO") || 0}</span>
               </div>
               <div className="kpi-icon icon-orange">
                 <i className="fas fa-clipboard-check"></i>
@@ -738,7 +871,7 @@ export default function DashboardPage() {
             <div className="kpi-card">
               <div className="kpi-body">
                 <span className="kpi-label">Intervenciones (Total)</span>
-                <span className="kpi-value">{stats.resumen?.intervencionesTotal?.toLocaleString("es-CO") || 0}</span>
+                <span className="kpi-value">{stats?.resumen?.intervencionesTotal?.toLocaleString("es-CO") || 0}</span>
               </div>
               <div className="kpi-icon icon-blue">
                 <i className="fas fa-list-check"></i>
@@ -748,7 +881,7 @@ export default function DashboardPage() {
             <div className="kpi-card">
               <div className="kpi-body">
                 <span className="kpi-label">Remisiones Pendientes</span>
-                <span className="kpi-value">{stats.resumen?.remisionesPendientes?.toLocaleString("es-CO") || 0}</span>
+                <span className="kpi-value">{stats?.resumen?.remisionesPendientes?.toLocaleString("es-CO") || 0}</span>
               </div>
               <div className="kpi-icon icon-red">
                 <i className="fas fa-share-nodes"></i>
@@ -758,7 +891,7 @@ export default function DashboardPage() {
             <div className="kpi-card">
               <div className="kpi-body">
                 <span className="kpi-label">Remisiones (Total)</span>
-                <span className="kpi-value">{stats.resumen?.remisionesTotal?.toLocaleString("es-CO") || 0}</span>
+                <span className="kpi-value">{stats?.resumen?.remisionesTotal?.toLocaleString("es-CO") || 0}</span>
               </div>
               <div className="kpi-icon icon-green">
                 <i className="fas fa-inbox"></i>
@@ -767,8 +900,24 @@ export default function DashboardPage() {
           </div>
 
           <div className="card mb-4">
-            <div className="card-header">
-              <h3 className="card-title">Mis Intervenciones Registradas</h3>
+            <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3 className="card-title" style={{ margin: 0 }}>
+                Mis Intervenciones Registradas
+                <span
+                  className="badge"
+                  style={{
+                    marginLeft: "8px",
+                    backgroundColor: intervencionesNotificadas > 0 ? "#DC2626" : "#64748B",
+                    color: "#fff",
+                    borderRadius: "999px",
+                    padding: "0.15rem 0.5rem",
+                    fontSize: "0.75rem"
+                  }}
+                  title={`${intervencionesNotificadas} intervención(es) abierta(s) de ${stats?.misIntervenciones?.length || 0} registradas`}
+                >
+                  {intervencionesNotificadas} abierta(s) / {stats?.misIntervenciones?.length || 0} total
+                </span>
+              </h3>
             </div>
             <div className="table-responsive">
               <table className="table">
@@ -779,31 +928,54 @@ export default function DashboardPage() {
                     <th>Estudiante</th>
                     <th>Motivo</th>
                     <th>Estado</th>
+                    <th>Acción</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {stats.misIntervenciones?.length === 0 ? (
+                  {!stats?.misIntervenciones || stats.misIntervenciones.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="text-muted text-center py-3">
+                      <td colSpan={6} className="text-muted text-center py-3">
                         No tienes intervenciones registradas.
                       </td>
                     </tr>
                   ) : (
-                    stats.misIntervenciones?.map((i) => (
-                      <tr key={i.id}>
-                        <td>
-                          <strong>{i.id}</strong>
-                        </td>
-                        <td>{i.fecha}</td>
-                        <td>{i.codigoEstudiante}</td>
-                        <td>{i.detalleVisible ? i.motivo : <em className="text-muted">Detalle confidencial (VBG)</em>}</td>
-                        <td>
-                          <span className={`badge ${i.cerrado ? "badge-status-closed" : "badge-status-process"}`}>
-                            {i.cerrado ? "Cerrada" : "Abierta"}
-                          </span>
-                        </td>
-                      </tr>
-                    ))
+                    stats.misIntervenciones.map((i) => {
+                      const est = i.estado || (i.cerrado ? "Atendida" : "Pendiente");
+                      const estLower = est.toLowerCase();
+                      const badgeClass =
+                        estLower === "atendida" || estLower === "cerrada"
+                          ? "badge-status-closed"
+                          : estLower === "en seguimiento"
+                          ? "badge-status-process"
+                          : "badge-status-pending";
+
+                      return (
+                        <tr key={i.id}>
+                          <td>
+                            <strong>{i.id}</strong>
+                          </td>
+                          <td>{formatDateTime(i.fecha)}</td>
+                          <td>{i.codigoEstudiante}</td>
+                          <td>{i.detalleVisible !== false ? i.motivo : <em className="text-muted">Detalle confidencial (VBG)</em>}</td>
+                          <td>
+                            <span className={`badge ${badgeClass}`}>
+                              {est}
+                            </span>
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className="btn btn-outline btn-sm"
+                              onClick={() => abrirModalIntervencion(i)}
+                              style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}
+                              title="Cambiar estado de la intervención"
+                            >
+                              <i className="fas fa-edit"></i> Cambiar Estado
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -811,8 +983,23 @@ export default function DashboardPage() {
           </div>
 
           <div className="card">
-            <div className="card-header">
-              <h3 className="card-title">Mis Remisiones Asignadas</h3>
+            <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3 className="card-title" style={{ margin: 0 }}>
+                Mis Remisiones Asignadas
+                <span
+                  className="badge"
+                  style={{
+                    marginLeft: "8px",
+                    backgroundColor: remisionesNotificadas > 0 ? "#DC2626" : "#64748B",
+                    color: "#fff",
+                    borderRadius: "999px",
+                    padding: "0.15rem 0.5rem",
+                    fontSize: "0.75rem"
+                  }}
+                >
+                  {remisionesNotificadas} pendiente(s)
+                </span>
+              </h3>
             </div>
             <div className="table-responsive">
               <table className="table">
@@ -827,14 +1014,14 @@ export default function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {stats.misRemisiones?.length === 0 ? (
+                  {!stats?.misRemisiones || stats.misRemisiones.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="text-muted text-center py-3">
                         No tienes remisiones asignadas.
                       </td>
                     </tr>
                   ) : (
-                    stats.misRemisiones?.map((r) => (
+                    stats.misRemisiones.map((r) => (
                       <tr key={r.id}>
                         <td>
                           <strong>{r.id}</strong>
@@ -862,6 +1049,98 @@ export default function DashboardPage() {
           <p className="page-placeholder" style={{ padding: "1.5rem 1rem" }}>
             El Tablero General no tiene una vista activa para tu perfil.
           </p>
+        </div>
+      )}
+
+      {/* Modal para cambiar estado de intervención */}
+      {modalIntervencion && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0,0,0,0.6)",
+            zIndex: 1100,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center"
+          }}
+          onClick={() => setModalIntervencion(null)}
+        >
+          <div
+            className="card"
+            style={{ width: 480, maxWidth: "92%", margin: 0, padding: "2rem" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="card-header" style={{ marginBottom: "1rem" }}>
+              <h3 className="card-title">
+                <i className="fas fa-tasks"></i> Actualizar Estado de Intervención
+              </h3>
+              <button
+                type="button"
+                onClick={() => setModalIntervencion(null)}
+                style={{ background: "none", border: "none", fontSize: "1.2rem", cursor: "pointer" }}
+              >
+                &times;
+              </button>
+            </div>
+
+            <p style={{ fontSize: "0.875rem", marginBottom: "0.5rem" }}>
+              <strong>ID:</strong> {modalIntervencion.id} · <strong>Estudiante:</strong> {modalIntervencion.codigoEstudiante}
+            </p>
+            {modalIntervencion.motivo && (
+              <p style={{ fontSize: "0.85rem", color: "#64748B", marginBottom: "1.25rem" }}>
+                <strong>Motivo:</strong> {modalIntervencion.motivo}
+              </p>
+            )}
+
+            <div className="form-group" style={{ marginBottom: "1.5rem" }}>
+              <label className="form-label" style={{ fontWeight: 600 }}>Estado de la Intervención</label>
+              <select
+                className="form-select"
+                value={modalEstadoInt}
+                onChange={(e) => setModalEstadoInt(e.target.value)}
+              >
+                <option value="Pendiente">Pendiente (Requiere Seguimiento)</option>
+                <option value="En Seguimiento">En Seguimiento (En Proceso)</option>
+                <option value="Atendida">Atendida (Finalizada / Completada)</option>
+              </select>
+              <small className="text-muted" style={{ display: "block", marginTop: "6px" }}>
+                {modalEstadoInt === "Atendida"
+                  ? "Al marcarla como Atendida, el caso se concluye y se descuenta del contador de notificaciones."
+                  : "Los estados Pendiente y En Seguimiento mantienen la intervención activa en el contador."}
+              </small>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: "1rem" }}>
+              <button
+                type="button"
+                onClick={() => setModalIntervencion(null)}
+                className="btn btn-outline"
+                disabled={guardandoInt}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={guardarEstadoIntervencion}
+                className="btn btn-primary"
+                disabled={guardandoInt}
+              >
+                {guardandoInt ? (
+                  <>
+                    <i className="fas fa-spinner fa-spin"></i> Guardando...
+                  </>
+                ) : (
+                  <>
+                    <i className="fas fa-check"></i> Actualizar Estado
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </AppLayout>

@@ -73,6 +73,10 @@ router.get("/buscar-estudiante", async (req, res, next) => {
           OR m.codigo_externo = $1
           OR e.codigo_externo ILIKE $2
           OR m.codigo_externo ILIKE $2
+          OR per.numero_identificacion = $1
+          OR e.numero_documento = $1
+          OR per.numero_identificacion ILIKE $2
+          OR e.numero_documento ILIKE $2
        ORDER BY "nombreCompleto" ASC
        LIMIT 20`,
       [q, `%${q}%`]
@@ -86,43 +90,56 @@ router.get("/buscar-estudiante", async (req, res, next) => {
 router.get("/", async (req, res, next) => {
   try {
     const { rows } = await query(
-      `SELECT r.id_remisiones AS id,
-              e.codigo_externo AS "codigoEstudiante",
-              COALESCE(per.numero_identificacion, e.numero_documento) AS "documentoEstudiante",
-              COALESCE(CONCAT_WS(' ', per.primer_nombre, per.segundo_nombre), e.nombres) AS "nombresEstudiante",
-              COALESCE(CONCAT_WS(' ', per.primer_apellido, per.segundo_apellido), e.apellidos) AS "apellidosEstudiante",
-              CONCAT_WS(' ', 
-                COALESCE(CONCAT_WS(' ', per.primer_nombre, per.segundo_nombre), e.nombres), 
-                COALESCE(CONCAT_WS(' ', per.primer_apellido, per.segundo_apellido), e.apellidos)
-              ) AS "nombreEstudiante",
-              p.nombre AS "programaEstudiante",
-              CONCAT(ur.nombres, ' ', ur.apellidos) AS "remitidoPor",
-              d.nombre AS "areaDestino",
-              COALESCE(CONCAT(up.nombres, ' ', up.apellidos), 'Bandeja General / Por Asignar') AS "profesionalAsignado",
-              'Medio' AS "nivelRiesgo",
-              r.motivo AS "motivoRemision",
-              r.generada_en AS "fechaRemision",
-              er.nombre AS estado,
-              r.escalada AS "escalado48h",
-              r.recomendaciones_docente AS "recomendacionesAula"
-       FROM sat.remisiones r
-       JOIN sat.casos c ON r.id_casos = c.id_casos
-       JOIN sat.estudiantes e ON c.id_estudiantes = e.id_estudiantes
-       LEFT JOIN sat.personas per ON per.id = e.id_personas
-       LEFT JOIN sat.matriculas m ON m.id_estudiantes = e.id_estudiantes
-       LEFT JOIN sat.programas_academicos p ON p.id_programas_academicos = COALESCE(m.id_programas_academicos, e.id_programas_academicos)
-       LEFT JOIN sat.dependencias d ON r.id_dependencias = d.id_dependencias
-       LEFT JOIN sat.estados_remision er ON r.id_estados_remision = er.id_estados_remision
-       LEFT JOIN sat.usuarios ur ON r.id_usuarios_remitente = ur.id_usuarios
-       LEFT JOIN sat.usuarios up ON r.id_usuarios_profesional = up.id_usuarios
-       ORDER BY r.generada_en DESC
+      `SELECT * FROM (
+         SELECT DISTINCT ON (r.id_remisiones)
+                r.id_remisiones AS id,
+                e.codigo_externo AS "codigoEstudiante",
+                COALESCE(per.numero_identificacion, e.numero_documento) AS "documentoEstudiante",
+                COALESCE(CONCAT_WS(' ', per.primer_nombre, per.segundo_nombre), e.nombres) AS "nombresEstudiante",
+                COALESCE(CONCAT_WS(' ', per.primer_apellido, per.segundo_apellido), e.apellidos) AS "apellidosEstudiante",
+                CONCAT_WS(' ', 
+                  COALESCE(CONCAT_WS(' ', per.primer_nombre, per.segundo_nombre), e.nombres), 
+                  COALESCE(CONCAT_WS(' ', per.primer_apellido, per.segundo_apellido), e.apellidos)
+                ) AS "nombreEstudiante",
+                p.nombre AS "programaEstudiante",
+                CONCAT(ur.nombres, ' ', ur.apellidos) AS "remitidoPor",
+                d.nombre AS "areaDestino",
+                CASE
+                  WHEN r.id_usuarios_profesional IS NOT NULL AND r.id_usuarios_profesional <> r.id_usuarios_remitente
+                    THEN CONCAT(up.nombres, ' ', up.apellidos)
+                  ELSE COALESCE(d.nombre, 'Bandeja General / Por Asignar')
+                END AS "profesionalAsignado",
+                CASE WHEN r.escalada THEN 'Alto' ELSE 'Medio' END AS "nivelRiesgo",
+                r.motivo AS "motivoRemision",
+                r.generada_en AS "fechaRemision",
+                er.nombre AS estado,
+                r.escalada AS "escalado48h",
+                r.recomendaciones_docente AS "recomendacionesAula"
+         FROM sat.remisiones r
+         JOIN sat.casos c ON r.id_casos = c.id_casos
+         JOIN sat.estudiantes e ON c.id_estudiantes = e.id_estudiantes
+         LEFT JOIN sat.personas per ON per.id = e.id_personas
+         LEFT JOIN sat.matriculas m ON m.id_estudiantes = e.id_estudiantes
+         LEFT JOIN sat.programas_academicos p ON p.id_programas_academicos = COALESCE(m.id_programas_academicos, e.id_programas_academicos)
+         LEFT JOIN sat.dependencias d ON r.id_dependencias = d.id_dependencias
+         LEFT JOIN sat.estados_remision er ON r.id_estados_remision = er.id_estados_remision
+         LEFT JOIN sat.usuarios ur ON r.id_usuarios_remitente = ur.id_usuarios
+         LEFT JOIN sat.usuarios up ON r.id_usuarios_profesional = up.id_usuarios
+         ORDER BY r.id_remisiones, r.generada_en DESC
+       ) sub
+       ORDER BY sub."fechaRemision" DESC
        LIMIT 150`
     );
 
+    const mockPorId = new Map(MOCK_DATA.remisiones.map((m) => [m.id, m]));
+    const enriquecidas = rows.map((r) => {
+      const m = mockPorId.get(r.id);
+      return m ? { ...m, ...r, profesionalAsignado: m.profesionalAsignado || r.profesionalAsignado, nivelRiesgo: m.nivelRiesgo || r.nivelRiesgo } : r;
+    });
     const idsDb = new Set(rows.map((r) => r.id));
     const mocksRestantes = MOCK_DATA.remisiones.filter((m) => !idsDb.has(m.id));
 
-    res.json([...rows, ...mocksRestantes]);
+    res.json([...enriquecidas, ...mocksRestantes]);
   } catch (err) {
     console.warn("Fallo al consultar remisiones en PostgreSQL:", err.message);
     res.json(MOCK_DATA.remisiones);
@@ -325,20 +342,39 @@ router.post("/", async (req, res, next) => {
       );
       const idEstadoGenerada = estRem[0]?.id_estados_remision;
 
-      // 4. Obtener usuario remitente y profesional
+      // 4. Obtener usuario remitente y profesional encargado del área/dependencia
       const { rows: usuarios } = await query(`SELECT id_usuarios FROM sat.usuarios WHERE activo = true LIMIT 1`);
       const idUser = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.user?.id)
         ? req.user.id
         : usuarios[0]?.id_usuarios;
 
+      let idProfesionalDestino = null;
+      if (idDependencia) {
+        const { rows: profRows } = await query(
+          `SELECT u.id_usuarios
+           FROM sat.usuarios u
+           LEFT JOIN sat.usuarios_dependencias ud ON ud.id_usuarios = u.id_usuarios
+           WHERE u.activo = true
+             AND (
+               ud.id_dependencias = $1
+               OR ($2::text IS NOT NULL AND LOWER(u.nombres || ' ' || u.apellidos) ILIKE '%' || LOWER($2) || '%')
+               OR ($3::text IS NOT NULL AND LOWER(COALESCE(u.cargo, '')) ILIKE '%' || LOWER($3) || '%')
+             )
+           LIMIT 1`,
+          [idDependencia, destino?.profesionalAsignado || null, destino?.areaDestino || null]
+        );
+        idProfesionalDestino = profRows[0]?.id_usuarios || null;
+      }
+
       const { rows: insertRem } = await query(
         `INSERT INTO sat.remisiones
           (id_casos, id_dependencias, id_usuarios_profesional, id_usuarios_remitente, id_estados_remision, motivo, generada_en, escalada, actualizado_en)
-         VALUES ($1, $2, $3, $3, $4, $5, NOW(), $6, NOW())
+         VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, NOW())
          RETURNING id_remisiones`,
         [
           idCaso,
           idDependencia,
+          idProfesionalDestino || idUser,
           idUser,
           idEstadoGenerada,
           motivoRemision,

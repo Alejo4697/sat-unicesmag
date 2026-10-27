@@ -56,7 +56,8 @@ router.get("/", async (req, res, next) => {
              i.descripcion AS motivo,
              i.descripcion AS "resumenAcuerdo",
              c.es_confidencialidad_especial AS "esSensibleVBG",
-             (i.estado = 'Cerrada' OR i.cerrada_en IS NOT NULL) AS cerrado
+             COALESCE(i.estado, CASE WHEN i.cerrada_en IS NOT NULL THEN 'Atendida' ELSE 'Pendiente' END) AS estado,
+             (LOWER(COALESCE(i.estado, '')) IN ('cerrada', 'atendida') OR i.cerrada_en IS NOT NULL) AS cerrado
       FROM sat.intervenciones i
       JOIN sat.casos c ON i.id_casos = c.id_casos
       JOIN sat.estudiantes e ON c.id_estudiantes = e.id_estudiantes
@@ -183,7 +184,7 @@ router.post("/", async (req, res, next) => {
       const { rows: insertRes } = await query(
         `INSERT INTO sat.intervenciones
           (id_casos, id_tipos_intervencion, id_usuarios, fecha_atencion, descripcion, estado, canal_atencion, es_tutorias, cerrada_en, creado_en, actualizado_en)
-         VALUES ($1, $2, $3, NOW(), $4, 'Cerrada', $5, $6, NOW(), NOW(), NOW())
+         VALUES ($1, $2, $3, NOW(), $4, 'Pendiente', $5, $6, NULL, NOW(), NOW())
          RETURNING id_intervenciones`,
         [
           idCaso,
@@ -211,7 +212,8 @@ router.post("/", async (req, res, next) => {
       resumenAcuerdo,
       adjuntos: Array.isArray(adjuntos) ? adjuntos : [],
       esSensibleVBG: !!esSensibleVBG,
-      cerrado: true,
+      estado: "Pendiente",
+      cerrado: false,
       notasAclaratorias: []
     };
 
@@ -220,6 +222,46 @@ router.post("/", async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// Actualizar estado de una intervención (Pendiente / En Seguimiento / Atendida)
+router.patch("/:id", async (req, res, next) => {
+  const { id } = req.params;
+  const { estado, cerrado } = req.body;
+
+  let nuevoEstado = typeof estado === "string" ? estado.trim() : undefined;
+  let nuevoCerrado = typeof cerrado === "boolean" ? cerrado : undefined;
+
+  if (nuevoEstado && nuevoCerrado === undefined) {
+    const estadoLower = nuevoEstado.toLowerCase();
+    nuevoCerrado = estadoLower === "atendida" || estadoLower === "cerrada" || estadoLower === "finalizada";
+  } else if (nuevoCerrado !== undefined && !nuevoEstado) {
+    nuevoEstado = nuevoCerrado ? "Atendida" : "Pendiente";
+  }
+
+  try {
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+      await query(
+        `UPDATE sat.intervenciones
+         SET estado = COALESCE($1, estado),
+             cerrada_en = CASE WHEN $2 = true THEN COALESCE(cerrada_en, NOW()) ELSE NULL END,
+             actualizado_en = NOW()
+         WHERE id_intervenciones = $3`,
+        [nuevoEstado || (nuevoCerrado ? "Atendida" : "Pendiente"), nuevoCerrado, id]
+      );
+    }
+  } catch (dbErr) {
+    console.warn("Fallo al actualizar intervención en PostgreSQL:", dbErr.message);
+  }
+
+  const intervencion = MOCK_DATA.intervenciones.find((i) => String(i.id) === String(id));
+  if (intervencion) {
+    if (nuevoCerrado !== undefined) intervencion.cerrado = nuevoCerrado;
+    if (nuevoEstado) intervencion.estado = nuevoEstado;
+    return res.json(sanitizarIntervencion(intervencion, req.user));
+  }
+
+  res.json({ id, estado: nuevoEstado, cerrado: nuevoCerrado, ok: true });
 });
 
 export default router;

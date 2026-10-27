@@ -159,14 +159,17 @@ router.post("/login", async (req, res) => {
         u.correo_institucional,
         u.numero_documento,
         u.password_hash,
-        u.cargo,
+        COALESCE(u.cargo, doc_u.tipo_vinculo) AS cargo,
         u.intentos_fallidos,
         u.bloqueado_hasta,
         u.debe_cambiar_password,
         u.activo,
-        COALESCE(LOWER(r.nombre), 'admin') AS rol,
+        COALESCE(
+          LOWER(r.nombre),
+          CASE WHEN doc_u.id_docentes IS NOT NULL THEN 'profesional' ELSE 'admin' END
+        ) AS rol,
         d.nombre AS dependencia,
-        p.nombre AS programa
+        COALESCE(p.nombre, p_doc.nombre) AS programa
       FROM sat.usuarios u
       LEFT JOIN sat.usuarios_roles ur ON u.id_usuarios = ur.id_usuarios
       LEFT JOIN sat.roles r ON ur.id_roles = r.id_roles
@@ -174,6 +177,8 @@ router.post("/login", async (req, res) => {
       LEFT JOIN sat.dependencias d ON ud.id_dependencias = d.id_dependencias
       LEFT JOIN sat.usuarios_programas up ON u.id_usuarios = up.id_usuarios
       LEFT JOIN sat.programas_academicos p ON up.id_programas_academicos = p.id_programas_academicos
+      LEFT JOIN sat.docentes doc_u ON (doc_u.id_usuarios = u.id_usuarios OR (doc_u.numero_documento = u.numero_documento AND u.numero_documento IS NOT NULL))
+      LEFT JOIN sat.programas_academicos p_doc ON doc_u.id_programas_academicos = p_doc.id_programas_academicos
       WHERE LOWER(TRIM(u.correo_institucional)) = $1
          OR LOWER(TRIM(u.correo_institucional)) = LOWER($2 || '@unicesmag.edu.co')
          OR LOWER(TRIM(u.correo_institucional)) = LOWER($2 || '@cesmag.edu.co')

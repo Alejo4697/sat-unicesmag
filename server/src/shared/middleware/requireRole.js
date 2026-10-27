@@ -64,10 +64,13 @@ export async function identifyUser(req, res, next) {
               u.apellidos,
               CONCAT(u.nombres, ' ', u.apellidos) AS nombre,
               u.correo_institucional AS email,
-              COALESCE(LOWER(r.nombre), 'admin') AS rol,
-              COALESCE(u.cargo, 'Funcionario Institucional') AS cargo,
+              COALESCE(
+                LOWER(r.nombre),
+                CASE WHEN doc_u.id_docentes IS NOT NULL THEN 'profesional' ELSE 'admin' END
+              ) AS rol,
+              COALESCE(u.cargo, doc_u.tipo_vinculo, 'Funcionario Institucional') AS cargo,
               d.nombre AS dependencia,
-              p.nombre AS programa,
+              COALESCE(p.nombre, p_doc.nombre) AS programa,
               u.debe_cambiar_password AS "debeCambiarPassword"
             FROM sat.usuarios u
             LEFT JOIN sat.usuarios_roles ur ON u.id_usuarios = ur.id_usuarios
@@ -76,6 +79,8 @@ export async function identifyUser(req, res, next) {
             LEFT JOIN sat.dependencias d ON ud.id_dependencias = d.id_dependencias
             LEFT JOIN sat.usuarios_programas up ON u.id_usuarios = up.id_usuarios
             LEFT JOIN sat.programas_academicos p ON up.id_programas_academicos = p.id_programas_academicos
+            LEFT JOIN sat.docentes doc_u ON (doc_u.id_usuarios = u.id_usuarios OR (doc_u.numero_documento = u.numero_documento AND u.numero_documento IS NOT NULL))
+            LEFT JOIN sat.programas_academicos p_doc ON doc_u.id_programas_academicos = p_doc.id_programas_academicos
             WHERE u.id_usuarios = $1 AND u.activo = true
             LIMIT 1
           `, [ses.id_usuarios]);
@@ -130,10 +135,13 @@ export async function identifyUser(req, res, next) {
       const { rows: userRows } = await query(`
         SELECT u.id_usuarios AS id, u.nombres, u.apellidos, u.correo_institucional AS email,
                CONCAT(u.nombres, ' ', u.apellidos) AS nombre,
-               COALESCE(LOWER(r.nombre), 'admin') AS rol,
-               COALESCE(u.cargo, 'Funcionario Institucional') AS cargo,
+               COALESCE(
+                 LOWER(r.nombre),
+                 CASE WHEN doc_u.id_docentes IS NOT NULL THEN 'profesional' ELSE 'admin' END
+               ) AS rol,
+               COALESCE(u.cargo, doc_u.tipo_vinculo, 'Funcionario Institucional') AS cargo,
                d.nombre AS dependencia,
-               p.nombre AS programa,
+               COALESCE(p.nombre, p_doc.nombre) AS programa,
                u.debe_cambiar_password AS "debeCambiarPassword"
         FROM sat.usuarios u
         LEFT JOIN sat.usuarios_roles ur ON u.id_usuarios = ur.id_usuarios
@@ -142,6 +150,8 @@ export async function identifyUser(req, res, next) {
         LEFT JOIN sat.dependencias d ON ud.id_dependencias = d.id_dependencias
         LEFT JOIN sat.usuarios_programas up ON u.id_usuarios = up.id_usuarios
         LEFT JOIN sat.programas_academicos p ON up.id_programas_academicos = p.id_programas_academicos
+        LEFT JOIN sat.docentes doc_u ON (doc_u.id_usuarios = u.id_usuarios OR (doc_u.numero_documento = u.numero_documento AND u.numero_documento IS NOT NULL))
+        LEFT JOIN sat.programas_academicos p_doc ON doc_u.id_programas_academicos = p_doc.id_programas_academicos
         WHERE (u.id_usuarios::text = $1 OR LOWER(u.correo_institucional) = LOWER($1))
           AND u.activo = true
         LIMIT 1

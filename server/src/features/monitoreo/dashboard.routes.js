@@ -168,18 +168,263 @@ async function obtenerDimensionesAgregadas(programa = null) {
   return { dimensiones, totalEnvios };
 }
 
+// --------------------------------------------------------------------------
+// Bandeja de casos / notificaciones
+// Cada vez que se genera una remisión o se registra una intervención, aparece
+// en la "Bandeja de Casos" de todos los roles que corresponda (excepto admin):
+//   - profesional: remisiones dirigidas a su nombre/cargo/dependencia e
+//     intervenciones atendidas o de sus estudiantes remitidos.
+//   - directivo / docente acompañante: remisiones e intervenciones de los
+//     estudiantes de su programa (o todas si tiene alcance institucional),
+//     más las dirigidas a acompañamiento/tutoría.
+// --------------------------------------------------------------------------
+const DIAS_NOTIFICACION_INTERVENCION = 30;
+
+function normalizarTexto(valor) {
+  return String(valor || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
+function esPerfilDocenteAcompanante(cargo) {
+  const c = normalizarTexto(cargo);
+  if (c.includes("asistencial") || c.includes("psicolog")) return false;
+  return (
+    c.includes("docente") ||
+    c.includes("acompana") ||
+    c.includes("tutor") ||
+    c.includes("tiempo completo") ||
+    c.includes("medio tiempo") ||
+    c.includes("catedra")
+  );
+}
+
+function esCoordinadorInstitucional(cargo) {
+  const c = normalizarTexto(cargo);
+  return c.includes("coordinador de acompanamiento") || c.includes("coordinadora de acompanamiento");
+}
+
+function programaDeEstudiante(codigo) {
+  return MOCK_DATA.estudiantes.find((e) => e.codigo === codigo)?.programa || null;
+}
+
+const GRUPOS_AREA = [
+  ["psicolog", "usp", "escucha", "salud mental"],
+  ["goretti", "salud fisica", "atencion en salud"],
+  ["enfermeria", "damian"],
+  ["trabajo social", "padrino", "beca", "descuento", "unifamilia", "poliza", "subsidio"],
+  ["pastoral", "espiritual"],
+  ["paz", "convivencia", "bienestar interior"],
+  ["inclusion", "diversidad", "reda", "discapacidad"],
+  ["deporte", "cultura"],
+  ["juridic", "consultorio"],
+  ["tutor", "primer paso"],
+  ["acompan", "vocacional"]
+];
+
+function coincideAreaProfesional(remision, user) {
+  const nombre = normalizarTexto(user.nombre);
+  const cargo = normalizarTexto(user.cargo);
+  const dependencia = normalizarTexto(user.dependencia);
+  const perfilUsuario = `${cargo} ${dependencia}`.trim();
+
+  const profAsig = normalizarTexto(remision.profesionalAsignado);
+  const remitido = normalizarTexto(remision.remitidoPor);
+  const area = normalizarTexto(remision.areaDestino);
+  const textoRemision = `${area} ${profAsig} ${normalizarTexto(remision.programa)} ${normalizarTexto(remision.proyecto)}`;
+
+  if (nombre && ((profAsig && (profAsig.includes(nombre) || nombre.includes(profAsig))) || (remitido && remitido.includes(nombre)))) {
+    return true;
+  }
+  if (dependencia && area && (area.includes(dependencia) || dependencia.includes(area))) {
+    return true;
+  }
+  if (cargo && area && (area.includes(cargo) || cargo.includes(area))) {
+    return true;
+  }
+
+  let usuarioTieneGrupoEspecifico = false;
+  for (const palabras of GRUPOS_AREA) {
+    const userEnGrupo = palabras.some((p) => perfilUsuario.includes(p));
+    if (userEnGrupo) {
+      usuarioTieneGrupoEspecifico = true;
+      if (palabras.some((p) => textoRemision.includes(p))) {
+        return true;
+      }
+    }
+  }
+
+  // Si el profesional tiene un cargo genérico sin área específica, filtrar por su programa o mostrar todas.
+  if (!usuarioTieneGrupoEspecifico) {
+    const progUser = normalizarTexto(user.programa);
+    if (progUser && progUser !== "todos" && progUser !== "no asignado") {
+      const progEst = normalizarTexto(remision.programaEstudiante || programaDeEstudiante(remision.codigoEstudiante));
+      return progEst.includes(progUser) || progUser.includes(progEst);
+    }
+    return true;
+  }
+
+  return false;
+}
+
+async function obtenerBandejaCasos(user, { porPrograma }) {
+  let remisiones = [];
+  let intervenciones = [];
+
+  try {
+    const { rows } = await query(
+      `SELECT * FROM (
+         SELECT DISTINCT ON (r.id_remisiones)
+                r.id_remisiones AS id,
+                e.codigo_externo AS "codigoEstudiante",
+                p.nombre AS "programaEstudiante",
+                CONCAT(ur.nombres, ' ', ur.apellidos) AS "remitidoPor",
+                d.nombre AS "areaDestino",
+                CASE
+                  WHEN r.id_usuarios_profesional IS NOT NULL AND r.id_usuarios_profesional <> r.id_usuarios_remitente
+                    THEN CONCAT(up.nombres, ' ', up.apellidos)
+                  ELSE COALESCE(d.nombre, 'Bandeja General / Por Asignar')
+                END AS "profesionalAsignado",
+                CASE WHEN r.escalada THEN 'Alto' ELSE 'Medio' END AS "nivelRiesgo",
+                r.generada_en AS "fechaRemision",
+                er.nombre AS estado
+         FROM sat.remisiones r
+         JOIN sat.casos c ON r.id_casos = c.id_casos
+         JOIN sat.estudiantes e ON c.id_estudiantes = e.id_estudiantes
+         LEFT JOIN sat.matriculas m ON m.id_estudiantes = e.id_estudiantes
+         LEFT JOIN sat.programas_academicos p ON p.id_programas_academicos = COALESCE(m.id_programas_academicos, e.id_programas_academicos)
+         LEFT JOIN sat.dependencias d ON r.id_dependencias = d.id_dependencias
+         LEFT JOIN sat.estados_remision er ON r.id_estados_remision = er.id_estados_remision
+         LEFT JOIN sat.usuarios ur ON r.id_usuarios_remitente = ur.id_usuarios
+         LEFT JOIN sat.usuarios up ON r.id_usuarios_profesional = up.id_usuarios
+         ORDER BY r.id_remisiones, r.generada_en DESC
+       ) sub
+       ORDER BY sub."fechaRemision" DESC
+       LIMIT 150`
+    );
+    const mockPorId = new Map(MOCK_DATA.remisiones.map((m) => [m.id, m]));
+    remisiones = rows.map((r) => {
+      const m = mockPorId.get(r.id);
+      return m ? { ...m, ...r, profesionalAsignado: m.profesionalAsignado || r.profesionalAsignado, nivelRiesgo: m.nivelRiesgo || r.nivelRiesgo } : r;
+    });
+  } catch (err) {
+    console.warn("Bandeja de casos: fallo al consultar remisiones:", err.message);
+  }
+
+  try {
+    const { rows } = await query(
+      `SELECT * FROM (
+         SELECT DISTINCT ON (i.id_intervenciones)
+                i.id_intervenciones AS id,
+                e.codigo_externo AS "codigoEstudiante",
+                p.nombre AS "programaEstudiante",
+                CONCAT(u.nombres, ' ', u.apellidos) AS "atendidoPor",
+                i.fecha_atencion AS fecha,
+                i.creado_en AS "fechaRegistro",
+                i.descripcion AS motivo,
+                c.es_confidencialidad_especial AS "esSensibleVBG",
+                COALESCE(i.estado, CASE WHEN i.cerrada_en IS NOT NULL THEN 'Atendida' ELSE 'Pendiente' END) AS estado,
+                (LOWER(COALESCE(i.estado, '')) IN ('cerrada', 'atendida') OR i.cerrada_en IS NOT NULL) AS cerrado
+         FROM sat.intervenciones i
+         JOIN sat.casos c ON i.id_casos = c.id_casos
+         JOIN sat.estudiantes e ON c.id_estudiantes = e.id_estudiantes
+         LEFT JOIN sat.matriculas m ON m.id_estudiantes = e.id_estudiantes
+         LEFT JOIN sat.programas_academicos p ON p.id_programas_academicos = COALESCE(m.id_programas_academicos, e.id_programas_academicos)
+         LEFT JOIN sat.usuarios u ON i.id_usuarios = u.id_usuarios
+         ORDER BY i.id_intervenciones, i.fecha_atencion DESC
+       ) sub
+       ORDER BY sub.fecha DESC
+       LIMIT 150`
+    );
+    intervenciones = rows;
+  } catch (err) {
+    console.warn("Bandeja de casos: fallo al consultar intervenciones:", err.message);
+  }
+
+  // Complementar con los registros en memoria (incluye los recién creados).
+  const idsRem = new Set(remisiones.map((r) => r.id));
+  remisiones = [...remisiones, ...MOCK_DATA.remisiones.filter((r) => !idsRem.has(r.id))];
+  const idsInt = new Set(intervenciones.map((i) => i.id));
+  intervenciones = [...intervenciones, ...MOCK_DATA.intervenciones.filter((i) => !idsInt.has(i.id))];
+
+  const nombre = normalizarTexto(user.nombre);
+  const programaUsuario = normalizarTexto(user.programa);
+  const tieneProgramaEspecifico =
+    Boolean(programaUsuario) &&
+    programaUsuario !== "todos" &&
+    programaUsuario !== "no asignado" &&
+    programaUsuario !== "programa institucional";
+
+  let misRemisiones;
+  let misIntervenciones;
+  if (porPrograma) {
+    if (!tieneProgramaEspecifico) {
+      // Docente acompañante / directivo con alcance institucional ("Todos los programas")
+      misRemisiones = remisiones;
+      misIntervenciones = intervenciones;
+    } else {
+      misRemisiones = remisiones.filter((r) => {
+        const progEst = normalizarTexto(r.programaEstudiante || programaDeEstudiante(r.codigoEstudiante));
+        const coincideProg = progEst && (progEst.includes(programaUsuario) || programaUsuario.includes(progEst));
+        return coincideProg || coincideAreaProfesional(r, user);
+      });
+      misIntervenciones = intervenciones.filter((i) => {
+        const progEst = normalizarTexto(i.programaEstudiante || programaDeEstudiante(i.codigoEstudiante));
+        const coincideProg = progEst && (progEst.includes(programaUsuario) || programaUsuario.includes(progEst));
+        const coincideAutor = nombre && normalizarTexto(i.atendidoPor).includes(nombre);
+        return coincideProg || coincideAutor;
+      });
+    }
+  } else {
+    misRemisiones = remisiones.filter((r) => coincideAreaProfesional(r, user));
+    const codigosEstudiantesRemitidos = new Set(misRemisiones.map((r) => r.codigoEstudiante).filter(Boolean));
+    misIntervenciones = intervenciones.filter((i) => {
+      const coincideAutor = nombre && normalizarTexto(i.atendidoPor).includes(nombre);
+      return coincideAutor || codigosEstudiantesRemitidos.has(i.codigoEstudiante);
+    });
+  }
+
+  const limite = Date.now() - DIAS_NOTIFICACION_INTERVENCION * 24 * 60 * 60 * 1000;
+  const remisionesPendientes = misRemisiones.filter((r) => r.estado !== "Atendida" && r.estado !== "Cerrada").length;
+  // Notificar intervenciones pendientes o en seguimiento (todo lo que no sea 'Atendida' o 'Cerrada')
+  const intervencionesAbiertas = misIntervenciones.filter((i) => {
+    const est = String(i.estado || "").toLowerCase();
+    return !i.cerrado && est !== "cerrada" && est !== "atendida";
+  }).length;
+  const intervencionesNotificadas = intervencionesAbiertas;
+
+  return {
+    misIntervenciones: misIntervenciones.map((i) => sanitizarIntervencion(i, user)),
+    misRemisiones,
+    resumen: {
+      intervencionesTotal: misIntervenciones.length,
+      intervencionesAbiertas,
+      remisionesTotal: misRemisiones.length,
+      remisionesPendientes
+    },
+    // Total que se muestra como notificación en "Mi Bandeja de Casos".
+    notificaciones: {
+      remisiones: remisionesPendientes,
+      intervenciones: intervencionesNotificadas,
+      total: remisionesPendientes + intervencionesNotificadas
+    }
+  };
+}
+
 // GET /api/dashboard
 router.get("/", async (req, res, next) => {
   try {
     const { rol, nombre, programa, cargo } = req.user;
-    const cargoLower = String(cargo || "").toLowerCase();
-    const esDocenteAcompanante = cargoLower.includes("docente acompaña") || cargoLower.includes("docente tutor");
-    const esCoordinadorAcompanamiento = cargoLower.includes("coordinador de acompañamiento") || cargoLower.includes("coordinadora de acompañamiento");
+    const esDocenteAcompanante = esPerfilDocenteAcompanante(cargo);
+    const esAdmin = rol === "admin" && !esDocenteAcompanante;
+    const esCoordinadorAcompanamiento = esCoordinadorInstitucional(cargo);
     const periodoActual = "2025 II";
     const estudiantes = await obtenerEstudiantesCombinados();
 
     // ---- Coordinador de Acompañamiento o Admin: vista institucional completa ---
-    if (rol === "admin" || esCoordinadorAcompanamiento) {
+    if (esAdmin || (esCoordinadorAcompanamiento && !esDocenteAcompanante)) {
       const totalMatriculados = estudiantes.length;
       const encuestados = estudiantes.filter((e) => e.encuestaRespondida);
       const totalEncuestados = encuestados.length;
@@ -212,6 +457,8 @@ router.get("/", async (req, res, next) => {
         }
       };
 
+      const bandejaInst = !esAdmin ? await obtenerBandejaCasos(req.user, { porPrograma: true }) : {};
+
       return res.json({
         vista: "institucional",
         periodoActual,
@@ -219,20 +466,23 @@ router.get("/", async (req, res, next) => {
         totalEncuestadosCaracterizacion: totalEncuestados,
         totalFaltantesCaracterizacion: totalFaltantes,
         distribucionRiesgo,
-        porSemestre
+        porSemestre,
+        ...bandejaInst
       });
     }
 
-    // ---- Docente Acompañante o Directivo: todo recortado a su programa ----
+    // ---- Docente Acompañante o Directivo: recortado a su programa (o todos si no tiene uno fijo) ----
     if (rol === "directivo" || esDocenteAcompanante) {
-      const programaTarget = programa || "Ingeniería de Sistemas";
-      const alumnos = estudiantes.filter(
-        (e) => e.programa.toLowerCase() === programaTarget.toLowerCase()
-      );
+      const tieneProg = programa && normalizarTexto(programa) !== "todos" && normalizarTexto(programa) !== "no asignado";
+      const programaTarget = tieneProg ? programa : "Todos";
+      const alumnos = tieneProg
+        ? estudiantes.filter((e) => normalizarTexto(e.programa) === normalizarTexto(programaTarget))
+        : estudiantes;
       const encuestados = alumnos.filter((e) => e.encuestaRespondida).length;
       const alertasAbiertas = MOCK_DATA.alertas.filter(
-        (a) => a.programa.toLowerCase() === programaTarget.toLowerCase() && a.estado !== "Cerrada"
+        (a) => (!tieneProg || normalizarTexto(a.programa) === normalizarTexto(programaTarget)) && a.estado !== "Cerrada"
       ).length;
+      const bandejaPrograma = await obtenerBandejaCasos(req.user, { porPrograma: true });
 
       return res.json({
         vista: "programa",
@@ -245,52 +495,52 @@ router.get("/", async (req, res, next) => {
           faltantesPrograma: alumnos.length - encuestados,
           riesgoAltoPrograma: alumnos.filter((e) => e.riesgoGlobal === "Alto").length,
           alertasAbiertasPrograma: alertasAbiertas
-        }
+        },
+        ...bandejaPrograma
       });
     }
 
     // ---- Profesional asistencial general: su bandeja de casos --------------------------------
     if (rol === "profesional") {
-      const misIntervenciones = MOCK_DATA.intervenciones
-        .filter((i) => i.atendidoPor === nombre)
-        .map((i) => sanitizarIntervencion(i, req.user));
-      const misRemisiones = MOCK_DATA.remisiones.filter((r) => r.profesionalAsignado === nombre);
+      const bandeja = await obtenerBandejaCasos(req.user, { porPrograma: false });
 
       return res.json({
         vista: "profesional",
         periodoActual,
         usuario: nombre,
-        misIntervenciones,
-        misRemisiones,
-        resumen: {
-          intervencionesTotal: misIntervenciones.length,
-          intervencionesAbiertas: misIntervenciones.filter((i) => !i.cerrado).length,
-          remisionesTotal: misRemisiones.length,
-          remisionesPendientes: misRemisiones.filter((r) => r.estado !== "Atendida").length
-        }
+        ...bandeja
       });
     }
 
-    // ---- Reporte de actividades: tablero por definir ---------------------
-    if (rol === "reporte_actividades") {
-      return res.json({
-        vista: "actividades-pendiente",
-        periodoActual,
-        mensaje:
-          "El tablero de actividades para este rol aún no está definido. " +
-          "Su alcance (qué indicadores de actividades registradas mostrar) se " +
-          "debe acordar con el dueño de producto."
-      });
-    }
-
-    // ---- Cualquier otro rol ---------------------------------------------
-    res.json({
-      vista: "no-configurada",
+    // ---- Cualquier otro rol no administrador (incl. reporte_actividades) ---
+    const bandejaGeneral = await obtenerBandejaCasos(req.user, { porPrograma: true });
+    return res.json({
+      vista: "profesional",
       periodoActual,
-      mensaje:
-        "El Tablero General todavía no tiene una vista definida para tu rol. " +
-        "Solicita al equipo del SAT que configure qué indicadores te corresponden."
+      usuario: nombre,
+      ...bandejaGeneral
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/dashboard/notificaciones
+// Contador liviano de la bandeja de casos (remisiones e intervenciones que le
+// llegan al usuario). El cliente lo consulta periódicamente para avisar a la
+// persona encargada apenas se genera una remisión. El admin no recibe.
+router.get("/notificaciones", async (req, res, next) => {
+  try {
+    const { rol, cargo } = req.user;
+    const vacio = { remisiones: 0, intervenciones: 0, total: 0 };
+    const esDocenteAcompanante = esPerfilDocenteAcompanante(cargo);
+    const esAdmin = rol === "admin" && !esDocenteAcompanante;
+    if (esAdmin || rol === "estudiante") {
+      return res.json(vacio);
+    }
+    const porPrograma = rol === "directivo" || esDocenteAcompanante || rol === "reporte_actividades";
+    const bandeja = await obtenerBandejaCasos(req.user, { porPrograma });
+    res.json(bandeja.notificaciones);
   } catch (err) {
     next(err);
   }
@@ -302,10 +552,10 @@ router.get("/", async (req, res, next) => {
 router.get("/resultados-caracterizacion", async (req, res, next) => {
   try {
     const rol = req.user?.rol;
-    const cargo = String(req.user?.cargo || "").toLowerCase();
-    const esAdmin = rol === "admin";
-    const esCoordinador = esAdmin || cargo.includes("coordinador de acompañamiento") || cargo.includes("coordinadora de acompañamiento");
-    const esDocenteAcompanante = cargo.includes("docente acompaña") || cargo.includes("docente tutor");
+    const cargo = req.user?.cargo || "";
+    const esDocenteAcompanante = esPerfilDocenteAcompanante(cargo);
+    const esAdmin = rol === "admin" && !esDocenteAcompanante;
+    const esCoordinador = esAdmin || esCoordinadorInstitucional(cargo);
     const esDirectivo = rol === "directivo";
 
     if (!esAdmin && !esCoordinador && !esDocenteAcompanante && !esDirectivo) {
@@ -314,9 +564,10 @@ router.get("/resultados-caracterizacion", async (req, res, next) => {
       });
     }
 
-    // Restricción por rol de programa: si es Docente Acompañante o Directivo sin rol institucional
-    const esRestringido = (esDocenteAcompanante || esDirectivo) && !esCoordinador && !esAdmin;
-    const programaUsuario = req.user?.programa || null;
+    // Restricción por rol de programa: si es Docente Acompañante o Directivo con programa específico
+    const tieneProgramaFijo = Boolean(req.user?.programa) && normalizarTexto(req.user.programa) !== "todos" && normalizarTexto(req.user.programa) !== "no asignado";
+    const esRestringido = (esDocenteAcompanante || esDirectivo) && !esCoordinador && !esAdmin && tieneProgramaFijo;
+    const programaUsuario = tieneProgramaFijo ? req.user.programa : null;
 
     // Filtros recibidos
     const filtroPeriodo = req.query.periodo || "todos";
