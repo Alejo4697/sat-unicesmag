@@ -9,6 +9,7 @@ const TEMPLATE_PATH = fileURLToPath(
 const SUPPORTED_PARTICIPANT_TYPES = new Set([
   "ESTUDIANTE",
   "COLABORADOR",
+  "ADMINISTRATIVO",
   "EGRESADO",
   "EXTERNO",
 ]);
@@ -56,6 +57,7 @@ const COLUMNS = [
   "rolEgresado",
   "rolEstudiante",
   "rolColaborador",
+  "rolAdministrativo",
   "nombres",
 ];
 const DATE_COLUMNS = new Set([30, 31]);
@@ -64,20 +66,36 @@ const ROLE_COLUMNS = {
   rolEgresado: "EGRESADO",
   rolEstudiante: "ESTUDIANTE",
   rolColaborador: "COLABORADOR",
+  rolAdministrativo: "ADMINISTRATIVO",
 };
 const ROLE_LABELS = {
   ESTUDIANTE: "Estudiante",
   COLABORADOR: "Colaborador",
+  ADMINISTRATIVO: "Administrativo",
   EGRESADO: "Egresado",
   EXTERNO: "Externo",
 };
-const ROLE_ORDER = ["ESTUDIANTE", "COLABORADOR", "EGRESADO", "EXTERNO"];
+const ROLE_ORDER = ["ESTUDIANTE", "COLABORADOR", "ADMINISTRATIVO", "EGRESADO", "EXTERNO"];
 const ROLE_HIGHLIGHTS = {
-  "ESTUDIANTE+EGRESADO": "FFDDEBF7",
-  "EGRESADO+COLABORADOR": "FFE2F0D9",
   "ESTUDIANTE+COLABORADOR": "FFFCE4D6",
+  "ESTUDIANTE+ADMINISTRATIVO": "FFE8E1F7",
+  "ESTUDIANTE+EGRESADO": "FFDDEBF7",
+  "ESTUDIANTE+EXTERNO": "FFFCE4ED",
+  "COLABORADOR+EGRESADO": "FFE2F0D9",
+  "COLABORADOR+ADMINISTRATIVO": "FFF2E5E8",
+  "COLABORADOR+EXTERNO": "FFFCEBF0",
+  "ADMINISTRATIVO+EGRESADO": "FFECEBF5",
+  "ADMINISTRATIVO+EXTERNO": "FFF6E8F0",
+  "EGRESADO+EXTERNO": "FFEAF5EF",
   "ESTUDIANTE+EGRESADO+COLABORADOR": "FFE4DFEC",
 };
+
+function periodoAcademicoVisible(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/\b((?:19|20)\d{2})[-/](\d{1,2})[-/]\d{1,2}\b/);
+  if (!match) return text;
+  return `${match[1]}-${Number(match[2]) <= 6 ? 1 : 2}`;
+}
 
 function rolesAsistente(asistente) {
   return [
@@ -123,9 +141,13 @@ function asistentesUnicosPorPersona(asistentes) {
 
 function combinacionRoles(asistente) {
   const roles = new Set(rolesAsistente(asistente));
-  const combination = ["ESTUDIANTE", "EGRESADO", "COLABORADOR"]
-    .filter((role) => roles.has(role))
-    .join("+");
+  const combination = ROLE_ORDER.filter((role) => roles.has(role)).join("+");
+  if (
+    combination ===
+    "ESTUDIANTE+COLABORADOR+EGRESADO"
+  ) {
+    return "ESTUDIANTE+EGRESADO+COLABORADOR";
+  }
   return ROLE_HIGHLIGHTS[combination] ? combination : null;
 }
 
@@ -487,7 +509,9 @@ export async function generarExcelAsistentes(asistentes, periodo) {
     setInlineString(
       withPeriod,
       "C5",
-      `BASE DE DATOS PERIODO ${periodo || "TODOS LOS PERIODOS"}`,
+      `BASE DE DATOS PERIODO ${
+        periodoAcademicoVisible(periodo) || "TODOS LOS PERIODOS"
+      }`,
     ),
   );
 
@@ -680,7 +704,7 @@ function resizeWorksheetRanges(xml, lastRow) {
   return xml.replace(
     /<(dimension|autoFilter)\b([^>]*\bref=")([A-Z]+\d+):[A-Z]+\d+("[^>]*)\/>/g,
     (_match, tag, prefix, start, suffix) =>
-      `<${tag}${prefix}${start}:AP${lastRow}${suffix}/>`,
+      `<${tag}${prefix}${start}:AQ${lastRow}${suffix}/>`,
   );
 }
 
@@ -700,15 +724,15 @@ function addRolesHeaderAndColumns(xml) {
       const style = finalHeaderCell[0].match(/\bs="([^"]+)"/)?.[1];
       const styleAttribute = style ? ` s="${style}"` : "";
       const headers =
-        ["EGRESADO", "ESTUDIANTE", "COLABORADOR"]
+        ["EGRESADO", "ESTUDIANTE", "COLABORADOR", "ADMINISTRATIVO"]
           .map(
             (header, index) =>
               `<c r="${columnName(39 + index)}8"${styleAttribute} t="inlineStr"><is><t>${header}</t></is></c>`,
           )
           .join("") +
-        `<c r="AP8"${styleAttribute} t="inlineStr"><is><t>NOMBRES</t></is></c>`;
+        `<c r="AQ8"${styleAttribute} t="inlineStr"><is><t>NOMBRES</t></is></c>`;
       hasHeader = true;
-      return `<row${attributes.replace(/\bspans="1:38"/, 'spans="1:42"')}>${content}${headers}</row>`;
+      return `<row${attributes.replace(/\bspans="1:38"/, 'spans="1:43"')}>${content}${headers}</row>`;
     },
   );
   if (!hasHeader)
@@ -730,22 +754,22 @@ function addRolesHeaderAndColumns(xml) {
         (column) => {
           splitDefaultColumns = true;
           const remainder = column
-            .replace(/\bmin="39"/, 'min="42"')
+            .replace(/\bmin="39"/, 'min="43"')
             .replace(/\bwidth="[^"]*"/, 'width="11.42578125"')
             .replace(/\bmax="16384"/, 'max="16384"');
-          return `<col min="39" max="41" width="16" customWidth="1"/>${remainder}`;
+          return `<col min="39" max="42" width="16" customWidth="1"/>${remainder}`;
         },
       );
       const roleColumnWidths = splitDefaultColumns
         ? remainingColumns.replace(
-            /<col\b([^>]*\bmin="42"[^>]*)\/>/,
-            '<col min="42" max="42" width="24" customWidth="1"/><col min="43" max="16384" width="11.42578125"/>',
+            /<col\b([^>]*\bmin="43"[^>]*)\/>/,
+            '<col min="43" max="43" width="24" customWidth="1"/><col min="44" max="16384" width="11.42578125"/>',
           )
-        : `${remainingColumns}<col min="39" max="41" width="16" customWidth="1"/><col min="42" max="42" width="24" customWidth="1"/>`;
+        : `${remainingColumns}<col min="39" max="42" width="16" customWidth="1"/><col min="43" max="43" width="24" customWidth="1"/>`;
       return `<cols${attributes}>${roleColumnWidths}</cols>`;
     },
   );
-  return updated.replace(/spans="1:38"/g, 'spans="1:42"');
+  return updated.replace(/spans="1:38"/g, 'spans="1:43"');
 }
 
 function createDataRow(templateRow, assistant, rowNumber, roleHighlightStyles) {
@@ -807,7 +831,7 @@ function createDataRow(templateRow, assistant, rowNumber, roleHighlightStyles) {
 
   const attributes = rowAttributes
     .replace(/\br="9"/, `r="${rowNumber}"`)
-    .replace(/\bspans="1:38"/, 'spans="1:42"');
+    .replace(/\bspans="1:38"/, 'spans="1:43"');
   return `<row${attributes}>${cells}</row>`;
 }
 

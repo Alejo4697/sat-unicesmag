@@ -9,6 +9,7 @@ import {
 
 const ROLES = [
   { value: "COLABORADOR", label: "Colaboradores", singular: "Colaborador", icon: "fa-user-tie" },
+  { value: "ADMINISTRATIVO", label: "Administrativos", singular: "Administrativo", icon: "fa-user-gear" },
   { value: "EGRESADO", label: "Egresados", singular: "Egresado", icon: "fa-user-graduate" },
   { value: "EXTERNO", label: "Externos", singular: "Externo", icon: "fa-user-group" },
 ];
@@ -16,6 +17,7 @@ const ROLE_LABELS = {
   ESTUDIANTE: "Estudiante",
   EGRESADO: "Egresado",
   COLABORADOR: "Colaborador",
+  ADMINISTRATIVO: "Administrativo",
   EXTERNO: "Externo",
 };
 

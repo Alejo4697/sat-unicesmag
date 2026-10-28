@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS sat.participantes_vec (
   id_participantes_vec uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   id_personas bigint NOT NULL REFERENCES sat.personas(id) ON DELETE RESTRICT,
   tipo_participante varchar(20) NOT NULL
-    CHECK (tipo_participante IN ('ESTUDIANTE', 'COLABORADOR', 'EGRESADO', 'EXTERNO')),
+    CHECK (tipo_participante IN ('ESTUDIANTE', 'COLABORADOR', 'EGRESADO', 'EXTERNO', 'ADMINISTRATIVO')),
   tipo_documento varchar(50),
   codigo varchar(100),
   programa_academico varchar(250),

@@ -14,7 +14,15 @@ const ROLE_OPTIONS = [
   { value: "ESTUDIANTE", label: "Estudiante" },
   { value: "EGRESADO", label: "Egresado" },
   { value: "COLABORADOR", label: "Colaborador" },
+  { value: "ADMINISTRATIVO", label: "Administrativo" },
   { value: "EXTERNO", label: "Externo" },
+];
+const ROLE_SUMMARY_PRIORITY = [
+  "ESTUDIANTE",
+  "ADMINISTRATIVO",
+  "COLABORADOR",
+  "EGRESADO",
+  "EXTERNO",
 ];
 const UNKNOWN_ROLE_OPTIONS = ROLE_OPTIONS.filter((role) => role.value !== "ESTUDIANTE");
 const STATUS_FILTER_OPTIONS = [
@@ -108,7 +116,7 @@ function validarBorradorNoEncontrado(draft) {
   const namePattern = /^[\p{L}\p{M}][\p{L}\p{M}\s'.-]*$/u;
 
   if (!UNKNOWN_ROLE_OPTIONS.some((role) => role.value === draft.tipo)) {
-    errors.tipo = "Selecciona Egresado, Colaborador o Externo. Los estudiantes deben estar en la base institucional.";
+    errors.tipo = "Selecciona Egresado, Colaborador, Administrativo o Externo. Los estudiantes deben estar en la base institucional.";
   }
   if (!["CC", "TI", "CE", "PA", "RC", "NIT", "PPT", "PEP", "CD", "SC", "NUIP", "OTRO"].includes(draft.tipoDocumento)) {
     errors.tipoDocumento = "Selecciona un tipo de documento válido.";
@@ -170,10 +178,7 @@ function UnknownParticipantDialog({
   draft,
   busy,
   serverError,
-  supportOptions,
-  modalityVariable,
   onChange,
-  onSupportChange,
   onClose,
   onSubmit,
 }) {
@@ -374,24 +379,6 @@ function UnknownParticipantDialog({
                   {fieldError("tipoDocumento")}
                 </label>
                 {field("identificacion", "Número de documento")}
-                <label className="vec-bulk-unregistered-modal__field">
-                  <span>Variable o modalidad de inscripción</span>
-                  <select
-                    className="form-select"
-                    value={modalityVariable || ""}
-                    onChange={(event) => onSupportChange(event.target.value)}
-                    disabled={!supportOptions.length}
-                    required={supportOptions.length > 0}
-                  >
-                    <option value="">{supportOptions.length ? "Selecciona una modalidad" : "Sin modalidad disponible"}</option>
-                    {supportOptions.map((option) => (
-                      <option key={option.programaCompleto} value={option.programaCompleto}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <small>El apoyo asociado a la modalidad se guardará únicamente en la inscripción a esta actividad.</small>
-                </label>
               </div>
               {draft.tipo === "EXTERNO" && (
                 <p className="vec-bulk-unregistered-modal__notice" role="note">
@@ -583,19 +570,6 @@ function supportOptionsForEvent(event) {
     }));
 }
 
-function resolveSupportVariable(value, options) {
-  const normalized = normalizeText(value);
-  if (!normalized) return "";
-  const matches = options.filter((item) => [
-    item.programaCompleto,
-    item.subdivision,
-    item.tipoApoyo,
-    item.label,
-  ].some((candidate) => normalizeText(candidate) === normalized));
-  const variables = [...new Set(matches.map((item) => item.programaCompleto))];
-  return variables.length === 1 ? variables[0] : "";
-}
-
 function displayDate(value) {
   const date = String(value || "").slice(0, 10);
   if (!date) return "";
@@ -697,10 +671,7 @@ const COLUMN_DEFINITIONS = {
     aliases: ["MUNICIPIO", "CIUDAD", "CIUDADRESIDENCIA", "MUNICIPIORESIDENCIA"],
     matches: (header) => /(?:MUNICIPIO|CIUDAD).*(?:RESIDENCIA)?/.test(header),
   },
-  apoyo: {
-    aliases: ["APOYO", "TIPODEAPOYO", "TIPOAPOYO", "MODALIDAD", "VARIABLE", "PROGRAMADEAPOYO"],
-    matches: (header) => /(?:APOYO|MODALIDAD|VARIABLE)/.test(header),
-  },
+
   actividad: {
     aliases: ["ACTIVIDAD"],
     matches: (header) => /^ACTIVIDAD/.test(header),
@@ -757,7 +728,6 @@ function participantEntry(row, rowNumber, columns) {
     rolOriginal: columns.rol ? cellText(row[columns.rol - 1]) : "",
     programaOriginal: columns.programa ? cellText(row[columns.programa - 1]) : "",
     dependenciaOriginal: columns.dependencia ? cellText(row[columns.dependencia - 1]) : "",
-    apoyoOriginal: columns.apoyo ? cellText(row[columns.apoyo - 1]) : "",
   };
 }
 
@@ -913,7 +883,6 @@ function parseWorkbook(workbook, selectedEvent) {
           rolOriginal: "",
           programaOriginal: "",
           dependenciaOriginal: "",
-          apoyoOriginal: "",
         });
       }
     });
@@ -957,6 +926,10 @@ function roleValue(value) {
     COLABORADOR: "COLABORADOR",
     COLABORADORES: "COLABORADOR",
     FUNCIONARIO: "COLABORADOR",
+    ADMINISTRATIVO: "ADMINISTRATIVO",
+    ADMINISTRATIVA: "ADMINISTRATIVO",
+    ADMINISTRATIVOS: "ADMINISTRATIVO",
+    ADMINISTRATIVAS: "ADMINISTRATIVO",
     EXTERNO: "EXTERNO",
     EXTERNOS: "EXTERNO",
   };
@@ -992,7 +965,6 @@ export default function BulkParticipantImport({ onPendingChange }) {
   const historyIndexRef = useRef(window.history.state?.idx);
   const [events, setEvents] = useState([]);
   const [selectedEventId, setSelectedEventId] = useState("");
-  const [supportFilter, setSupportFilter] = useState("all");
   const [advancedFilters, setAdvancedFilters] = useState({
     search: "",
     role: "all",
@@ -1039,18 +1011,26 @@ export default function BulkParticipantImport({ onPendingChange }) {
   const notFoundRows = rows.filter((row) => row.status === "not_found");
   const editingUnknownRow = notFoundRows.find((row) => row.id === editingUnknownId);
   const duplicateCount = rows.filter((row) => row.status === "duplicate").length;
-  const peopleByRole = new Map();
+  const rolesByPerson = new Map();
+  const preferredRoleByPerson = new Map();
   rows.forEach((row) => {
     if (!["valid", "registered", "duplicate"].includes(row.status)) return;
     const personKey = normalizeText(row.identificacion || row.codigoInstitucional || row.identificador);
     if (!personKey || !row.roles?.length) return;
-    const roles = peopleByRole.get(personKey) || new Set();
+    const roles = rolesByPerson.get(personKey) || new Set();
     row.roles.forEach((role) => roles.add(role));
-    peopleByRole.set(personKey, roles);
+    rolesByPerson.set(personKey, roles);
+    const spreadsheetRole = roleValue(row.rolOriginal);
+    if (spreadsheetRole && row.roles.includes(spreadsheetRole)) {
+      preferredRoleByPerson.set(personKey, spreadsheetRole);
+    }
   });
   const roleCounts = ROLE_OPTIONS.map((role) => ({
     ...role,
-    count: [...peopleByRole.values()].filter((roles) => roles.has(role.value)).length,
+    count: [...rolesByPerson.entries()].filter(([personKey, roles]) => (
+      (preferredRoleByPerson.get(personKey)
+        || ROLE_SUMMARY_PRIORITY.find((candidate) => roles.has(candidate))) === role.value
+    )).length,
   }));
   const reviewRows = rows.filter((row) => row.status !== "not_found");
   const filterByAdvancedOptions = (row) => {
@@ -1074,20 +1054,15 @@ export default function BulkParticipantImport({ onPendingChange }) {
       && (advancedFilters.dependency === "all"
         || normalizeText(row.dependenciaOriginal) === normalizeText(advancedFilters.dependency));
   };
-  const rowsForCurrentSupport = (items) => items.filter((row) => (
-    supportFilter === "all"
-      || (supportFilter === "none" && !row.modalidadVariable)
-      || row.modalidadVariable === supportFilter
-  ));
-  const filteredReviewRows = rowsForCurrentSupport(reviewRows).filter(filterByAdvancedOptions);
-  const supportFilteredNotFoundRows = rowsForCurrentSupport(notFoundRows);
-  const filteredNotFoundRows = supportFilteredNotFoundRows.filter(filterByAdvancedOptions);
+  const filteredReviewRows = reviewRows.filter(filterByAdvancedOptions);
+  const filteredNotFoundRows = notFoundRows.filter(filterByAdvancedOptions);
   const programOptions = uniqueValues(rows, "programaOriginal");
   const dependencyOptions = uniqueValues(rows, "dependenciaOriginal");
-  const advancedFiltersActive = Object.entries(advancedFilters).some(([key, value]) => (
+  const advancedFilterCount = Object.entries(advancedFilters).filter(([key, value]) => (
     key === "search" ? Boolean(value.trim()) : value !== "all"
-  ));
-  const enabledNotFoundRows = supportFilteredNotFoundRows.filter((row) => autoCreateRoles[row.tipo]);
+  )).length;
+  const advancedFiltersActive = advancedFilterCount > 0;
+  const enabledNotFoundRows = notFoundRows.filter((row) => autoCreateRoles[row.tipo]);
   const readyUnknownRows = enabledNotFoundRows.filter(
     (row) => (!requiresSupportVariable || row.modalidadVariable)
       && Object.keys(validarBorradorNoEncontrado(prepareUnknownParticipant(row))).length === 0,
@@ -1172,9 +1147,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
     setRows([]);
     setUnknownDrafts({});
     setEditingUnknownId("");
-    setSupportFilter("all");
     setAdvancedFilters({ search: "", role: "all", status: "all", program: "all", dependency: "all" });
-    setBulkSupportVariable("");
     setUnknownSubmitError("");
     setUnknownBatchProgress({ completed: 0, total: 0 });
     setAutoCreateRoles({ EXTERNO: false, EGRESADO: false, COLABORADOR: false });
@@ -1216,60 +1189,18 @@ export default function BulkParticipantImport({ onPendingChange }) {
     }));
   }
 
-  function updateRowSupport(row, modalidadVariable) {
-    setRows((current) => current.map((item) => (
-      item.id === row.id
-        ? {
-          ...item,
-          modalidadVariable,
-          ...(item.status === "invalid" && modalidadVariable ? {
-            status: "failed",
-            message: "Modalidad asignada. Se volverá a validar al registrar.",
-          } : {}),
-        }
-        : item
-    )));
+  function startNextSupportBatch() {
+    if (hasPendingParticipants || registering || validating || creatingUnknownBatch) return;
+    setRows([]);
+    setBulkSupportVariable("");
+    setUnknownDrafts({});
+    setEditingUnknownId("");
+    setAdvancedFilters({ search: "", role: "all", status: "all", program: "all", dependency: "all" });
     setUnknownSubmitError("");
-  }
-
-  function applySupportToPendingRows() {
-    setRows((current) => current.map((row) => (
-      ["valid", "failed", "invalid", "not_found"].includes(row.status)
-        ? {
-          ...row,
-          modalidadVariable: bulkSupportVariable,
-          ...(row.status === "invalid" && bulkSupportVariable ? {
-            status: "failed",
-            message: "Modalidad asignada. Se volverá a validar al registrar.",
-          } : {}),
-        }
-        : row
-    )));
-    setUnknownDrafts((current) => Object.fromEntries(
-      Object.entries(current).map(([id, draft]) => [
-        id,
-        { ...draft, modalidadVariable: bulkSupportVariable },
-      ]),
-    ));
-  }
-
-  function supportSelect(row, disabled = false) {
-    return (
-      <select
-        className="form-select vec-bulk-support-select"
-        value={row.modalidadVariable || ""}
-        onChange={(event) => updateRowSupport(row, event.target.value)}
-        disabled={disabled || !supportOptions.length}
-        aria-label={`Variable o modalidad para ${row.nombres || row.apellidos || row.identificacion || row.codigoInstitucional || `fila ${row.rowNumber}`}`}
-      >
-        <option value="">{requiresSupportVariable ? "Selecciona una modalidad" : "Sin apoyo asignado"}</option>
-        {supportOptions.map((option) => (
-          <option key={option.programaCompleto} value={option.programaCompleto}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    );
+    setUnknownBatchProgress({ completed: 0, total: 0 });
+    setAutoCreateRoles({ EXTERNO: false, EGRESADO: false, COLABORADOR: false });
+    setError("");
+    setMessage("");
   }
 
   async function registerUnknownParticipant(row) {
@@ -1382,6 +1313,10 @@ export default function BulkParticipantImport({ onPendingChange }) {
       setError("Selecciona primero la actividad a la que se registrarán los participantes.");
       return;
     }
+    if (requiresSupportVariable && !bulkSupportVariable) {
+      setError("Selecciona primero la modalidad del grupo.");
+      return;
+    }
     const extension = file.name.split(".").pop()?.toLocaleLowerCase("es");
     if (!["xlsx", "xls", "xlsm", "xlsb", "ods", "csv", "tsv"].includes(extension)) {
       setError("Formato no compatible. Sube una hoja de cálculo .xlsx, .xls, .xlsm, .xlsb, .ods, .csv o .tsv.");
@@ -1405,8 +1340,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
       });
       const parsedRows = parseWorkbook(spreadsheet).map((row) => ({
         ...row,
-        modalidadVariable: resolveSupportVariable(row.apoyoOriginal, supportOptions)
-          || bulkSupportVariable
+        modalidadVariable: bulkSupportVariable
           || (selectedEvent?.variablesModalidades?.length === 1 && supportOptions.length === 1
             ? supportOptions[0].programaCompleto
             : ""),
@@ -1552,7 +1486,6 @@ export default function BulkParticipantImport({ onPendingChange }) {
       { header: "Teléfono alternativo", key: "telefono", width: 24 },
       { header: "Dirección", key: "direccion", width: 32 },
       { header: "Municipio de residencia", key: "municipio", width: 26 },
-      { header: "Apoyo", key: "apoyo", width: 32 },
     ];
     const header = sheet.getRow(1);
     header.height = 26;
@@ -1561,7 +1494,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF002855" } };
       cell.alignment = { vertical: "middle" };
     });
-    sheet.autoFilter = { from: "A1", to: "N1" };
+    sheet.autoFilter = { from: "A1", to: "M1" };
     const instructions = workbook.addWorksheet("Instrucciones");
     instructions.addRows([
       ["Plantilla para registrar participantes"],
@@ -1572,10 +1505,9 @@ export default function BulkParticipantImport({ onPendingChange }) {
       ["Si la persona no está registrada con ningún rol de participante, podrás crear su perfil como egresado, colaborador o externo. No se creará como estudiante."],
       ["Al marcar en la revisión los roles permitidos, se crean los perfiles en las tablas sat.egresados, sat.colaboradores o sat.externos (requiere la migración de roles) y se inscriben en la actividad seleccionada."],
       ["Para fechas usa AAAA-MM-DD o DD/MM/AAAA; el género debe coincidir con una opción permitida en el formulario."],
-      ["El apoyo puede asignarse por fila en la revisión; también puedes asignar el mismo apoyo en lote."],
-      ["Si incluyes una columna llamada Apoyo, Tipo de apoyo o Modalidad, el sistema intentará asociar el valor con las opciones de la actividad."],
+      ["Elige la modalidad antes de subir el archivo; todas las personas de esta lista quedarán inscritas en esa modalidad. La columna Apoyo del archivo no cambia esta selección."],
       ["Se admiten archivos .xlsx, .xls, .xlsm, .xlsb, .ods, .csv y .tsv; encabezados en distintas filas o una columna identificable sin encabezados."],
-      ["Las personas no encontradas se muestran aparte. Puedes crear su perfil con el rol correspondiente y asignar el apoyo elegido a esa inscripción."],
+      ["Las personas no encontradas se muestran aparte. Puedes crear su perfil con el rol correspondiente; conservarán la modalidad elegida para esta lista."],
       ["Actividad", selectedEvent
         ? `${selectedEvent.actividad} · ${selectedEvent.periodo}`
         : "Elige la actividad antes de cargar la lista."],
@@ -1603,7 +1535,6 @@ export default function BulkParticipantImport({ onPendingChange }) {
     const event = events.find((item) => item.id === value);
     const options = supportOptionsForEvent(event);
     setSelectedEventId(value);
-    setSupportFilter("all");
     setAdvancedFilters({ search: "", role: "all", status: "all", program: "all", dependency: "all" });
     setBulkSupportVariable(
       event?.variablesModalidades?.length === 1 && options.length === 1
@@ -1668,50 +1599,50 @@ export default function BulkParticipantImport({ onPendingChange }) {
             </div>
           </div>
           <div className="vec-bulk-registration__modalities">
-            <span className="form-label">Modalidades y apoyos de esta actividad</span>
+            <span className="form-label">
+              {supportOptions.length > 1
+                ? "Paso 2 · Elige la modalidad para este grupo"
+                : "Modalidades y apoyos de esta actividad"}
+            </span>
             {supportOptions.length > 0 ? (
               <>
-                <div className="vec-bulk-registration__modality-list">
-                  {supportOptions.map((item) => (
-                    <span className="vec-bulk-registration__chip" key={item.programaCompleto}>
-                      <strong>{item.subdivision || item.programaCompleto}</strong>
-                      <small>{item.tipoApoyo || "Apoyo asociado"}</small>
-                    </span>
+                <div className="vec-bulk-registration__modality-options" role="group" aria-label="Modalidad para esta lista">
+                  {supportOptions.map((item, index) => (
+                    <button
+                      className={`vec-bulk-registration__modality-option${bulkSupportVariable === item.programaCompleto ? " is-selected" : ""}`}
+                      type="button"
+                      key={item.programaCompleto}
+                      aria-pressed={bulkSupportVariable === item.programaCompleto}
+                      onClick={() => setBulkSupportVariable(item.programaCompleto)}
+                      disabled={rows.length > 0 || validating || registering || creatingUnknownBatch}
+                    >
+                      <span className="vec-bulk-registration__modality-option-icon" aria-hidden="true">
+                        <i className={`fas ${index % 2 === 0 ? "fa-layer-group" : "fa-hand-holding-heart"}`}></i>
+                      </span>
+                      <span className="vec-bulk-registration__modality-option-copy">
+                        <strong>{item.subdivision || item.programaCompleto}</strong>
+                        <small>{item.tipoApoyo || item.programa || "Modalidad de la actividad"}</small>
+                      </span>
+                      <i className="fas fa-check-circle vec-bulk-registration__modality-check" aria-hidden="true"></i>
+                    </button>
                   ))}
                 </div>
                 <span className="vec-bulk-registration__no-modalities">
-                  Selecciona una opción para la lista o asigna distintas modalidades por participante.
+                  {rows.length > 0
+                    ? `Modalidad definida para este grupo: ${supportOptions.find((item) => item.programaCompleto === bulkSupportVariable)?.label || "sin modalidad"}. Para cargar otra, termina este grupo y pulsa «Cargar otro grupo».`
+                    : supportOptions.length > 1
+                      ? bulkSupportVariable
+                        ? "La modalidad elegida se aplicará a todas las personas del archivo."
+                        : "Selecciona la modalidad antes de cargar el archivo."
+                      : bulkSupportVariable
+                        ? "La modalidad seleccionada se aplicará a todas las personas del archivo."
+                        : "Selecciona la modalidad antes de cargar el archivo."}
                 </span>
               </>
             ) : (
               <span className="vec-bulk-registration__no-modalities">Esta actividad no tiene apoyos configurados.</span>
             )}
           </div>
-        </div>
-      )}
-
-      {selectedEvent && supportOptions.length > 0 && (
-        <div className="vec-bulk-registration__section">
-          <label className="form-label" htmlFor="bulk-default-support">
-            Paso 2 · ¿Todos tendrán la misma modalidad? <span className="vec-bulk-step-optional">Opcional</span>
-          </label>
-          <select
-            className="form-select"
-            id="bulk-default-support"
-            value={bulkSupportVariable}
-            onChange={(event) => setBulkSupportVariable(event.target.value)}
-            disabled={validating || registering || creatingUnknownBatch}
-          >
-            <option value="">Elegir por participante después de cargar el archivo</option>
-            {supportOptions.map((option) => (
-              <option key={option.programaCompleto} value={option.programaCompleto}>
-                {[option.subdivision || option.programaCompleto, option.tipoApoyo].filter(Boolean).join(" · ")}
-              </option>
-            ))}
-          </select>
-          <p className="vec-bulk-registration__hint">
-            Si todos van a la misma, elígela aquí. Si no, déjalo como está y podrás escoger una para cada persona después.
-          </p>
         </div>
       )}
 
@@ -1764,16 +1695,37 @@ export default function BulkParticipantImport({ onPendingChange }) {
             <li>Se aceptan Excel, CSV y otros archivos de hojas de cálculo.</li>
           </ul>
         </div>
-        <label className={`vec-bulk-registration__dropzone${!selectedEvent ? " is-disabled" : ""}`} htmlFor="bulk-file">
+        <label
+          className={`vec-bulk-registration__dropzone${!selectedEvent || (requiresSupportVariable && !bulkSupportVariable) ? " is-disabled" : ""}`}
+          htmlFor="bulk-file"
+        >
           <i className="fas fa-cloud-arrow-up" aria-hidden="true"></i>
           <strong>{validating ? "Estamos leyendo tu lista..." : "Selecciona aquí tu archivo"}</strong>
-          <span>{selectedEvent ? "Cuando lo elijas, revisaremos la lista antes de inscribir a alguien." : "Primero elige una actividad."}</span>
+          <span>
+            {!selectedEvent
+              ? "Primero elige una actividad."
+              : requiresSupportVariable && !bulkSupportVariable
+                ? "Primero selecciona arriba la modalidad para este grupo."
+                : rows.length > 0
+                  ? "La modalidad elegida se conservará para este grupo."
+                  : "Cuando lo elijas, revisaremos la lista antes de inscribir a alguien."}
+          </span>
+          <span className="vec-bulk-registration__dropzone-hint">
+            <i className="fas fa-file-excel" aria-hidden="true"></i>
+            Excel o CSV · máximo 25 MB · hasta 500 personas
+          </span>
           <input
             id="bulk-file"
             type="file"
             accept=".xlsx,.xls,.xlsm,.xlsb,.ods,.csv,.tsv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
             onChange={handleFile}
-            disabled={!selectedEvent || validating || registering || creatingUnknownBatch}
+            disabled={
+              !selectedEvent
+              || (requiresSupportVariable && !bulkSupportVariable)
+              || validating
+              || registering
+              || creatingUnknownBatch
+            }
           />
         </label>
       </div>
@@ -1797,11 +1749,14 @@ export default function BulkParticipantImport({ onPendingChange }) {
               {notFoundRows.length > 0 && <span className="vec-bulk-preview__count is-not-found"><strong>{notFoundRows.length}</strong><small>Sin perfil</small></span>}
             </div>
           </div>
-          <section className="vec-bulk-role-summary" aria-label="Personas encontradas por rol">
-            <h4>Personas encontradas por rol</h4>
+          <section className="vec-bulk-role-summary" aria-label="Personas únicas por rol">
+            <h4>Personas únicas por rol</h4>
             <div className="vec-bulk-role-summary__counts">
               {roleCounts.map((role) => (
-                <span key={role.value}>
+                <span
+                  className={`vec-role-badge vec-role-${role.value.toLowerCase()}`}
+                  key={role.value}
+                >
                   <strong>{role.count}</strong>
                   <small>{role.label}</small>
                 </span>
@@ -1809,57 +1764,18 @@ export default function BulkParticipantImport({ onPendingChange }) {
             </div>
           </section>
 
-          {supportOptions.length > 0 && (
-            <div className="vec-bulk-support-tools">
-              <label className="form-group">
-                <span className="form-label">Ver solo una modalidad</span>
-                <select
-                  className="form-select"
-                  value={supportFilter}
-                  onChange={(event) => setSupportFilter(event.target.value)}
-                >
-                  <option value="all">Todos los programas y modalidades</option>
-                  <option value="none">Sin apoyo asignado</option>
-                  {supportOptions.map((option) => (
-                    <option key={option.programaCompleto} value={option.programaCompleto}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="form-group">
-                <span className="form-label">Poner la misma modalidad a todos los pendientes</span>
-                <select
-                  className="form-select"
-                  value={bulkSupportVariable}
-                  onChange={(event) => setBulkSupportVariable(event.target.value)}
-                >
-                  <option value="">{requiresSupportVariable ? "Selecciona una modalidad" : "Sin apoyo asignado"}</option>
-                  {supportOptions.map((option) => (
-                    <option key={option.programaCompleto} value={option.programaCompleto}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                className="btn btn-outline btn-sm"
-                type="button"
-                onClick={applySupportToPendingRows}
-                disabled={
-                  (requiresSupportVariable && !bulkSupportVariable)
-                  || !rows.some((row) => ["valid", "failed", "invalid", "not_found"].includes(row.status))
-                }
-              >
-                Poner modalidad a todos
-              </button>
-            </div>
-          )}
-
           <details className="vec-bulk-advanced-filters">
             <summary>
-              <span><i className="fas fa-sliders" aria-hidden="true"></i> Filtros avanzados</span>
-              <small>Busca y acota la lista que estás revisando</small>
+              <span className="vec-bulk-advanced-filters__title">
+                <i className="fas fa-sliders" aria-hidden="true"></i>
+                Filtros avanzados
+                {advancedFilterCount > 0 && (
+                  <strong className="vec-bulk-advanced-filters__active-count">
+                    {advancedFilterCount} activo{advancedFilterCount === 1 ? "" : "s"}
+                  </strong>
+                )}
+              </span>
+              <small>Busca y organiza los resultados visibles</small>
             </summary>
             <div className="vec-bulk-advanced-filters__fields">
               <label className="form-group">
@@ -1968,7 +1884,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
                 </div>
                 <div>
                   <h4>Personas que encontramos</h4>
-                  <p>Comprueba sus nombres y los roles que aparecen. Si la actividad tiene modalidades, elige la correcta.</p>
+                  <p>Comprueba sus nombres y roles. Todas las personas de esta lista conservarán la modalidad seleccionada arriba.</p>
                 </div>
                 <span className="vec-bulk-preview__section-total">{filteredReviewRows.length} registros</span>
               </div>
@@ -1985,12 +1901,9 @@ export default function BulkParticipantImport({ onPendingChange }) {
                         <td><span className="vec-bulk-preview__person-name">{[row.nombres, row.apellidos].filter(Boolean).join(" ") || "—"}</span></td>
                         <td>{(row.roles || []).map((role) => ROLE_OPTIONS.find((item) => item.value === role)?.label || role).join(", ") || "—"}</td>
                         <td>
-                          {supportSelect(row, !["valid", "failed"].includes(row.status) || registering || creatingUnknownBatch)}
-                          {row.apoyoOriginal && !row.modalidadVariable && (
-                            <small className="vec-bulk-row-message">
-                              El valor «{row.apoyoOriginal}» del Excel no coincide con las opciones; selecciónalo manualmente.
-                            </small>
-                          )}
+                          {row.modalidadVariable
+                            ? <span className="vec-bulk-modality-label">{supportOptions.find((option) => option.programaCompleto === row.modalidadVariable)?.label || row.modalidadVariable}</span>
+                            : <span className="vec-bulk-modality-label is-unassigned">Sin modalidad</span>}
                         </td>
                         <td>
                           <span className={`vec-bulk-row-status vec-bulk-row-status--${row.status}`}>
@@ -2005,11 +1918,11 @@ export default function BulkParticipantImport({ onPendingChange }) {
               </div>
             </section>
           )}
-          {(supportFilter !== "all" || advancedFiltersActive)
+          {advancedFiltersActive
             && filteredReviewRows.length === 0
             && filteredNotFoundRows.length === 0 && (
             <p className="vec-bulk-registration__hint" role="status">
-              No hay participantes que coincidan con los filtros seleccionados.
+              No hay participantes que coincidan con los filtros de búsqueda.
             </p>
           )}
 
@@ -2070,14 +1983,18 @@ export default function BulkParticipantImport({ onPendingChange }) {
               </div>
               <div className="table-responsive vec-bulk-preview__table">
                 <table className="table vec-bulk-preview__data-table">
-                  <thead><tr><th>Fila</th><th>Documento o código</th><th>Nombre de la lista</th><th>Modalidad</th><th>Ayuda</th></tr></thead>
+                  <thead><tr><th>Fila</th><th>Documento o código</th><th>Nombre de la lista</th><th>Modalidad del grupo</th><th>Ayuda</th></tr></thead>
                   <tbody>
                     {filteredNotFoundRows.map((row) => (
                       <tr key={row.id}>
                         <td><span className="vec-bulk-preview__row-number">{row.rowNumber}</span></td>
                         <td><span className="vec-bulk-preview__identifier">{row.identificacion || row.codigoInstitucional || "—"}</span></td>
                         <td><span className="vec-bulk-preview__person-name">{[row.nombres, row.apellidos].filter(Boolean).join(" ") || row.nombreCompleto || "Sin nombre en el archivo"}</span></td>
-                        <td>{supportSelect(row, registering || creatingUnknownBatch || creatingRowId === row.id)}</td>
+                        <td>
+                          {row.modalidadVariable
+                            ? <span className="vec-bulk-modality-label">{supportOptions.find((option) => option.programaCompleto === row.modalidadVariable)?.label || row.modalidadVariable}</span>
+                            : <span className="vec-bulk-modality-label is-unassigned">Sin modalidad</span>}
+                        </td>
                         <td className="vec-bulk-unregistered__action">
                           <span className="vec-bulk-row-status vec-bulk-row-status--not-found">Falta crear su perfil</span>
                           <small className="vec-bulk-row-message">{row.message}</small>
@@ -2105,10 +2022,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
               draft={unknownDrafts[editingUnknownRow.id]}
               busy={creatingRowId === editingUnknownRow.id}
               serverError={unknownSubmitError}
-              supportOptions={supportOptions}
-              modalityVariable={editingUnknownRow.modalidadVariable}
               onChange={(name, value) => updateUnknownDraft(editingUnknownRow, name, value)}
-              onSupportChange={(value) => updateRowSupport(editingUnknownRow, value)}
               onClose={() => setEditingUnknownId("")}
               onSubmit={() => registerUnknownParticipant(editingUnknownRow)}
             />
@@ -2122,7 +2036,20 @@ export default function BulkParticipantImport({ onPendingChange }) {
 
           <div className="vec-bulk-preview__actions">
             {allRegistered && (
-              <span className="vec-bulk-preview__complete"><i className="fas fa-check-circle" aria-hidden="true"></i> Proceso finalizado</span>
+              <>
+                <span className="vec-bulk-preview__complete"><i className="fas fa-check-circle" aria-hidden="true"></i> Grupo inscrito correctamente</span>
+                {supportOptions.length > 1 && !hasPendingParticipants && (
+                  <button
+                    className="btn btn-outline"
+                    type="button"
+                    onClick={startNextSupportBatch}
+                    disabled={registering || creatingUnknownBatch || validating}
+                  >
+                    <i className="fas fa-layer-group" aria-hidden="true"></i>
+                    Nueva carga · elegir apoyo
+                  </button>
+                )}
+              </>
             )}
             <button
               className="btn btn-primary"

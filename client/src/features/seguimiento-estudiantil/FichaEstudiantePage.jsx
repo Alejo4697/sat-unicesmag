@@ -459,166 +459,168 @@ export default function FichaEstudiantePage() {
       {estudiante && !cargando && (
         <>
           {/* Header del Estudiante */}
-          <div className="student-header-card">
-            <div
-              className="student-avatar"
-              style={{
-                background: "var(--brand-primary-50)",
-                border: "2px solid var(--border-light)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "2.25rem",
-                color: "var(--brand-primary)"
-              }}
-            >
-              <i className="fas fa-user-graduate"></i>
-            </div>
-            <div className="student-meta">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8 }}>
-                <div>
-                  <h2 className="student-name">
-                    {estudiante.nombres} {estudiante.apellidos}
-                  </h2>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 2 }}>
-                    <span style={{ fontSize: "0.85rem", color: "var(--text-muted)", fontWeight: 600 }}>
-                      Doc: <strong style={{ color: "var(--text-main)" }}>{estudiante.documento}</strong>
-                    </span>
-                    <span style={{ color: "var(--border-light)" }}>|</span>
-                    <span style={{ fontSize: "0.85rem", color: "var(--text-muted)", fontWeight: 600 }}>
-                      Código Activo: <strong style={{ color: "var(--brand-primary)" }}>{programaActivo?.codigo || estudiante.codigo}</strong>
-                    </span>
-                    {estudiante.tieneDoblePrograma && (
-                      <span
-                        className="badge"
-                        style={{
-                          background: "linear-gradient(135deg, #1e3a8a, #7c3aed)",
-                          color: "#fff",
-                          fontWeight: 700,
-                          fontSize: "0.72rem",
-                          padding: "0.22rem 0.6rem",
-                          letterSpacing: "0.3px",
-                          borderRadius: "12px",
-                          boxShadow: "0 2px 4px rgba(0,0,0,0.12)"
-                        }}
-                      >
-                        <i className="fas fa-layer-group" style={{ marginRight: 4 }}></i> Doble Matrícula Institucional (Pregrado + Posgrado)
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <span className={`badge ${riskBadgeClass(sesionActiva?.riesgoGlobal || estudiante.riesgoGlobal)}`}>
-                    <i className="fas fa-circle-exclamation"></i> Riesgo Global {sesionActiva?.riesgoGlobal || estudiante.riesgoGlobal}
-                  </span>
-                </div>
+          <div className="card" style={{ padding: "1rem 1.25rem", marginBottom: "0.85rem" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
+              <div
+                className="student-avatar"
+                style={{
+                  width: 52,
+                  height: 52,
+                  borderRadius: "50%",
+                  background: "var(--brand-primary-50)",
+                  border: "1.5px solid var(--border-light)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "1.4rem",
+                  color: "var(--brand-primary)",
+                  flexShrink: 0
+                }}
+              >
+                <i className="fas fa-user-graduate"></i>
               </div>
 
-              {/* Selector de programas cuando el estudiante cursa pregrado y posgrado simultáneos */}
-              {estudiante.programasMatriculados && estudiante.programasMatriculados.length > 1 && (
-                <div
-                  style={{
-                    marginTop: "0.75rem",
-                    padding: "0.6rem 0.85rem",
-                    background: "var(--surface-subtle)",
-                    borderRadius: "var(--radius-md)",
-                    border: "1px solid var(--border-light)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    flexWrap: "wrap",
-                    gap: "0.5rem"
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", color: "var(--text-main)", fontWeight: 600 }}>
-                    <i className="fas fa-arrows-split-up-and-left" style={{ color: "var(--brand-primary)" }}></i>
-                    <span>Programas Enlazados:</span>
-                  </div>
-                  <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
-                    {estudiante.programasMatriculados.map((prog, idx) => {
-                      const esPosgrado = prog.nivel === "POSGRADO";
-                      const seleccionado = programaActivoIdx === idx;
-                      return (
-                        <button
-                          key={prog.id_matriculas || prog.codigo || idx}
-                          type="button"
-                          onClick={() => setProgramaActivoIdx(idx)}
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: "0.45rem",
-                            padding: "0.32rem 0.75rem",
-                            borderRadius: "20px",
-                            border: seleccionado
-                              ? `2px solid ${esPosgrado ? "#7c3aed" : "var(--brand-primary)"}`
-                              : "1px solid var(--border-light)",
-                            background: seleccionado
-                              ? (esPosgrado ? "rgba(124, 58, 237, 0.12)" : "rgba(30, 58, 138, 0.1)")
-                              : "var(--surface-card)",
-                            color: seleccionado
-                              ? (esPosgrado ? "#6d28d9" : "var(--brand-primary)")
-                              : "var(--text-muted)",
-                            fontWeight: seleccionado ? 700 : 500,
-                            fontSize: "0.78rem",
-                            cursor: "pointer",
-                            transition: "all 0.15s ease"
-                          }}
-                        >
-                          <i className={esPosgrado ? "fas fa-award" : "fas fa-graduation-cap"}></i>
-                          <span>
-                            <strong>{prog.nivel}:</strong> {prog.programa} ({prog.codigo})
+              <div style={{ flex: 1, minWidth: "240px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: "1.15rem", fontWeight: 700, color: "var(--text-main)", letterSpacing: "-0.2px" }}>
+                      {estudiante.nombres} {estudiante.apellidos}
+                    </h2>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 3 }}>
+                      <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                        Doc: <strong style={{ color: "var(--text-main)", fontWeight: 600 }}>{estudiante.documento}</strong>
+                      </span>
+                      <span style={{ color: "var(--border-light)", fontSize: "0.75rem" }}>•</span>
+                      <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                        <i className="fas fa-envelope" style={{ marginRight: 3, opacity: 0.7 }}></i>
+                        {estudiante.email}
+                      </span>
+                      {estudiante.telefono && (
+                        <>
+                          <span style={{ color: "var(--border-light)", fontSize: "0.75rem" }}>•</span>
+                          <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                            <i className="fas fa-phone" style={{ marginRight: 3, opacity: 0.7 }}></i>
+                            {estudiante.telefono}
                           </span>
-                          {seleccionado && <i className="fas fa-circle-check" style={{ fontSize: "0.8rem", marginLeft: 2 }}></i>}
-                        </button>
-                      );
-                    })}
+                        </>
+                      )}
+                      {estudiante.acudiente && (
+                        <>
+                          <span style={{ color: "var(--border-light)", fontSize: "0.75rem" }}>•</span>
+                          <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                            <i className="fas fa-user-group" style={{ marginRight: 3, opacity: 0.7 }}></i>
+                            Acudiente: <strong style={{ color: "var(--text-main)", fontWeight: 600 }}>{estudiante.acudiente.nombre}</strong> ({estudiante.acudiente.parentesco})
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span className={`badge ${riskBadgeClass(sesionActiva?.riesgoGlobal || estudiante.riesgoGlobal)}`} style={{ fontSize: "0.74rem", padding: "0.22rem 0.55rem", fontWeight: 600 }}>
+                      <i className="fas fa-circle-exclamation" style={{ marginRight: 3 }}></i>
+                      Riesgo {sesionActiva?.riesgoGlobal || estudiante.riesgoGlobal}
+                    </span>
                   </div>
                 </div>
-              )}
 
-              <div className="student-tags" style={{ marginTop: "0.75rem" }}>
-                <span className="tag-item" style={{ fontWeight: 600 }}>
-                  <i className={programaActivo?.nivel === "POSGRADO" ? "fas fa-award" : "fas fa-graduation-cap"}></i>
-                  <span
-                    style={{
-                      padding: "2px 6px",
-                      borderRadius: 4,
-                      fontSize: "0.7rem",
-                      background: programaActivo?.nivel === "POSGRADO" ? "#7c3aed" : "var(--brand-primary)",
-                      color: "#fff",
-                      marginRight: 6
-                    }}
-                  >
-                    {programaActivo?.nivel || "PREGRADO"}
-                  </span>
-                  {programaActivo?.programa || estudiante.programa}
-                </span>
-                <span className="tag-item">
-                  <i className="fas fa-calendar"></i> Semestre {programaActivo?.semestre || estudiante.semestre} ({programaActivo?.periodo || estudiante.periodo})
-                </span>
-                {programaActivo?.jornada && (
-                  <span className="tag-item">
-                    <i className="fas fa-clock"></i> Jornada {programaActivo.jornada}
-                  </span>
-                )}
-                <span className="tag-item">
-                  <i className="fas fa-envelope"></i> {estudiante.email}
-                </span>
-                <span className="tag-item">
-                  <i className="fas fa-phone"></i> {estudiante.telefono}
-                </span>
-                {estudiante.acudiente && (
-                  <span className="tag-item">
-                    <i className="fas fa-user-group"></i> Acudiente: {estudiante.acudiente.nombre} ({estudiante.acudiente.parentesco}) -{" "}
-                    {estudiante.acudiente.telefono}
-                  </span>
+                {/* Si cursa múltiples programas (Doble Matrícula): Selector compacto */}
+                {estudiante.programasMatriculados && estudiante.programasMatriculados.length > 1 ? (
+                  <div style={{ marginTop: "0.75rem", paddingTop: "0.65rem", borderTop: "1px dashed var(--border-light)" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", marginBottom: "0.4rem" }}>
+                      <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.4px" }}>
+                        <i className="fas fa-layer-group" style={{ marginRight: 4, color: "var(--brand-primary)" }}></i>
+                        Programas Matriculados:
+                      </span>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "0.5rem" }}>
+                      {estudiante.programasMatriculados.map((prog, idx) => {
+                        const esPosgrado = prog.nivel === "POSGRADO";
+                        const seleccionado = programaActivoIdx === idx;
+                        const themeColor = esPosgrado ? "#7c3aed" : "var(--brand-primary)";
+                        return (
+                          <div
+                            key={prog.id_matriculas || prog.codigo || idx}
+                            onClick={() => setProgramaActivoIdx(idx)}
+                            style={{
+                              cursor: "pointer",
+                              padding: "0.5rem 0.75rem",
+                              borderRadius: "var(--radius-sm)",
+                              border: seleccionado ? `1.5px solid ${themeColor}` : "1px solid var(--border-light)",
+                              background: seleccionado
+                                ? (esPosgrado ? "rgba(124, 58, 237, 0.05)" : "var(--brand-primary-50)")
+                                : "var(--surface-subtle)",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              transition: "all 0.15s ease"
+                            }}
+                          >
+                            <div style={{ display: "flex", alignItems: "center", gap: "0.55rem" }}>
+                              <div
+                                style={{
+                                  width: 28,
+                                  height: 28,
+                                  borderRadius: "6px",
+                                  background: seleccionado ? themeColor : "var(--surface-card)",
+                                  color: seleccionado ? "#fff" : themeColor,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  fontSize: "0.85rem",
+                                  border: `1px solid ${seleccionado ? "transparent" : "var(--border-light)"}`
+                                }}
+                              >
+                                <i className={esPosgrado ? "fas fa-award" : "fas fa-graduation-cap"}></i>
+                              </div>
+                              <div>
+                                <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                                  <span style={{ fontSize: "0.65rem", fontWeight: 800, color: themeColor, textTransform: "uppercase" }}>
+                                    {prog.nivel}
+                                  </span>
+                                  <span style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>• Cód: <strong>{prog.codigo}</strong></span>
+                                </div>
+                                <h4 style={{ margin: "1px 0 0", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-main)" }}>
+                                  {prog.programa}
+                                </h4>
+                                <div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>
+                                  Semestre {prog.semestre} ({prog.periodo}) • {prog.jornada || "Diurna"}
+                                </div>
+                              </div>
+                            </div>
+                            <div>
+                              {seleccionado ? (
+                                <span style={{ fontSize: "0.68rem", fontWeight: 700, color: themeColor, display: "inline-flex", alignItems: "center", gap: 3, background: "var(--surface-card)", padding: "0.15rem 0.4rem", borderRadius: "10px", border: `1px solid ${themeColor}` }}>
+                                  <i className="fas fa-circle-check"></i> Activo
+                                </span>
+                              ) : (
+                                <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "inline-flex", alignItems: "center", gap: 2 }}>
+                                  Ver <i className="fas fa-chevron-right" style={{ fontSize: "0.6rem" }}></i>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ marginTop: "0.5rem", display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
+                    <span className="badge" style={{ background: "var(--brand-primary-50)", color: "var(--brand-primary)", fontWeight: 600, fontSize: "0.72rem" }}>
+                      <i className="fas fa-graduation-cap" style={{ marginRight: 3 }}></i>
+                      {programaActivo?.nivel || "PREGRADO"}: {programaActivo?.programa || estudiante.programa}
+                    </span>
+                    <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>
+                      Cód: <strong style={{ color: "var(--text-main)" }}>{programaActivo?.codigo || estudiante.codigo}</strong> • Semestre {programaActivo?.semestre || estudiante.semestre} ({programaActivo?.periodo || estudiante.periodo}) • {programaActivo?.jornada || "Diurna"}
+                    </span>
+                  </div>
                 )}
               </div>
             </div>
           </div>
 
           {/* Navegación por pestañas */}
-          <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+          <div className="card" style={{ padding: 0, overflow: "hidden", marginBottom: "0.85rem" }}>
             <div style={{ display: "flex", borderBottom: "1px solid var(--border-light)", overflowX: "auto", flexWrap: "nowrap" }}>
               {TABS.map((t) => {
                 const habilitada =
@@ -632,18 +634,21 @@ export default function FichaEstudiantePage() {
                     title={habilitada ? undefined : "Tu rol no tiene acceso a este módulo"}
                     onClick={() => setTab(t.id)}
                     style={{
-                      padding: "0.75rem 1.1rem",
+                      padding: "0.6rem 1rem",
                       border: "none",
                       background: "transparent",
                       borderBottom: `2px solid ${activa ? "var(--brand-primary)" : "transparent"}`,
                       color: !habilitada ? "var(--text-muted)" : activa ? "var(--brand-primary)" : "var(--text-main)",
                       fontWeight: activa ? 700 : 500,
-                      fontSize: "0.85rem",
+                      fontSize: "0.8rem",
                       opacity: habilitada ? 1 : 0.5,
-                      cursor: habilitada ? "pointer" : "not-allowed"
+                      cursor: habilitada ? "pointer" : "not-allowed",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.4rem"
                     }}
                   >
-                    <i className={`fas ${t.icon}`}></i> {t.label}
+                    <i className={`fas ${t.icon}`} style={{ fontSize: "0.78rem" }}></i> {t.label}
                   </button>
                 );
               })}
@@ -668,448 +673,282 @@ export default function FichaEstudiantePage() {
 
           {tabActiva === "resumen" && (
             <>
-              <div className="dashboard-grid">
-                {/* -------------------------------------------------------------------------- */}
-                {/* TARJETA COMPARATIVA: INFORMACIÓN DE PROGRAMAS MATRICULADOS (PREGRADO / POSGRADO) */}
-                {/* -------------------------------------------------------------------------- */}
-                <div className="card" style={{ gridColumn: "span 12", padding: "1.25rem 1.5rem" }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      flexWrap: "wrap",
-                      gap: "0.5rem",
-                      marginBottom: "1rem",
-                      borderBottom: "1px solid var(--border-light)",
-                      paddingBottom: "0.75rem"
-                    }}
-                  >
-                    <div>
-                      <h3 className="card-title" style={{ margin: 0, display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                        <i className="fas fa-graduation-cap" style={{ color: "var(--brand-primary)" }}></i>
-                        <span>
-                          {estudiante.tieneDoblePrograma
-                            ? "Doble Matrícula Institucional: Pregrado y Posgrado Simultáneos"
-                            : "Información de Programas Matriculados"}
-                        </span>
-                      </h3>
-                      <p style={{ margin: "4px 0 0", fontSize: "0.8rem", color: "var(--text-muted)" }}>
-                        {estudiante.tieneDoblePrograma
-                          ? "El estudiante cursa simultáneamente dos programas en UNICESMAG. A continuación se detalla la información académica de ambos niveles:"
-                          : "Detalle del programa y nivel formativo en el que se encuentra matriculado el estudiante:"}
-                      </p>
-                    </div>
-                    {estudiante.tieneDoblePrograma && (
-                      <span
-                        className="badge"
-                        style={{
-                          background: "rgba(124, 58, 237, 0.1)",
-                          color: "#6d28d9",
-                          border: "1px solid rgba(124, 58, 237, 0.25)",
-                          fontWeight: 700,
-                          padding: "0.35rem 0.65rem",
-                          fontSize: "0.75rem"
-                        }}
-                      >
-                        <i className="fas fa-check-double" style={{ marginRight: 4 }}></i> 2 Matrículas Activas
-                      </span>
-                    )}
-                  </div>
-
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns:
-                        estudiante.programasMatriculados && estudiante.programasMatriculados.length > 1
-                          ? "repeat(auto-fit, minmax(min(100%, 280px), 1fr))"
-                          : "1fr",
-                      gap: "1rem"
-                    }}
-                  >
-                    {(estudiante.programasMatriculados && estudiante.programasMatriculados.length > 0
-                      ? estudiante.programasMatriculados
-                      : [programaActivo]
-                    ).map((prog, idx) => {
-                      const esPosgrado = prog.nivel === "POSGRADO";
-                      const esActivo = programaActivoIdx === idx;
-                      const colorTema = esPosgrado ? "#7c3aed" : "var(--brand-primary)";
-                      const bgTema = esPosgrado ? "rgba(124, 58, 237, 0.04)" : "rgba(30, 58, 138, 0.03)";
-                      const borderTema = esActivo ? (esPosgrado ? "#7c3aed" : "var(--brand-primary)") : "var(--border-light)";
-
-                      return (
-                        <div
-                          key={prog.id_matriculas || prog.codigo || idx}
-                          style={{
-                            border: `2px solid ${borderTema}`,
-                            borderRadius: "var(--radius-md)",
-                            background: bgTema,
-                            padding: "1rem 1.25rem",
-                            display: "flex",
-                            flexDirection: "column",
-                            justifyContent: "space-between",
-                            boxShadow: esActivo ? "0 4px 12px rgba(0,0,0,0.06)" : "none",
-                            transition: "all 0.15s ease"
-                          }}
-                        >
-                          <div>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "0.5rem", marginBottom: "0.75rem" }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-                                <span
-                                  style={{
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                    width: 36,
-                                    height: 36,
-                                    borderRadius: "50%",
-                                    background: esPosgrado ? "rgba(124, 58, 237, 0.15)" : "var(--brand-primary-50)",
-                                    color: colorTema,
-                                    fontSize: "1rem"
-                                  }}
-                                >
-                                  <i className={esPosgrado ? "fas fa-award" : "fas fa-graduation-cap"}></i>
-                                </span>
-                                <div>
-                                  <span
-                                    style={{
-                                      display: "inline-block",
-                                      fontSize: "0.68rem",
-                                      fontWeight: 800,
-                                      letterSpacing: "0.5px",
-                                      textTransform: "uppercase",
-                                      color: colorTema
-                                    }}
-                                  >
-                                    {prog.nivel}
-                                  </span>
-                                  <h4 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 700, color: "var(--text-main)" }}>
-                                    {prog.programa}
-                                  </h4>
-                                </div>
-                              </div>
-                              <span className="badge badge-status-process" style={{ fontSize: "0.68rem" }}>
-                                {prog.estado || "Activa"}
-                              </span>
-                            </div>
-
-                            <div
-                              style={{
-                                display: "grid",
-                                gridTemplateColumns: "repeat(2, 1fr)",
-                                gap: "0.6rem 1rem",
-                                marginTop: "0.5rem",
-                                fontSize: "0.8rem",
-                                background: "var(--surface-card)",
-                                padding: "0.75rem",
-                                borderRadius: "var(--radius-sm)",
-                                border: "1px solid var(--border-light)"
-                              }}
-                            >
-                              <div>
-                                <span style={{ color: "var(--text-muted)", display: "block", fontSize: "0.72rem" }}>Código Estudiantil</span>
-                                <strong style={{ color: colorTema, fontSize: "0.9rem" }}>{prog.codigo}</strong>
-                              </div>
-                              <div>
-                                <span style={{ color: "var(--text-muted)", display: "block", fontSize: "0.72rem" }}>Semestre / Periodo</span>
-                                <strong>Semestre {prog.semestre} ({prog.periodo})</strong>
-                              </div>
-                              <div>
-                                <span style={{ color: "var(--text-muted)", display: "block", fontSize: "0.72rem" }}>Jornada</span>
-                                <strong>{prog.jornada || "Diurna"}</strong>
-                              </div>
-                              <div>
-                                <span style={{ color: "var(--text-muted)", display: "block", fontSize: "0.72rem" }}>Promedio Ponderado</span>
-                                <strong style={{ color: "var(--brand-accent)", fontSize: "0.95rem" }}>
-                                  {prog.promedioAcademico !== null && prog.promedioAcademico !== undefined
-                                    ? Number(prog.promedioAcademico).toFixed(2)
-                                    : "Sin calificar"}
-                                </strong>
-                              </div>
-                              <div>
-                                <span style={{ color: "var(--text-muted)", display: "block", fontSize: "0.72rem" }}>Materias Evaluadas</span>
-                                <strong>
-                                  {prog.asignaturasEvaluadas || (prog.asignaturas?.filter(a => a.notaActual !== null)?.length || 0)} de {prog.totalAsignaturas || (prog.asignaturas?.length || 0)}
-                                </strong>
-                              </div>
-                              <div style={{ gridColumn: "span 2" }}>
-                                <span style={{ color: "var(--text-muted)", display: "block", fontSize: "0.72rem" }}>Inasistencias Acumuladas</span>
-                                <strong style={{ color: (prog.inasistenciasAcumuladas > 5 ? "var(--risk-high-text)" : "var(--text-main)") }}>
-                                  {prog.inasistenciasAcumuladas || 0} Horas
-                                </strong>
-                              </div>
-                            </div>
-                          </div>
-
-                          {estudiante.programasMatriculados && estudiante.programasMatriculados.length > 1 && (
-                            <div style={{ marginTop: "0.85rem", paddingTop: "0.6rem", borderTop: "1px dashed var(--border-light)", display: "flex", justifyContent: "flex-end" }}>
-                              {esActivo ? (
-                                <span style={{ fontSize: "0.75rem", fontWeight: 700, color: colorTema, display: "inline-flex", alignItems: "center", gap: 5 }}>
-                                  <i className="fas fa-circle-check"></i> Activo en la Ficha 360°
-                                </span>
-                              ) : (
-                                <button
-                                  type="button"
-                                  className="btn btn-sm btn-outline"
-                                  onClick={() => setProgramaActivoIdx(idx)}
-                                  style={{ fontSize: "0.75rem", padding: "0.25rem 0.65rem", display: "inline-flex", alignItems: "center", gap: 4 }}
-                                >
-                                  <i className="fas fa-arrow-right-arrow-left"></i> Cambiar vista a este programa
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Tarjeta de Métricas Académicas */}
-                <div className="card" style={{ gridColumn: "span 5", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-                  <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: "0.5rem" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                      <i className="fas fa-chart-line" style={{ color: "var(--brand-primary)", fontSize: "1.1rem" }}></i>
-                      <h3 className="card-title" style={{ margin: 0 }}>Métricas Académicas</h3>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-                      {estudiante.programasMatriculados && estudiante.programasMatriculados.length > 1 && (
-                        <div style={{ display: "flex", gap: "0.2rem" }}>
-                          {estudiante.programasMatriculados.map((p, idx) => (
-                            <button
-                              key={p.codigo || idx}
-                              type="button"
-                              className={`btn btn-sm ${programaActivoIdx === idx ? "btn-primary" : "btn-outline"}`}
-                              onClick={() => setProgramaActivoIdx(idx)}
-                              style={{ fontSize: "0.68rem", padding: "0.15rem 0.45rem", height: "auto" }}
-                              title={`Ver métricas de ${p.programa}`}
-                            >
-                              {p.nivel === "POSGRADO" ? "Posgrado" : "Pregrado"}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                      <span
-                        style={{
-                          fontSize: "0.68rem",
-                          fontWeight: 700,
-                          padding: "2px 6px",
-                          borderRadius: 4,
-                          background: programaActivo?.nivel === "POSGRADO" ? "rgba(124, 58, 237, 0.1)" : "var(--brand-primary-50)",
-                          color: programaActivo?.nivel === "POSGRADO" ? "#6d28d9" : "var(--brand-primary)"
-                        }}
-                      >
-                        {programaActivo?.nivel || "PREGRADO"}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Resumen principal: Promedio Ponderado e Inasistencias */}
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem", textAlign: "center", background: "var(--surface-subtle)", padding: "0.6rem", borderRadius: "var(--radius-sm)" }}>
-                    <div>
-                      <span style={{ fontFamily: "var(--font-display)", fontSize: "1.75rem", fontWeight: 700, color: "var(--brand-accent)", display: "block", lineHeight: 1.1 }}>
-                        {programaActivo?.promedioAcademico !== null && programaActivo?.promedioAcademico !== undefined
-                          ? Number(programaActivo.promedioAcademico).toFixed(2)
-                          : "Sin calificar"}
-                      </span>
-                      <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", margin: "2px 0 0", fontWeight: 600 }}>Promedio Ponderado</p>
-                    </div>
-                    <div style={{ borderLeft: "1px solid var(--border-light)" }}>
-                      <span style={{ fontFamily: "var(--font-display)", fontSize: "1.75rem", fontWeight: 700, color: ((programaActivo?.inasistenciasAcumuladas || 0) > 5 ? "var(--risk-high-text)" : "var(--text-main)"), display: "block", lineHeight: 1.1 }}>
-                        {programaActivo?.inasistenciasAcumuladas ?? estudiante.inasistenciasAcumuladas ?? 0}
-                      </span>
-                      <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", margin: "2px 0 0", fontWeight: 600 }}>Horas Inasistencia</p>
-                    </div>
-                  </div>
-
-                  {/* Desglose de Notas por Corte del Semestre */}
-                  <div style={{ border: "1px solid var(--border-light)", borderRadius: "var(--radius-sm)", padding: "0.6rem 0.75rem" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4rem" }}>
-                      <span style={{ fontSize: "0.74rem", fontWeight: 700, color: "var(--text-main)" }}>
-                        <i className="fas fa-layer-group" style={{ marginRight: 4, color: "var(--brand-primary)" }}></i>
-                        Calificaciones Promedio por Corte:
-                      </span>
-                      <span style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Periodo {programaActivo?.periodo || "2026-1"}</span>
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "0.4rem", textAlign: "center" }}>
-                      <div style={{ background: "rgba(30, 58, 138, 0.04)", padding: "0.35rem 0.2rem", borderRadius: "4px" }}>
-                        <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block" }}>Corte 1</span>
-                        <strong style={{ fontSize: "0.95rem", color: programaActivo?.promedioCorte1 !== null && programaActivo?.promedioCorte1 !== undefined ? (Number(programaActivo.promedioCorte1) >= 3.0 ? "var(--risk-low-text)" : "var(--risk-high-text)") : "var(--text-muted)" }}>
-                          {programaActivo?.promedioCorte1 !== null && programaActivo?.promedioCorte1 !== undefined ? Number(programaActivo.promedioCorte1).toFixed(2) : "Pendiente"}
-                        </strong>
-                      </div>
-                      <div style={{ background: "rgba(30, 58, 138, 0.04)", padding: "0.35rem 0.2rem", borderRadius: "4px" }}>
-                        <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block" }}>Corte 2</span>
-                        <strong style={{ fontSize: "0.95rem", color: programaActivo?.promedioCorte2 !== null && programaActivo?.promedioCorte2 !== undefined ? (Number(programaActivo.promedioCorte2) >= 3.0 ? "var(--risk-low-text)" : "var(--risk-high-text)") : "var(--text-muted)" }}>
-                          {programaActivo?.promedioCorte2 !== null && programaActivo?.promedioCorte2 !== undefined ? Number(programaActivo.promedioCorte2).toFixed(2) : "En curso"}
-                        </strong>
-                      </div>
-                      <div style={{ background: "rgba(30, 58, 138, 0.04)", padding: "0.35rem 0.2rem", borderRadius: "4px" }}>
-                        <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block" }}>Corte 3</span>
-                        <strong style={{ fontSize: "0.95rem", color: programaActivo?.promedioCorte3 !== null && programaActivo?.promedioCorte3 !== undefined ? (Number(programaActivo.promedioCorte3) >= 3.0 ? "var(--risk-low-text)" : "var(--risk-high-text)") : "var(--text-muted)" }}>
-                          {programaActivo?.promedioCorte3 !== null && programaActivo?.promedioCorte3 !== undefined ? Number(programaActivo.promedioCorte3).toFixed(2) : "Pendiente"}
-                        </strong>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Estado de Asignaturas: Conteo Aprobadas / Riesgo */}
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "0.4rem", textAlign: "center", fontSize: "0.72rem" }}>
-                    <div style={{ background: "rgba(16, 185, 129, 0.07)", border: "1px solid rgba(16, 185, 129, 0.2)", borderRadius: "4px", padding: "0.35rem" }}>
-                      <span style={{ color: "#047857", fontWeight: 700, display: "block", fontSize: "1.05rem" }}>
-                        {programaActivo?.materiasAprobadas ?? (programaActivo?.asignaturas?.filter(a => a.notaActual !== null && a.notaActual >= 3.0)?.length || 0)}
-                      </span>
-                      <span style={{ color: "#065f46" }}>Aprobadas (≥3.0)</span>
-                    </div>
-                    <div style={{ background: "rgba(239, 68, 68, 0.07)", border: "1px solid rgba(239, 68, 68, 0.2)", borderRadius: "4px", padding: "0.35rem" }}>
-                      <span style={{ color: "#b91c1c", fontWeight: 700, display: "block", fontSize: "1.05rem" }}>
-                        {programaActivo?.materiasEnRiesgo ?? (programaActivo?.asignaturas?.filter(a => a.notaActual !== null && a.notaActual < 3.0)?.length || 0)}
-                      </span>
-                      <span style={{ color: "#991b1b" }}>En Riesgo (&lt;3.0)</span>
-                    </div>
-                    <div style={{ background: "var(--surface-subtle)", border: "1px solid var(--border-light)", borderRadius: "4px", padding: "0.35rem" }}>
-                      <span style={{ color: "var(--text-main)", fontWeight: 700, display: "block", fontSize: "1.05rem" }}>
-                        {programaActivo?.totalAsignaturas || (programaActivo?.asignaturas?.length || 0)}
-                      </span>
-                      <span style={{ color: "var(--text-muted)" }}>Total Materias</span>
-                    </div>
-                  </div>
-
-                  {/* Resumen comparativo de promedios cuando cursa Pregrado y Posgrado */}
-                  {estudiante.tieneDoblePrograma && (
-                    <div
+              {/* -------------------------------------------------------------------------- */}
+              {/* FRANJA DE KPIS EJECUTIVOS (4 TARJETAS CON TIPOGRAFÍA PROPORCIONADA)       */}
+              {/* -------------------------------------------------------------------------- */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "0.75rem", marginBottom: "0.85rem" }}>
+                {/* KPI 1: Promedio Ponderado */}
+                <div className="card" style={{ padding: "0.75rem 1rem", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.4px" }}>
+                      Promedio Ponderado
+                    </span>
+                    <span
                       style={{
-                        borderTop: "1px solid var(--border-light)",
-                        paddingTop: "0.5rem",
-                        marginTop: "0.2rem",
-                        fontSize: "0.74rem",
-                        background: "var(--surface-subtle)",
-                        padding: "0.5rem 0.6rem",
-                        borderRadius: "var(--radius-sm)"
+                        width: 26,
+                        height: 26,
+                        borderRadius: "6px",
+                        background: "var(--brand-primary-50)",
+                        color: "var(--brand-primary)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "0.75rem"
                       }}
                     >
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-                        <span style={{ color: "var(--text-muted)" }}>Pregrado ({estudiante.programaPregrado?.codigo}):</span>
-                        <strong style={{ color: "var(--brand-primary)" }}>
-                          {estudiante.programaPregrado?.promedioAcademico !== null && estudiante.programaPregrado?.promedioAcademico !== undefined
-                            ? Number(estudiante.programaPregrado.promedioAcademico).toFixed(2)
-                            : "Sin calificar"}
-                        </strong>
-                      </div>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-                        <span style={{ color: "var(--text-muted)" }}>Posgrado ({estudiante.programaPosgrado?.codigo}):</span>
-                        <strong style={{ color: "#7c3aed" }}>
-                          {estudiante.programaPosgrado?.promedioAcademico !== null && estudiante.programaPosgrado?.promedioAcademico !== undefined
-                            ? Number(estudiante.programaPosgrado.promedioAcademico).toFixed(2)
-                            : "Sin calificar"}
-                        </strong>
-                      </div>
-                      <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px dashed var(--border-light)", paddingTop: 3, marginTop: 3 }}>
-                        <span style={{ fontWeight: 600, color: "var(--text-main)" }}>Promedio Combinado Global:</span>
-                        <strong style={{ color: "var(--brand-accent)" }}>
-                          {estudiante.promedioGlobalEstudiante !== null && estudiante.promedioGlobalEstudiante !== undefined
-                            ? Number(estudiante.promedioGlobalEstudiante).toFixed(2)
-                            : "N/A"}
-                        </strong>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Listado de asignaturas con sus notas en la tarjeta de métricas */}
-                  {programaActivo?.asignaturas && programaActivo.asignaturas.length > 0 ? (
-                    <div style={{ borderTop: "1px solid var(--border-light)", paddingTop: "0.5rem" }}>
-                      <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--text-main)", display: "block", marginBottom: "0.3rem" }}>
-                        <i className="fas fa-book-bookmark" style={{ marginRight: 4, color: "var(--brand-primary)" }}></i>
-                        Calificaciones de Materias ({programaActivo.asignaturas.length}):
-                      </span>
-                      <div style={{ maxHeight: "160px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "0.3rem" }}>
-                        {programaActivo.asignaturas.map((asig, i) => {
-                          const nota = asig.notaActual !== null ? Number(asig.notaActual) : null;
-                          return (
-                            <div
-                              key={asig.codigo || i}
-                              style={{
-                                display: "flex",
-                                justifyContent: "space-between",
-                                alignItems: "center",
-                                fontSize: "0.72rem",
-                                padding: "0.25rem 0.45rem",
-                                borderRadius: "4px",
-                                background: "var(--surface-subtle)"
-                              }}
-                            >
-                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "230px" }} title={asig.nombre}>
-                                <strong>{asig.codigo}</strong> - {asig.nombre}
-                              </span>
-                              <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexShrink: 0 }}>
-                                {asig.corte1 !== null && (
-                                  <span style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>
-                                    C1: {Number(asig.corte1).toFixed(1)}
-                                  </span>
-                                )}
-                                <span
-                                  style={{
-                                    fontWeight: 700,
-                                    padding: "1px 5px",
-                                    borderRadius: "3px",
-                                    fontSize: "0.72rem",
-                                    background: nota !== null ? (nota >= 3.0 ? "rgba(16, 185, 129, 0.15)" : "rgba(239, 68, 68, 0.15)") : "transparent",
-                                    color: nota !== null ? (nota >= 3.0 ? "var(--risk-low-text)" : "var(--risk-high-text)") : "var(--text-muted)"
-                                  }}
-                                >
-                                  {nota !== null ? nota.toFixed(1) : "—"}
-                                </span>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ) : (
-                    <div style={{ borderTop: "1px solid var(--border-light)", paddingTop: "0.5rem", fontSize: "0.72rem", color: "var(--text-muted)", textAlign: "center" }}>
-                      <i className="fas fa-circle-info" style={{ marginRight: 4 }}></i>
-                      No hay notas cargadas para este programa.
-                    </div>
-                  )}
-
-                  <div style={{ borderTop: "1px solid var(--border-light)", paddingTop: "0.4rem", fontSize: "0.72rem", color: "var(--text-muted)", textAlign: "center" }}>
-                    Programa: <strong>{programaActivo?.programa || estudiante.programa}</strong> ({programaActivo?.codigo || estudiante.codigo})
+                      <i className="fas fa-chart-line"></i>
+                    </span>
+                  </div>
+                  <div style={{ marginTop: "0.35rem" }}>
+                    <span style={{ fontSize: "1.35rem", fontWeight: 700, color: "var(--brand-accent)", lineHeight: 1.1 }}>
+                      {programaActivo?.promedioAcademico !== null && programaActivo?.promedioAcademico !== undefined
+                        ? Number(programaActivo.promedioAcademico).toFixed(2)
+                        : "Sin nota"}
+                    </span>
+                    <p style={{ margin: "3px 0 0", fontSize: "0.68rem", color: "var(--text-muted)" }}>
+                      {programaActivo?.promedioAcademico !== null && Number(programaActivo?.promedioAcademico) < 3.0 ? (
+                        <span style={{ color: "var(--risk-high-text)", fontWeight: 600 }}>
+                          <i className="fas fa-triangle-exclamation" style={{ marginRight: 2 }}></i> Bajo umbral (3.0)
+                        </span>
+                      ) : (
+                        <span style={{ color: "var(--risk-low-text)", fontWeight: 600 }}>
+                          <i className="fas fa-check" style={{ marginRight: 2 }}></i> Desempeño satisfactorio
+                        </span>
+                      )}
+                    </p>
                   </div>
                 </div>
 
-                {/* Tarjeta de Semaforización por Dimensiones y Encuesta */}
-                <div className="card" style={{ gridColumn: "span 7" }}>
-                  <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
+                {/* KPI 2: Inasistencias */}
+                <div className="card" style={{ padding: "0.75rem 1rem", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.4px" }}>
+                      Inasistencias
+                    </span>
+                    <span
+                      style={{
+                        width: 26,
+                        height: 26,
+                        borderRadius: "6px",
+                        background: (programaActivo?.inasistenciasAcumuladas || 0) > 5 ? "rgba(239, 68, 68, 0.1)" : "var(--surface-subtle)",
+                        color: (programaActivo?.inasistenciasAcumuladas || 0) > 5 ? "var(--risk-high-text)" : "var(--text-muted)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "0.75rem"
+                      }}
+                    >
+                      <i className="fas fa-clock"></i>
+                    </span>
+                  </div>
+                  <div style={{ marginTop: "0.35rem" }}>
+                    <span
+                      style={{
+                        fontSize: "1.35rem",
+                        fontWeight: 700,
+                        color: (programaActivo?.inasistenciasAcumuladas || 0) > 5 ? "var(--risk-high-text)" : "var(--text-main)",
+                        lineHeight: 1.1
+                      }}
+                    >
+                      {programaActivo?.inasistenciasAcumuladas || 0} <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>h</span>
+                    </span>
+                    <p style={{ margin: "3px 0 0", fontSize: "0.68rem", color: "var(--text-muted)" }}>
+                      {(programaActivo?.inasistenciasAcumuladas || 0) > 5 ? (
+                        <span style={{ color: "var(--risk-high-text)", fontWeight: 600 }}>
+                          <i className="fas fa-circle-exclamation" style={{ marginRight: 2 }}></i> Requiere atención
+                        </span>
+                      ) : (
+                        "Acumulado en el periodo"
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                {/* KPI 3: Avance de Asignaturas */}
+                <div className="card" style={{ padding: "0.75rem 1rem", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.4px" }}>
+                      Materias del Periodo
+                    </span>
+                    <span
+                      style={{
+                        width: 26,
+                        height: 26,
+                        borderRadius: "6px",
+                        background: "rgba(16, 185, 129, 0.1)",
+                        color: "var(--risk-low-text)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "0.75rem"
+                      }}
+                    >
+                      <i className="fas fa-book-open"></i>
+                    </span>
+                  </div>
+                  <div style={{ marginTop: "0.35rem" }}>
+                    <span style={{ fontSize: "1.35rem", fontWeight: 700, color: "var(--text-main)", lineHeight: 1.1 }}>
+                      {programaActivo?.asignaturasEvaluadas || (programaActivo?.asignaturas?.filter(a => a.notaActual !== null)?.length || 0)}
+                      <span style={{ fontSize: "0.95rem", fontWeight: 500, color: "var(--text-muted)" }}>
+                        /{programaActivo?.totalAsignaturas || (programaActivo?.asignaturas?.length || 0)}
+                      </span>
+                    </span>
+                    <p style={{ margin: "3px 0 0", fontSize: "0.68rem", color: "var(--text-muted)" }}>
+                      <strong style={{ color: "var(--risk-low-text)" }}>{programaActivo?.materiasAprobadas ?? 0} aprobadas</strong> • <strong style={{ color: "var(--risk-high-text)" }}>{programaActivo?.materiasEnRiesgo ?? 0} en riesgo</strong>
+                    </p>
+                  </div>
+                </div>
+
+                {/* KPI 4: Diagnóstico Caracterización */}
+                <div className="card" style={{ padding: "0.75rem 1rem", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.4px" }}>
+                      Caracterización
+                    </span>
+                    <span
+                      style={{
+                        width: 26,
+                        height: 26,
+                        borderRadius: "6px",
+                        background: "var(--brand-primary-50)",
+                        color: "var(--brand-primary)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "0.75rem"
+                      }}
+                    >
+                      <i className="fas fa-clipboard-user"></i>
+                    </span>
+                  </div>
+                  <div style={{ marginTop: "0.35rem" }}>
+                    <span style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--text-main)", lineHeight: 1.1 }}>
+                      {caracterizaciones.length > 0 ? "Completada" : "Sin encuesta"}
+                    </span>
+                    <p style={{ margin: "3px 0 0", fontSize: "0.68rem", color: "var(--text-muted)" }}>
+                      {caracterizaciones.length > 0 ? (
+                        <span style={{ color: "var(--brand-primary)", fontWeight: 600 }}>
+                          34 variables institucionales
+                        </span>
+                      ) : (
+                        "Pendiente por diligenciar"
+                      )}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Si tiene Doble Matrícula: Resumen comparativo limpio y discreto */}
+              {estudiante.tieneDoblePrograma && (
+                <div
+                  style={{
+                    background: "var(--surface-card)",
+                    border: "1px solid var(--border-light)",
+                    borderRadius: "var(--radius-sm)",
+                    padding: "0.55rem 0.95rem",
+                    marginBottom: "0.85rem",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    gap: "0.5rem"
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                    <i className="fas fa-scale-balanced" style={{ color: "var(--brand-primary)", fontSize: "0.95rem" }}></i>
+                    <span style={{ fontSize: "0.76rem", fontWeight: 600, color: "var(--text-main)" }}>
+                      Comparativo de Doble Matrícula:
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap", fontSize: "0.76rem" }}>
                     <div>
-                      <h3 className="card-title" style={{ margin: 0 }}>
-                        Semaforización por Encuesta de Caracterización
+                      <span style={{ color: "var(--text-muted)", marginRight: 4 }}>Pregrado ({estudiante.programaPregrado?.codigo}):</span>
+                      <strong style={{ color: "var(--brand-primary)", fontSize: "0.85rem" }}>
+                        {estudiante.programaPregrado?.promedioAcademico !== null && estudiante.programaPregrado?.promedioAcademico !== undefined
+                          ? Number(estudiante.programaPregrado.promedioAcademico).toFixed(2)
+                          : "—"}
+                      </strong>
+                    </div>
+                    <div>
+                      <span style={{ color: "var(--text-muted)", marginRight: 4 }}>Posgrado ({estudiante.programaPosgrado?.codigo}):</span>
+                      <strong style={{ color: "#7c3aed", fontSize: "0.85rem" }}>
+                        {estudiante.programaPosgrado?.promedioAcademico !== null && estudiante.programaPosgrado?.promedioAcademico !== undefined
+                          ? Number(estudiante.programaPosgrado.promedioAcademico).toFixed(2)
+                          : "—"}
+                      </strong>
+                    </div>
+                    {estudiante.promedioGlobalEstudiante !== null && estudiante.promedioGlobalEstudiante !== undefined && (
+                      <div style={{ borderLeft: "1px solid var(--border-light)", paddingLeft: "0.75rem" }}>
+                        <span style={{ color: "var(--text-muted)", marginRight: 4 }}>Promedio Combinado:</span>
+                        <strong style={{ color: "var(--brand-accent)", fontSize: "0.88rem" }}>
+                          {Number(estudiante.promedioGlobalEstudiante).toFixed(2)}
+                        </strong>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* -------------------------------------------------------------------------- */}
+              {/* FILA DE 2 COLUMNAS: CORTES ACADÉMICOS Y SEMAFORIZACIÓN 5D                   */}
+              {/* -------------------------------------------------------------------------- */}
+              <div className="dashboard-grid" style={{ marginBottom: "0.85rem", gap: "0.75rem" }}>
+                {/* Columna Izquierda (span 5): Calificaciones por Corte del Semestre */}
+                <div className="card" style={{ gridColumn: "span 5", padding: "0.85rem 1rem", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: "0.4rem", borderBottom: "1px solid var(--border-light)" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                        <i className="fas fa-layer-group" style={{ color: "var(--brand-primary)", fontSize: "0.85rem" }}></i>
+                        <h3 style={{ margin: 0, fontSize: "0.85rem", fontWeight: 700, color: "var(--text-main)" }}>Promedios por Corte</h3>
+                      </div>
+                      <span style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>
+                        {programaActivo?.periodo || "2026-1"}
+                      </span>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "0.5rem", textAlign: "center", marginTop: "0.5rem" }}>
+                      <div style={{ background: "rgba(30, 58, 138, 0.03)", padding: "0.45rem 0.2rem", borderRadius: "var(--radius-sm)", border: "1px solid var(--border-light)" }}>
+                        <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block", fontWeight: 600 }}>Corte 1</span>
+                        <strong style={{ fontSize: "0.95rem", display: "block", marginTop: 2, color: programaActivo?.promedioCorte1 !== null && programaActivo?.promedioCorte1 !== undefined ? (Number(programaActivo.promedioCorte1) >= 3.0 ? "var(--risk-low-text)" : "var(--risk-high-text)") : "var(--text-muted)" }}>
+                          {programaActivo?.promedioCorte1 !== null && programaActivo?.promedioCorte1 !== undefined ? Number(programaActivo.promedioCorte1).toFixed(2) : "—"}
+                        </strong>
+                      </div>
+                      <div style={{ background: "rgba(30, 58, 138, 0.03)", padding: "0.45rem 0.2rem", borderRadius: "var(--radius-sm)", border: "1px solid var(--border-light)" }}>
+                        <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block", fontWeight: 600 }}>Corte 2</span>
+                        <strong style={{ fontSize: "0.95rem", display: "block", marginTop: 2, color: programaActivo?.promedioCorte2 !== null && programaActivo?.promedioCorte2 !== undefined ? (Number(programaActivo.promedioCorte2) >= 3.0 ? "var(--risk-low-text)" : "var(--risk-high-text)") : "var(--text-muted)" }}>
+                          {programaActivo?.promedioCorte2 !== null && programaActivo?.promedioCorte2 !== undefined ? Number(programaActivo.promedioCorte2).toFixed(2) : "—"}
+                        </strong>
+                      </div>
+                      <div style={{ background: "rgba(30, 58, 138, 0.03)", padding: "0.45rem 0.2rem", borderRadius: "var(--radius-sm)", border: "1px solid var(--border-light)" }}>
+                        <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block", fontWeight: 600 }}>Corte 3</span>
+                        <strong style={{ fontSize: "0.95rem", display: "block", marginTop: 2, color: programaActivo?.promedioCorte3 !== null && programaActivo?.promedioCorte3 !== undefined ? (Number(programaActivo.promedioCorte3) >= 3.0 ? "var(--risk-low-text)" : "var(--risk-high-text)") : "var(--text-muted)" }}>
+                          {programaActivo?.promedioCorte3 !== null && programaActivo?.promedioCorte3 !== undefined ? Number(programaActivo.promedioCorte3).toFixed(2) : "—"}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: "0.75rem", paddingTop: "0.5rem", borderTop: "1px solid var(--border-light)", fontSize: "0.7rem", color: "var(--text-muted)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span>Programa:</span>
+                    <strong style={{ color: "var(--text-main)", fontWeight: 600 }}>{programaActivo?.programa}</strong>
+                  </div>
+                </div>
+
+                {/* Columna Derecha (span 7): Semaforización por Encuesta de Caracterización */}
+                <div className="card" style={{ gridColumn: "span 7", padding: "0.85rem 1rem" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.4rem", paddingBottom: "0.4rem", borderBottom: "1px solid var(--border-light)" }}>
+                    <div>
+                      <h3 style={{ margin: 0, fontSize: "0.85rem", fontWeight: 700, color: "var(--text-main)" }}>
+                        Semaforización por Caracterización
                       </h3>
-                      <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                      <span style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>
                         {caracterizaciones.length > 0
-                          ? `Sesión registrada: ${sesionActiva?.fecha || "2025 II"} (${sesionActiva?.promedioGlobal ? `Promedio: ${sesionActiva.promedioGlobal}/4.0` : ""})`
+                          ? `Sesión: ${sesionActiva?.fecha || "2026-1"} • 5 Dimensiones`
                           : "Encuesta institucional de permanencia (34 ítems)"}
                       </span>
                     </div>
 
-                    {/* Botones de Acción / Sesiones */}
-                    <div style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
-                      {caracterizaciones.length > 1 && (
-                        <div style={{ display: "flex", gap: "0.25rem", marginRight: "0.4rem" }}>
-                          {caracterizaciones.map((s, idx) => (
-                            <button
-                              key={s.id || idx}
-                              type="button"
-                              className={`btn btn-sm ${sesionActivaIdx === idx ? "btn-primary" : "btn-outline"}`}
-                              onClick={() => setSesionActivaIdx(idx)}
-                              title={`Ver sesión del ${s.fecha}`}
-                              style={{ fontSize: "0.75rem", padding: "0.25rem 0.5rem" }}
-                            >
-                              Sesión #{idx + 1}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-
+                    <div style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
                       {caracterizaciones.length > 0 ? (
                         <button
                           type="button"
@@ -1119,16 +958,16 @@ export default function FichaEstudiantePage() {
                             setBusquedaPregunta("");
                             setModalRespuestasAbierto(true);
                           }}
-                          style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontWeight: 600 }}
+                          style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontWeight: 600, fontSize: "0.72rem", padding: "0.22rem 0.55rem" }}
                         >
                           <i className="fas fa-list-check"></i>
-                          <span>Ver Respuestas de la Encuesta</span>
+                          <span>Ver Respuestas</span>
                           <span
                             style={{
                               background: "rgba(255,255,255,0.25)",
-                              padding: "0.1rem 0.4rem",
-                              borderRadius: "10px",
-                              fontSize: "0.7rem"
+                              padding: "0.08rem 0.35rem",
+                              borderRadius: "8px",
+                              fontSize: "0.65rem"
                             }}
                           >
                             {sesionActiva?.detalles?.length || 34}
@@ -1138,7 +977,7 @@ export default function FichaEstudiantePage() {
                         <Link
                           to={`/caracterizacion`}
                           className="btn btn-sm btn-outline"
-                          style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}
+                          style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.72rem", padding: "0.22rem 0.55rem" }}
                         >
                           <i className="fas fa-file-pen"></i>
                           <span>Diligenciar Caracterización</span>
@@ -1148,7 +987,7 @@ export default function FichaEstudiantePage() {
                   </div>
 
                   {/* Bloques de Semaforización en las 5 Dimensiones */}
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 115px), 1fr))", gap: 8, textAlign: "center", marginTop: "0.75rem" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 95px), 1fr))", gap: 6, textAlign: "center", marginTop: "0.55rem" }}>
                     {Object.entries(DIMENSIONES_INFO).map(([key, info]) => {
                       const nivel = semaforizacion5D[key] || "Medio";
                       return (
@@ -1156,7 +995,7 @@ export default function FichaEstudiantePage() {
                           key={key}
                           style={{
                             ...riskBoxStyle(nivel),
-                            padding: "0.75rem 0.4rem",
+                            padding: "0.5rem 0.25rem",
                             borderRadius: "var(--radius-sm)",
                             cursor: caracterizaciones.length > 0 ? "pointer" : "default",
                             transition: "transform 0.15s ease"
@@ -1169,15 +1008,15 @@ export default function FichaEstudiantePage() {
                           }}
                           title={`Click para ver respuestas de ${info.nombre}`}
                         >
-                          <span style={{ fontSize: "0.68rem", fontWeight: 700, display: "block" }}>
+                          <span style={{ fontSize: "0.65rem", fontWeight: 700, display: "block" }}>
                             {info.label}
                           </span>
-                          <p style={{ fontWeight: 700, margin: "4px 0 0", fontSize: "0.85rem" }}>
+                          <p style={{ fontWeight: 700, margin: "2px 0 0", fontSize: "0.78rem" }}>
                             {nivel}
                           </p>
                           {caracterizaciones.length > 0 && (
-                            <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", display: "block", marginTop: "2px" }}>
-                              <i className="fas fa-eye" style={{ marginRight: "2px" }}></i> Ver ítems
+                            <span style={{ fontSize: "0.62rem", color: "var(--text-muted)", display: "block", marginTop: "1px" }}>
+                              <i className="fas fa-eye" style={{ marginRight: "2px" }}></i> Ver
                             </span>
                           )}
                         </div>
@@ -1185,171 +1024,153 @@ export default function FichaEstudiantePage() {
                     })}
                   </div>
                 </div>
+              </div>
 
-                {/* -------------------------------------------------------------------------- */}
-                {/* TABLA DE ASIGNATURAS Y CALIFICACIONES DETALLADAS DEL PROGRAMA              */}
-                {/* -------------------------------------------------------------------------- */}
-                <div className="card" style={{ gridColumn: "span 12", padding: "1.25rem 1.5rem" }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      flexWrap: "wrap",
-                      gap: "0.5rem",
-                      marginBottom: "1rem",
-                      borderBottom: "1px solid var(--border-light)",
-                      paddingBottom: "0.75rem"
-                    }}
-                  >
-                    <div>
-                      <h3 className="card-title" style={{ margin: 0, display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                        <i className="fas fa-book-bookmark" style={{ color: "var(--brand-primary)" }}></i>
-                        <span>
-                          Calificaciones y Asignaturas — {programaActivo?.programa} ({programaActivo?.nivel || "PREGRADO"})
-                        </span>
-                      </h3>
-                      <p style={{ margin: "4px 0 0", fontSize: "0.8rem", color: "var(--text-muted)" }}>
-                        Registro académico oficial con notas de corte, promedio ponderado e inasistencias acumuladas.
-                      </p>
-                    </div>
-
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-                      {estudiante.programasMatriculados && estudiante.programasMatriculados.length > 1 && (
-                        <div style={{ display: "flex", gap: "0.3rem" }}>
-                          {estudiante.programasMatriculados.map((p, idx) => (
-                            <button
-                              key={p.codigo || idx}
-                              type="button"
-                              className={`btn btn-sm ${programaActivoIdx === idx ? "btn-primary" : "btn-outline"}`}
-                              onClick={() => setProgramaActivoIdx(idx)}
-                              style={{ fontSize: "0.75rem", padding: "0.25rem 0.6rem" }}
-                            >
-                              <i className={p.nivel === "POSGRADO" ? "fas fa-award" : "fas fa-graduation-cap"} style={{ marginRight: 4 }}></i>
-                              {p.nivel}: {p.codigo}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-
-                      <span
-                        className="badge"
-                        style={{
-                          background: "var(--brand-primary-50)",
-                          color: "var(--brand-primary)",
-                          fontWeight: 700,
-                          fontSize: "0.75rem",
-                          padding: "0.35rem 0.65rem"
-                        }}
-                      >
-                        Promedio del Programa: {programaActivo?.promedioAcademico !== null && programaActivo?.promedioAcademico !== undefined ? Number(programaActivo.promedioAcademico).toFixed(2) : "Sin calificar"}
+              {/* -------------------------------------------------------------------------- */}
+              {/* TABLA PRINCIPAL Y ÚNICA DE ASIGNATURAS Y CALIFICACIONES DEL PROGRAMA       */}
+              {/* -------------------------------------------------------------------------- */}
+              <div className="card" style={{ padding: "0.85rem 1rem" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    gap: "0.4rem",
+                    marginBottom: "0.65rem",
+                    borderBottom: "1px solid var(--border-light)",
+                    paddingBottom: "0.5rem"
+                  }}
+                >
+                  <div>
+                    <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.88rem", fontWeight: 700, color: "var(--text-main)" }}>
+                      <i className="fas fa-book-bookmark" style={{ color: "var(--brand-primary)", fontSize: "0.85rem" }}></i>
+                      <span>
+                        Asignaturas y Calificaciones — {programaActivo?.programa}
                       </span>
-                    </div>
+                    </h3>
+                    <p style={{ margin: "2px 0 0", fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                      Semestre {programaActivo?.semestre} ({programaActivo?.periodo}) • Calificaciones de corte, nota definitiva e inasistencias acumuladas.
+                    </p>
                   </div>
 
-                  {programaActivo?.asignaturas && programaActivo.asignaturas.length > 0 ? (
-                    <div style={{ overflowX: "auto" }}>
-                      <table className="table" style={{ width: "100%", fontSize: "0.83rem", borderCollapse: "collapse" }}>
-                        <thead>
-                          <tr style={{ background: "var(--surface-subtle)", textAlign: "left", borderBottom: "2px solid var(--border-light)" }}>
-                            <th style={{ padding: "0.6rem 0.75rem", fontWeight: 700, width: "80px" }}>Cód.</th>
-                            <th style={{ padding: "0.6rem 0.75rem", fontWeight: 700 }}>Asignatura</th>
-                            <th style={{ padding: "0.6rem 0.75rem", fontWeight: 700, textAlign: "center", width: "95px" }}>Corte 1</th>
-                            <th style={{ padding: "0.6rem 0.75rem", fontWeight: 700, textAlign: "center", width: "95px" }}>Corte 2</th>
-                            <th style={{ padding: "0.6rem 0.75rem", fontWeight: 700, textAlign: "center", width: "95px" }}>Corte 3</th>
-                            <th style={{ padding: "0.6rem 0.75rem", fontWeight: 700, textAlign: "center", width: "120px" }}>Definitiva / Actual</th>
-                            <th style={{ padding: "0.6rem 0.75rem", fontWeight: 700, textAlign: "center", width: "100px" }}>Inasistencias</th>
-                            <th style={{ padding: "0.6rem 0.75rem", fontWeight: 700, textAlign: "center", width: "100px" }}>Estado</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {programaActivo.asignaturas.map((asig, idx) => {
-                            const notaNum = asig.notaActual !== null ? Number(asig.notaActual) : null;
-                            const notaColor = notaNum === null
-                              ? "var(--text-muted)"
-                              : notaNum >= 3.0
-                              ? "var(--risk-low-text)"
-                              : "var(--risk-high-text)";
-
-                            return (
-                              <tr
-                                key={asig.codigo || idx}
-                                style={{
-                                  borderBottom: "1px solid var(--border-light)",
-                                  background: idx % 2 === 0 ? "transparent" : "rgba(0,0,0,0.015)"
-                                }}
-                              >
-                                <td style={{ padding: "0.6rem 0.75rem", color: "var(--text-muted)", fontFamily: "monospace", fontSize: "0.8rem" }}>
-                                  {asig.codigo}
-                                </td>
-                                <td style={{ padding: "0.6rem 0.75rem", fontWeight: 600, color: "var(--text-main)" }}>
-                                  {asig.nombre}
-                                </td>
-                                <td style={{ padding: "0.6rem 0.75rem", textAlign: "center", fontWeight: asig.corte1 !== null ? 600 : 400 }}>
-                                  {asig.corte1 !== null ? Number(asig.corte1).toFixed(1) : <span style={{ color: "var(--text-muted)" }}>—</span>}
-                                </td>
-                                <td style={{ padding: "0.6rem 0.75rem", textAlign: "center", fontWeight: asig.corte2 !== null ? 600 : 400 }}>
-                                  {asig.corte2 !== null ? Number(asig.corte2).toFixed(1) : <span style={{ color: "var(--text-muted)" }}>—</span>}
-                                </td>
-                                <td style={{ padding: "0.6rem 0.75rem", textAlign: "center", fontWeight: asig.corte3 !== null ? 600 : 400 }}>
-                                  {asig.corte3 !== null ? Number(asig.corte3).toFixed(1) : <span style={{ color: "var(--text-muted)" }}>—</span>}
-                                </td>
-                                <td style={{ padding: "0.6rem 0.75rem", textAlign: "center" }}>
-                                  {notaNum !== null ? (
-                                    <span
-                                      style={{
-                                        display: "inline-block",
-                                        fontWeight: 700,
-                                        fontSize: "0.9rem",
-                                        color: notaColor,
-                                        background: notaNum >= 3.0 ? "rgba(16, 185, 129, 0.1)" : "rgba(239, 68, 68, 0.1)",
-                                        padding: "0.15rem 0.5rem",
-                                        borderRadius: "6px"
-                                      }}
-                                    >
-                                      {notaNum.toFixed(2)}
-                                    </span>
-                                  ) : (
-                                    <span style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>Sin nota</span>
-                                  )}
-                                </td>
-                                <td style={{ padding: "0.6rem 0.75rem", textAlign: "center" }}>
-                                  <span style={{ fontWeight: asig.inasistencias > 0 ? 700 : 400, color: asig.inasistencias > 4 ? "var(--risk-high-text)" : "var(--text-main)" }}>
-                                    {asig.inasistencias} h
-                                  </span>
-                                </td>
-                                <td style={{ padding: "0.6rem 0.75rem", textAlign: "center" }}>
-                                  <span
-                                    className={`badge ${
-                                      asig.estado === "APROBADA"
-                                        ? "badge-status-completed"
-                                        : asig.estado === "REPROBADA"
-                                        ? "badge-status-error"
-                                        : "badge-status-process"
-                                    }`}
-                                    style={{ fontSize: "0.68rem" }}
-                                  >
-                                    {asig.estado}
-                                  </span>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <div style={{ textAlign: "center", padding: "1.5rem", color: "var(--text-muted)", fontSize: "0.85rem" }}>
-                      <i className="fas fa-inbox" style={{ marginRight: 6 }}></i>
-                      No hay registros de materias sincronizadas para este programa.
-                    </div>
-                  )}
+                  <div>
+                    <span
+                      className="badge"
+                      style={{
+                        background: "var(--brand-primary-50)",
+                        color: "var(--brand-primary)",
+                        fontWeight: 600,
+                        fontSize: "0.72rem",
+                        padding: "0.22rem 0.5rem"
+                      }}
+                    >
+                      Promedio: {programaActivo?.promedioAcademico !== null && programaActivo?.promedioAcademico !== undefined ? Number(programaActivo.promedioAcademico).toFixed(2) : "Sin calificar"}
+                    </span>
+                  </div>
                 </div>
+
+                {programaActivo?.asignaturas && programaActivo.asignaturas.length > 0 ? (
+                  <div style={{ overflowX: "auto" }}>
+                    <table className="table" style={{ width: "100%", fontSize: "0.76rem", borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr style={{ background: "var(--surface-subtle)", textAlign: "left", borderBottom: "1.5px solid var(--border-light)" }}>
+                          <th style={{ padding: "0.45rem 0.6rem", fontWeight: 700, width: "75px" }}>Cód.</th>
+                          <th style={{ padding: "0.45rem 0.6rem", fontWeight: 700 }}>Asignatura</th>
+                          <th style={{ padding: "0.45rem 0.6rem", fontWeight: 700, textAlign: "center", width: "80px" }}>Corte 1</th>
+                          <th style={{ padding: "0.45rem 0.6rem", fontWeight: 700, textAlign: "center", width: "80px" }}>Corte 2</th>
+                          <th style={{ padding: "0.45rem 0.6rem", fontWeight: 700, textAlign: "center", width: "80px" }}>Corte 3</th>
+                          <th style={{ padding: "0.45rem 0.6rem", fontWeight: 700, textAlign: "center", width: "95px" }}>Definitiva</th>
+                          <th style={{ padding: "0.45rem 0.6rem", fontWeight: 700, textAlign: "center", width: "85px" }}>Inasistencias</th>
+                          <th style={{ padding: "0.45rem 0.6rem", fontWeight: 700, textAlign: "center", width: "90px" }}>Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {programaActivo.asignaturas.map((asig, idx) => {
+                          const notaNum = asig.notaActual !== null ? Number(asig.notaActual) : null;
+                          const notaColor = notaNum === null
+                            ? "var(--text-muted)"
+                            : notaNum >= 3.0
+                            ? "var(--risk-low-text)"
+                            : "var(--risk-high-text)";
+
+                          return (
+                            <tr
+                              key={asig.codigo || idx}
+                              style={{
+                                borderBottom: "1px solid var(--border-light)",
+                                background: idx % 2 === 0 ? "transparent" : "rgba(0,0,0,0.015)"
+                              }}
+                            >
+                              <td style={{ padding: "0.45rem 0.6rem", color: "var(--text-muted)", fontFamily: "monospace", fontSize: "0.74rem" }}>
+                                {asig.codigo}
+                              </td>
+                              <td style={{ padding: "0.45rem 0.6rem", fontWeight: 600, color: "var(--text-main)" }}>
+                                {asig.nombre}
+                              </td>
+                              <td style={{ padding: "0.45rem 0.6rem", textAlign: "center", fontWeight: asig.corte1 !== null ? 600 : 400 }}>
+                                {asig.corte1 !== null ? Number(asig.corte1).toFixed(1) : <span style={{ color: "var(--text-muted)" }}>—</span>}
+                              </td>
+                              <td style={{ padding: "0.45rem 0.6rem", textAlign: "center", fontWeight: asig.corte2 !== null ? 600 : 400 }}>
+                                {asig.corte2 !== null ? Number(asig.corte2).toFixed(1) : <span style={{ color: "var(--text-muted)" }}>—</span>}
+                              </td>
+                              <td style={{ padding: "0.45rem 0.6rem", textAlign: "center", fontWeight: asig.corte3 !== null ? 600 : 400 }}>
+                                {asig.corte3 !== null ? Number(asig.corte3).toFixed(1) : <span style={{ color: "var(--text-muted)" }}>—</span>}
+                              </td>
+                              <td style={{ padding: "0.45rem 0.6rem", textAlign: "center" }}>
+                                {notaNum !== null ? (
+                                  <span
+                                    style={{
+                                      display: "inline-block",
+                                      fontWeight: 700,
+                                      fontSize: "0.8rem",
+                                      color: notaColor,
+                                      background: notaNum >= 3.0 ? "rgba(16, 185, 129, 0.1)" : "rgba(239, 68, 68, 0.1)",
+                                      padding: "0.1rem 0.45rem",
+                                      borderRadius: "4px"
+                                    }}
+                                  >
+                                    {notaNum.toFixed(2)}
+                                  </span>
+                                ) : (
+                                  <span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>Sin nota</span>
+                                )}
+                              </td>
+                              <td style={{ padding: "0.45rem 0.6rem", textAlign: "center" }}>
+                                <span style={{ fontWeight: asig.inasistencias > 0 ? 600 : 400, color: asig.inasistencias > 4 ? "var(--risk-high-text)" : "var(--text-main)" }}>
+                                  {asig.inasistencias} h
+                                </span>
+                              </td>
+                              <td style={{ padding: "0.45rem 0.6rem", textAlign: "center" }}>
+                                <span
+                                  className={`badge ${
+                                    asig.estado === "APROBADA"
+                                      ? "badge-status-completed"
+                                      : asig.estado === "REPROBADA"
+                                      ? "badge-status-error"
+                                      : "badge-status-process"
+                                  }`}
+                                  style={{ fontSize: "0.65rem", padding: "0.12rem 0.45rem" }}
+                                >
+                                  {asig.estado}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div style={{ textAlign: "center", padding: "1.5rem", color: "var(--text-muted)", fontSize: "0.8rem" }}>
+                    <i className="fas fa-inbox" style={{ marginRight: 6, fontSize: "1rem", display: "block", marginBottom: 4 }}></i>
+                    No hay registros de materias sincronizadas para este programa.
+                  </div>
+                )}
               </div>
             </>
           )}
 
-          {/* -------------------------------------------------------------------------- */}
           {/* MODAL: DETALLE DE RESPUESTAS POR SESIÓN Y DIMENSIÓN DE LA ENCUESTA           */}
           {/* -------------------------------------------------------------------------- */}
           {modalRespuestasAbierto && sesionActiva && (

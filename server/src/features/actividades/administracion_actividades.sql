@@ -12,6 +12,25 @@ ALTER TABLE sat.participantes_vec
   ADD COLUMN IF NOT EXISTS detalle_tipo_participante varchar(120),
   ADD COLUMN IF NOT EXISTS lugar_nacimiento varchar(250);
 
+ALTER TABLE sat.participantes_vec
+  DROP CONSTRAINT IF EXISTS participantes_vec_tipo_participante_check;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'sat.participantes_vec'::regclass
+      AND conname = 'participantes_vec_tipo_participante_check'
+  ) THEN
+    ALTER TABLE sat.participantes_vec
+      ADD CONSTRAINT participantes_vec_tipo_participante_check
+      CHECK (tipo_participante IN (
+        'ESTUDIANTE', 'COLABORADOR', 'EGRESADO', 'EXTERNO', 'ADMINISTRATIVO'
+      ));
+  END IF;
+END $$;
+
 ALTER TABLE sat.actividades_vec_participantes
   ADD COLUMN IF NOT EXISTS asistencia_verificada boolean NOT NULL DEFAULT false,
   ADD COLUMN IF NOT EXISTS asistencia_verificada_en timestamptz,

@@ -11,7 +11,7 @@ const SECTION_CONTENT = {
   "carga-realizadas": {
     title: "Carga y registro de actividades realizadas",
     icon: "fa-file-circle-plus",
-    message: "Este apartado servirá para cargar información de actividades que ya se realizaron y preparar su registro automático.",
+    message: "Carga actividades ya realizadas, valida cada fila y registra estudiantes por documento, código o correo institucional.",
   },
   apoyos: {
     title: "Consultar apoyos",

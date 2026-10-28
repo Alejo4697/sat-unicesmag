@@ -4,6 +4,7 @@ import { getBeneficiariosApoyo, getCatalogosEstudiante } from "./participantesAp
 const ETIQUETAS_ROL = {
   ESTUDIANTE: "Estudiante",
   COLABORADOR: "Colaborador",
+  ADMINISTRATIVO: "Administrativo",
   EGRESADO: "Egresado",
   EXTERNO: "Externo",
 };
@@ -17,7 +18,6 @@ export default function ApoyosView() {
   const [cargandoBeneficiarios, setCargandoBeneficiarios] = useState(true);
   const [error, setError] = useState("");
   const totalPaginas = resultado ? Math.max(1, Math.ceil(resultado.total / resultado.limite)) : 1;
-  const tipoSeleccionado = tiposApoyo.find((tipo) => String(tipo.id) === String(tipoApoyoId));
 
   const listItems = (items) => (items || []).filter(Boolean);
 
@@ -69,16 +69,7 @@ export default function ApoyosView() {
         </div>
       </header>
 
-      <section className="vec-support-filter-card" aria-label="Filtros de consulta">
-        <div className="vec-support-filter-card__intro">
-          <span className="vec-support-filter-card__icon" aria-hidden="true">
-            <i className="fas fa-filter"></i>
-          </span>
-          <div>
-            <h2>Filtrar beneficiarios</h2>
-            <p>Selecciona una categoría o consulta todos los apoyos.</p>
-          </div>
-        </div>
+      <section className="vec-support-filter-card" aria-label="Filtro de consulta">
         <label className="vec-support-filter-card__field" htmlFor="vec-apoyo-tipo">
           <span>Tipo de apoyo</span>
           <select
@@ -100,43 +91,19 @@ export default function ApoyosView() {
             ))}
           </select>
         </label>
-        {tipoSeleccionado && (
-          <span className="vec-support-filter-card__selected">
-            <i className="fas fa-check-circle" aria-hidden="true"></i>
-            {tipoSeleccionado.nombre}
-          </span>
+        {cargandoTipos && <span className="vec-support-filter-card__hint">Cargando opciones...</span>}
+        {!cargandoTipos && tiposApoyo.length === 0 && (
+          <span className="vec-support-filter-card__hint">No hay tipos de apoyo disponibles.</span>
         )}
       </section>
 
       {error && <div className="auth-error vec-support-error" role="alert">{error}</div>}
-
-      {resultado && !error && (
-        <div className="vec-support-stats" aria-label="Resumen de la consulta">
-          <article className="vec-support-stat">
-            <span className="vec-support-stat__icon"><i className="fas fa-users" aria-hidden="true"></i></span>
-            <span><small>Beneficiarios</small><strong>{resultado.total}</strong></span>
-          </article>
-          <article className="vec-support-stat">
-            <span className="vec-support-stat__icon vec-support-stat__icon--red"><i className="fas fa-layer-group" aria-hidden="true"></i></span>
-            <span><small>Tipos de apoyo</small><strong>{tipoApoyoId === "todos" ? tiposApoyo.length : 1}</strong></span>
-          </article>
-          <article className="vec-support-stat">
-            <span className="vec-support-stat__icon"><i className="fas fa-route" aria-hidden="true"></i></span>
-            <span><small>Rutas disponibles</small><strong>{resultado.rutas?.length || 0}</strong></span>
-          </article>
-          <article className="vec-support-stat">
-            <span className="vec-support-stat__icon vec-support-stat__icon--muted"><i className="fas fa-circle-exclamation" aria-hidden="true"></i></span>
-            <span><small>Sin clasificar</small><strong>{resultado.sinTipoApoyo || 0}</strong></span>
-          </article>
-        </div>
-      )}
 
       <section className="vec-support-results" aria-label="Personas beneficiarias" aria-live="polite">
         <div className="vec-support-results__header">
           <div>
             <span className="vec-support-results__eyebrow">RESULTADOS</span>
             <h2>Personas beneficiarias</h2>
-            <p>Cada persona aparece una sola vez, con sus apoyos reunidos.</p>
           </div>
           {resultado && !cargandoBeneficiarios && (
             <span className="vec-support-results__count">
@@ -164,9 +131,7 @@ export default function ApoyosView() {
                   <tr>
                     <th>Persona</th>
                     <th>Rol</th>
-                    <th>Apoyo y clasificación</th>
-                    <th>Beneficio y periodo</th>
-                    <th>Origen</th>
+                    <th>Apoyos registrados</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -194,24 +159,27 @@ export default function ApoyosView() {
                         </div>
                       </td>
                       <td>
-                        <div className="vec-support-cell-list">
-                          {listItems(persona.tiposApoyo).map((item) => <span className="vec-support-chip" key={item}>{item}</span>)}
-                          {listItems(persona.clasificaciones).map((item) => <small key={item}>{item}</small>)}
-                          {!persona.tiposApoyo?.length && !persona.clasificaciones?.length && <span className="vec-support-table__muted">Sin clasificar</span>}
-                        </div>
-                      </td>
-                      <td>
-                        <div className="vec-support-cell-list">
-                          {listItems(persona.apoyos).map((item) => <strong key={item}>{item}</strong>)}
-                          {listItems(persona.periodos).map((item) => <small key={item}><i className="far fa-calendar" aria-hidden="true"></i>{item}</small>)}
-                          {listItems(persona.porcentajes).map((item) => <small key={`p-${item}`}>{item}%</small>)}
-                          {listItems(persona.valores).map((item) => <small key={`v-${item}`}>{item}</small>)}
-                          {!persona.apoyos?.length && !persona.periodos?.length && !persona.porcentajes?.length && !persona.valores?.length && <span className="vec-support-table__muted">Sin detalle adicional</span>}
-                        </div>
-                      </td>
-                      <td>
-                        <div className="vec-support-tags">
-                          {(persona.fuentes || []).map((fuente) => <span className="vec-support-source" key={fuente}>{fuente}</span>)}
+                        <div className="vec-support-summary">
+                          <div className="vec-support-summary__types">
+                            {listItems(persona.tiposApoyo).map((item) => <span className="vec-support-chip" key={item}>{item}</span>)}
+                            {listItems(persona.clasificaciones).map((item) => <span className="vec-support-summary__classification" key={item}>{item}</span>)}
+                            {!persona.tiposApoyo?.length && !persona.clasificaciones?.length && (
+                              <span className="vec-support-table__muted">Sin clasificar</span>
+                            )}
+                          </div>
+                          <div className="vec-support-summary__details">
+                            {listItems(persona.apoyos).map((item) => <strong key={item}>{item}</strong>)}
+                            {listItems(persona.periodos).map((item) => <small key={item}><i className="far fa-calendar" aria-hidden="true"></i>{item}</small>)}
+                            {listItems(persona.porcentajes).map((item) => <small key={`p-${item}`}>{item}%</small>)}
+                            {listItems(persona.valores).map((item) => <small key={`v-${item}`}>{item}</small>)}
+                            {listItems(persona.fuentes).length > 0 && (
+                              <small><i className="fas fa-arrow-right-from-bracket" aria-hidden="true"></i>{listItems(persona.fuentes).join(" · ")}</small>
+                            )}
+                            {!persona.apoyos?.length && !persona.periodos?.length && !persona.porcentajes?.length
+                              && !persona.valores?.length && !persona.fuentes?.length && (
+                                <span className="vec-support-table__muted">Sin detalle adicional</span>
+                              )}
+                          </div>
                         </div>
                       </td>
                     </tr>
@@ -241,7 +209,7 @@ export default function ApoyosView() {
             {resultado.sinTipoApoyo > 0 && (
               <p className="vec-support-unclassified" role="note">
                 <i className="fas fa-circle-info" aria-hidden="true"></i>
-                Hay {resultado.sinTipoApoyo} {resultado.sinTipoApoyo === 1 ? "registro de actividad sin tipo de apoyo explícito" : "registros de actividad sin tipo de apoyo explícito"}. Los que no tienen una ruta activa coincidente aparecen sin clasificar.
+                {resultado.sinTipoApoyo} {resultado.sinTipoApoyo === 1 ? "registro" : "registros"} sin tipo de apoyo clasificado.
               </p>
             )}
           </>
@@ -249,15 +217,14 @@ export default function ApoyosView() {
       </section>
 
       {resultado && resultado.rutas?.length > 0 && (
-        <section className="vec-support-routes" aria-labelledby="vec-support-routes-title">
-          <div className="vec-support-results__header">
-            <div>
-              <span className="vec-support-results__eyebrow">OFERTA INSTITUCIONAL</span>
-              <h2 id="vec-support-routes-title">Servicios y rutas asociadas</h2>
-              <p>Opciones institucionales vinculadas al tipo de apoyo consultado.</p>
-            </div>
-            <span className="vec-support-results__count">{resultado.rutas.length} {resultado.rutas.length === 1 ? "ruta" : "rutas"}</span>
-          </div>
+        <details className="vec-support-routes">
+          <summary className="vec-support-routes__summary">
+            <span>
+              <i className="fas fa-route" aria-hidden="true"></i>
+              Servicios y rutas asociadas
+            </span>
+            <small>{resultado.rutas.length} {resultado.rutas.length === 1 ? "ruta" : "rutas"}</small>
+          </summary>
           <div className="vec-support-route-grid">
             {resultado.rutas.map((ruta) => (
               <article className="vec-support-route-card" key={ruta.id}>
@@ -276,7 +243,7 @@ export default function ApoyosView() {
               </article>
             ))}
           </div>
-        </section>
+        </details>
       )}
     </section>
   );

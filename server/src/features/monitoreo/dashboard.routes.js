@@ -33,7 +33,14 @@ async function obtenerEstudiantesCombinados() {
              EXISTS(SELECT 1 FROM sat.respuestas_caracterizacion rc WHERE rc.id_estudiantes = e.id_estudiantes) AS "encuestaRespondida"
       FROM sat.estudiantes e
       LEFT JOIN sat.personas per ON per.id = e.id_personas
-      LEFT JOIN sat.matriculas m ON m.id_estudiantes = e.id_estudiantes
+      LEFT JOIN LATERAL (
+        SELECT m_lat.*
+        FROM sat.matriculas m_lat
+        LEFT JOIN sat.periodos_academicos pa_lat ON pa_lat.id_periodos_academicos = m_lat.id_periodos_academicos
+        WHERE m_lat.id_estudiantes = e.id_estudiantes
+        ORDER BY pa_lat.fecha_inicio DESC NULLS LAST, m_lat.semestre DESC
+        LIMIT 1
+      ) m ON true
       LEFT JOIN sat.programas_academicos p ON p.id_programas_academicos = COALESCE(m.id_programas_academicos, e.id_programas_academicos)
       LEFT JOIN LATERAL (
         SELECT cr_1.id_rangos_riesgo
@@ -599,9 +606,16 @@ router.get("/resultados-caracterizacion", async (req, res, next) => {
           COALESCE(rr.nombre, 'Sin evaluar') AS riesgo_global,
           cr.puntaje_global,
           cr.factores
-        FROM sat.estudiantes e
-        LEFT JOIN sat.personas per ON per.id = e.id_personas
-        LEFT JOIN sat.matriculas m ON m.id_estudiantes = e.id_estudiantes
+      FROM sat.estudiantes e
+      LEFT JOIN sat.personas per ON per.id = e.id_personas
+      LEFT JOIN LATERAL (
+        SELECT m_lat.*
+        FROM sat.matriculas m_lat
+        LEFT JOIN sat.periodos_academicos pa_lat ON pa_lat.id_periodos_academicos = m_lat.id_periodos_academicos
+        WHERE m_lat.id_estudiantes = e.id_estudiantes
+        ORDER BY pa_lat.fecha_inicio DESC NULLS LAST, m_lat.semestre DESC
+        LIMIT 1
+      ) m ON true
         LEFT JOIN sat.programas_academicos p ON p.id_programas_academicos = COALESCE(m.id_programas_academicos, e.id_programas_academicos)
         LEFT JOIN sat.respuestas_caracterizacion rc ON rc.id_estudiantes = e.id_estudiantes
         LEFT JOIN sat.periodos_academicos pa ON pa.id_periodos_academicos = rc.id_periodos_academicos

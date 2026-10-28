@@ -12,12 +12,14 @@ const TIPOS = [
   { value: "ESTUDIANTE", label: "Estudiante" },
   { value: "EGRESADO", label: "Egresado" },
   { value: "COLABORADOR", label: "Colaborador" },
+  { value: "ADMINISTRATIVO", label: "Administrativo" },
   { value: "EXTERNO", label: "Externo" },
 ];
 const DETALLES_POR_TIPO = {
   ESTUDIANTE: [{ value: "Estudiante", label: "Estudiante" }],
   EGRESADO: [{ value: "Egresado no titulado", label: "Egresado" }],
   COLABORADOR: [{ value: "Colaborador", label: "Colaborador" }],
+  ADMINISTRATIVO: [{ value: "Administrativo", label: "Administrativo" }],
   EXTERNO: [{ value: "Externo", label: "Externo" }],
 };
 
@@ -373,6 +375,7 @@ export default function NewParticipantView({ onCancel }) {
   const [guardando, setGuardando] = useState(false);
   const [confirmacion, setConfirmacion] = useState("");
   const [confirmacionRolApoyo, setConfirmacionRolApoyo] = useState(false);
+  const [confirmacionRolAdicional, setConfirmacionRolAdicional] = useState(false);
   const [intentoContinuar, setIntentoContinuar] = useState(false);
   const [intentoBusqueda, setIntentoBusqueda] = useState(0);
   const [intentoCatalogos, setIntentoCatalogos] = useState(0);
@@ -392,8 +395,8 @@ export default function NewParticipantView({ onCancel }) {
     action();
   }
   const personaEncontrada = encontrada || duplicada;
-  const rolesRegistrados = busqueda.participante?.roles || [];
-  const rolesVerificados = busqueda.participante?.rolesVerificados || [];
+  const rolesRegistrados = [...new Set(busqueda.participante?.roles || [])];
+  const rolesVerificados = [...new Set(busqueda.participante?.rolesVerificados || [])];
   const rolesExistentes = [...new Set([...rolesRegistrados, ...rolesVerificados])];
   const estudianteSinRegistroInstitucional = tipo === "ESTUDIANTE"
     && !rolesExistentes.includes("ESTUDIANTE");
@@ -401,7 +404,14 @@ export default function NewParticipantView({ onCancel }) {
     ? tipo !== "EXTERNO" || rolesExistentes.some((role) => role !== "EXTERNO")
     : tipo === "EXTERNO" && rolesExistentes.length > 0;
   const tieneRolesMultiples = rolesExistentes.length > 1;
-  const esRolNuevoParaPersona = personaEncontrada && !rolesRegistrados.includes(tipo);
+  const esRolNuevoParaPersona = personaEncontrada && !rolesExistentes.includes(tipo);
+  const requiereDecisionDeRol = personaEncontrada
+    && esRolNuevoParaPersona
+    && rolesExistentes.length > 0;
+  const rolesExistentesEtiquetados = rolesExistentes.map((role) => ({
+    value: role,
+    label: TIPOS.find((item) => item.value === role)?.label || role,
+  }));
   const esperandoResultado = ["waiting", "loading"].includes(busqueda.status);
   const esEstudiante = tipo === "ESTUDIANTE";
   const catalogoClasificado = clasificarProgramasCatalogo(catalogoActividades);
@@ -532,7 +542,21 @@ export default function NewParticipantView({ onCancel }) {
         if (controller.signal.aborted) return;
         if (result.encontrado) {
           const participante = result.participante;
-          const esRolNuevo = !(participante.roles || []).includes(tipo);
+          if (
+            participante.rolesVerificados?.includes("ADMINISTRATIVO")
+            && tipo !== "ADMINISTRATIVO"
+          ) {
+            setTipo("ADMINISTRATIVO");
+            return;
+          }
+          const rolesEncontrados = [...new Set([
+            ...(participante.roles || []),
+            ...(participante.rolesVerificados || []),
+          ])];
+          const esRolNuevo = !rolesEncontrados.includes(tipo);
+          const rolesEncontradosTexto = rolesEncontrados
+            .map((role) => TIPOS.find((item) => item.value === role)?.label || role)
+            .join(", ");
           const datosParticipante = esRolNuevo ? {
             ...participante,
             codigo: "",
@@ -567,7 +591,7 @@ export default function NewParticipantView({ onCancel }) {
             mensaje: participante.yaRegistrado
               ? `Encontramos a ${[participante.nombres, participante.apellidos].filter(Boolean).join(" ")}. Ya tiene el rol ${TIPOS.find((item) => item.value === (participante.tipoRegistrado || tipo))?.label || participante.tipoRegistrado || tipo}; puedes inscribirla en otra actividad con ese rol.`
               : esRolNuevo
-                ? `Encontramos a ${[participante.nombres, participante.apellidos].filter(Boolean).join(" ")} con otro rol. Si continúas, le agregaremos también el rol ${TIPOS.find((item) => item.value === tipo)?.label || tipo}.`
+                ? `Encontramos a ${[participante.nombres, participante.apellidos].filter(Boolean).join(" ")}. Esta persona ya tiene el rol ${rolesEncontradosTexto}.`
                 : `Encontramos a ${[participante.nombres, participante.apellidos].filter(Boolean).join(" ")}. Completamos sus datos para que puedas revisarlos.`,
           });
         } else {
@@ -773,14 +797,14 @@ export default function NewParticipantView({ onCancel }) {
       return;
     }
 
-    const agregarRolNuevo = esRolNuevoParaPersona && rolesExistentes.length > 0;
+    const agregarRolNuevo = requiereDecisionDeRol;
     if (agregarRolNuevo) {
       const rolesActuales = rolesExistentes
         .map((role) => TIPOS.find((item) => item.value === role)?.label || role)
         .join(", ");
       const rolNuevo = TIPOS.find((item) => item.value === tipo)?.label || tipo;
       const nombrePersona = [form.nombres, form.apellidos].filter(Boolean).join(" ");
-      if (!window.confirm(
+      if (!confirmacionRolAdicional && !window.confirm(
         `Encontramos a ${nombrePersona} con el rol ${rolesActuales}.\n\n¿Quieres agregarle también el rol ${rolNuevo} y continuar con la inscripción? Sus datos actuales se conservarán.`,
       )) return;
     }
@@ -941,6 +965,7 @@ export default function NewParticipantView({ onCancel }) {
               setError("");
               setConfirmacion("");
               setConfirmacionRolApoyo(false);
+              setConfirmacionRolAdicional(false);
             }}
           >
             {TIPOS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
@@ -966,6 +991,7 @@ export default function NewParticipantView({ onCancel }) {
               setError("");
               setConfirmacion("");
               setConfirmacionRolApoyo(false);
+              setConfirmacionRolAdicional(false);
             }}
             autoComplete="off"
             disabled={!tipo}
@@ -998,6 +1024,55 @@ export default function NewParticipantView({ onCancel }) {
             <span>{busqueda.status === "not-found" && tipo === "ESTUDIANTE"
               ? "No encontramos a esta persona en el registro institucional de estudiantes."
               : busqueda.mensaje}</span>
+            {requiereDecisionDeRol && (
+              <div className="vec-participant-role-choice">
+                <div className="vec-participant-role-choice__heading">
+                  <i className="fas fa-user-tag" aria-hidden="true"></i>
+                  <span>
+                    <strong>
+                      Esta persona ya tiene{" "}
+                      {rolesExistentesEtiquetados.length === 1 ? "este rol" : "estos roles"}:
+                    </strong>
+                    <small>
+                      Puedes usar uno de los roles existentes o agregar el rol seleccionado
+                      ({TIPOS.find((item) => item.value === tipo)?.label || tipo}).
+                    </small>
+                  </span>
+                </div>
+                <div className="vec-participant-role-choice__actions">
+                  <select
+                    className="form-select"
+                    value=""
+                    onChange={(event) => {
+                      setTipo(event.target.value);
+                      setForm(EMPTY_FORM);
+                      setError("");
+                      setConfirmacion("");
+                      setConfirmacionRolAdicional(false);
+                    }}
+                    aria-label="Usar un rol existente de la persona"
+                  >
+                    <option value="" disabled>Usar un rol que ya existe</option>
+                    {rolesExistentesEtiquetados.map((role) => (
+                      <option key={role.value} value={role.value}>{role.label}</option>
+                    ))}
+                  </select>
+                  <button
+                    className={`btn btn-sm ${confirmacionRolAdicional ? "btn-primary" : "btn-outline"}`}
+                    type="button"
+                    onClick={() => {
+                      setConfirmacionRolAdicional(true);
+                      setError("");
+                    }}
+                  >
+                    <i className="fas fa-user-plus" aria-hidden="true"></i>
+                    {confirmacionRolAdicional
+                      ? "Rol adicional confirmado"
+                      : `Agregar también ${TIPOS.find((item) => item.value === tipo)?.label || tipo}`}
+                  </button>
+                </div>
+              </div>
+            )}
             {estudianteSinRegistroInstitucional
               && ["not-found", "found"].includes(busqueda.status) && (
               <label className="vec-participant-status__missing-role">
@@ -1013,8 +1088,8 @@ export default function NewParticipantView({ onCancel }) {
                   }}
                   aria-label="Rol permitido para crear una persona no encontrada"
                 >
-                  <option value="" disabled>Selecciona Egresado, Colaborador o Externo</option>
-                  {TIPOS.filter((item) => ["EGRESADO", "COLABORADOR", "EXTERNO"].includes(item.value))
+                  <option value="" disabled>Selecciona Egresado, Colaborador, Administrativo o Externo</option>
+                  {TIPOS.filter((item) => ["EGRESADO", "COLABORADOR", "ADMINISTRATIVO", "EXTERNO"].includes(item.value))
                     .map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
                 </select>
                 <small>Los perfiles de estudiante y administrativo deben existir en la base institucional; no se crean desde aquí.</small>
@@ -1022,20 +1097,10 @@ export default function NewParticipantView({ onCancel }) {
             )}
           </div>
         )}
-        {(busqueda.participante?.roles?.length || 0) > 0 && (
-          <div className="vec-participant-roles" aria-label="Roles institucionales detectados">
-            <span>Roles en Actividades:</span>
-            {busqueda.participante.roles.map((role) => (
-              <span className={`vec-role-badge vec-role-${role.toLowerCase()}`} key={role}>
-                {TIPOS.find((item) => item.value === role)?.label || role}
-              </span>
-            ))}
-          </div>
-        )}
-        {(busqueda.participante?.rolesVerificados?.length || 0) > 0 && (
-          <div className="vec-participant-roles" aria-label="Roles institucionales verificados">
-            <span>Roles institucionales verificados:</span>
-            {busqueda.participante.rolesVerificados.map((role) => (
+        {rolesExistentes.length > 0 && (
+          <div className="vec-participant-roles" aria-label="Roles únicos encontrados en Actividades y en la base institucional">
+            <span>Roles encontrados en Actividades y la base institucional:</span>
+            {rolesExistentes.map((role) => (
               <span className={`vec-role-badge vec-role-${role.toLowerCase()}`} key={role}>
                 {TIPOS.find((item) => item.value === role)?.label || role}
               </span>

@@ -11,6 +11,8 @@ const SHEET_ROLES = new Map([
   ["COLABORADORES", "COLABORADOR"],
   ["EGRESADOS", "EGRESADO"],
   ["EXTERNOS", "EXTERNO"],
+  ["ADMINISTRATIVOS", "ADMINISTRATIVO"],
+  ["ADMINISTRATIVO", "ADMINISTRATIVO"],
 ]);
 const FIELD_ALIASES = {
   periodo: ["PERIODO", "PERIODOACADEMICO"],
@@ -21,6 +23,20 @@ const FIELD_ALIASES = {
     "NUMEROIDENTIFICACION",
     "DOCUMENTO",
   ],
+  codigo: [
+    "CODIGO",
+    "CODIGOESTUDIANTE",
+    "CODIGOESTUDIANTIL",
+    "CODIGOEXTERNO",
+    "CODIGOINSTITUCIONAL",
+  ],
+  correo: [
+    "CORREO",
+    "CORREOELECTRONICO",
+    "CORREOINSTITUCIONAL",
+    "EMAIL",
+    "MAIL",
+  ],
   actividad: ["ACTIVIDAD", "NOMBREACTIVIDAD", "ACTIVIDADREALIZADA"],
   descripcion: ["DESCRIPCIONACTIVIDAD"],
   proyecto: ["PROYECTO"],
@@ -30,8 +46,21 @@ const FIELD_ALIASES = {
   articulacion: ["ARTICULACIONINSTITUCIONAL"],
   dependencia: ["DEPENDENCIA"],
   modalidad: ["MODALIDAD"],
-  fechaInicio: ["FECHAINICIODDMMYYYY", "FECHAINICIODDMMAAAA"],
-  fechaFinalizacion: ["FECHAFINALIZACIONDDMMYYYY", "FECHAFINALIZACIONDDMMAAAA"],
+  fechaInicio: [
+    "FECHAINICIO",
+    "FECHAINICIAL",
+    "FECHAINICIODDMMYYYY",
+    "FECHAINICIODDMMAAAA",
+    "FECHADEINICIO",
+  ],
+  fechaFinalizacion: [
+    "FECHAFINALIZACION",
+    "FECHAFIN",
+    "FECHAFINAL",
+    "FECHAFINALIZACIONDDMMYYYY",
+    "FECHAFINALIZACIONDDMMAAAA",
+    "FECHADEFINALIZACION",
+  ],
   programaBienestar: ["PROGRAMADEBIENESTAR", "PROGRAMA"],
   componente: ["COMPONENTE"],
   lineaAccion: ["LINEADEACCIONAREA", "LINEADEACCION"],
@@ -60,6 +89,13 @@ function hasHeader(headers, field) {
 
 function columnMatchesHeader(header, field) {
   if (FIELD_ALIASES[field].includes(header)) return true;
+  if (field === "fechaInicio") {
+    return /^(FECHA)?INICIO$/.test(header) || header.includes("FECHAINICIO");
+  }
+  if (field === "fechaFinalizacion") {
+    return /^(FECHA)?(FIN|FINAL|FINALIZACION)$/.test(header)
+      || header.includes("FECHAFINAL");
+  }
   if (field !== "programaBienestar" || !header.startsWith("PROGRAMA"))
     return false;
   return !/(ACADEMICO|PREGRADO|POSGRADO|ESTUDIO|CURSA)/.test(header);
@@ -79,6 +115,35 @@ function cellText(value) {
     .trim();
 }
 
+function periodoAcademicoDesdeFecha(value) {
+  const text = cellText(value);
+  const matches = text.match(
+    /\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b/g,
+  );
+  if (!matches?.length) return text;
+  const firstDate = matches[0].match(/\d{4}[-/](\d{1,2})[-/]\d{1,2}/);
+  if (!firstDate) return text;
+  const year = Number(firstDate[0].slice(0, 4));
+  const month = Number(firstDate[0].split(/[-/]/)[1]);
+  if (!Number.isInteger(year) || month < 1 || month > 12) return text;
+  return `${year}-${month <= 6 ? 1 : 2}`;
+}
+
+function normalizarPeriodoAcademico(value) {
+  const text = normalizeText(value);
+  const yearMatch = text.match(/((?:19|20)\d{2})/);
+  if (!yearMatch) return cellText(value);
+  const prefix = text.slice(0, yearMatch.index);
+  const suffix = text.slice(yearMatch.index + yearMatch[0].length);
+  if (/SEGUNDO|IIP|II/.test(prefix) || /^2/.test(suffix)) {
+    return `${yearMatch[1]}-2`;
+  }
+  if (/PRIMER|IP$|(?:^|[^I])I$/.test(prefix) || /^[1I]/.test(suffix)) {
+    return `${yearMatch[1]}-1`;
+  }
+  return cellText(value);
+}
+
 function programaBienestarGeneral(value) {
   const nombre = cellText(value);
   const separador = nombre.indexOf(" - ");
@@ -89,27 +154,60 @@ function programaBienestarGeneral(value) {
   return agregadoFinal ? nombre.slice(0, agregadoFinal.index).trim() : nombre;
 }
 
-function toIsoDate(value) {
-  const text = cellText(value);
-  let year;
-  let month;
-  let day;
-  let match = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2}|\d{4})$/);
-  if (match) {
-    [, day, month, year] = match;
-    if (year.length === 2)
-      year = Number(year) >= 50 ? `19${year}` : `20${year}`;
-  } else {
-    match = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-    if (!match) return "";
-    [, year, month, day] = match;
-  }
-  const iso = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+function fechaIsoSegura(year, month, day) {
+  const iso = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
   const date = new Date(`${iso}T00:00:00.000Z`);
   return !Number.isNaN(date.getTime()) &&
     date.toISOString().slice(0, 10) === iso
     ? iso
     : "";
+}
+
+function toIsoDate(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return fechaIsoSegura(value.getUTCFullYear(), value.getUTCMonth() + 1, value.getUTCDate());
+  }
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    const excelEpoch = Date.UTC(1899, 11, 30);
+    const date = new Date(excelEpoch + Math.floor(value) * 86400000);
+    return fechaIsoSegura(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
+  }
+
+  const text = cellText(value).replace(/[.]/g, "/");
+  if (!text) return "";
+  let year;
+  let month;
+  let day;
+  let match = text.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+  if (match) {
+    [, year, month, day] = match;
+    return fechaIsoSegura(year, month, day);
+  }
+  match = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2}|\d{4})$/);
+  if (match) {
+    let first;
+    let second;
+    [, first, second, year] = match;
+    if (year.length === 2) year = Number(year) >= 50 ? `19${year}` : `20${year}`;
+    if (Number(first) > 12) {
+      day = first;
+      month = second;
+    } else if (Number(second) > 12) {
+      month = first;
+      day = second;
+    } else {
+      // When both parts are possible, prefer the commonly used day/month format.
+      day = first;
+      month = second;
+    }
+    return fechaIsoSegura(year, month, day);
+  }
+  const parsed = Date.parse(text);
+  if (!Number.isNaN(parsed)) {
+    const date = new Date(parsed);
+    return fechaIsoSegura(date.getFullYear(), date.getMonth() + 1, date.getDate());
+  }
+  return "";
 }
 
 function parseSupportNumber(value) {
@@ -122,14 +220,21 @@ function valueAt(row, columns, field) {
   return index < 0 ? "" : cellText(row[index]);
 }
 
+function rawValueAt(row, columns, field) {
+  const index = columns[field];
+  return index < 0 ? "" : row[index];
+}
+
 function makeActivity(row, columns) {
   const allianceValue = normalizeText(valueAt(row, columns, "alianza"));
   return {
-    period: valueAt(row, columns, "periodo"),
+    period: normalizarPeriodoAcademico(
+      periodoAcademicoDesdeFecha(valueAt(row, columns, "periodo")),
+    ),
     activity: valueAt(row, columns, "actividad"),
     project: valueAt(row, columns, "proyecto"),
-    start: toIsoDate(valueAt(row, columns, "fechaInicio")),
-    end: toIsoDate(valueAt(row, columns, "fechaFinalizacion")),
+    start: toIsoDate(rawValueAt(row, columns, "fechaInicio")),
+    end: toIsoDate(rawValueAt(row, columns, "fechaFinalizacion")),
     wellbeing: programaBienestarGeneral(
       valueAt(row, columns, "programaBienestar"),
     ),
@@ -169,7 +274,7 @@ function readWorkbook(file) {
   return file.arrayBuffer().then((buffer) => {
     const workbook = XLSX.read(buffer, {
       type: "array",
-      cellDates: false,
+      cellDates: true,
       codepage: 65001,
     });
     const activities = [];
@@ -183,14 +288,16 @@ function readWorkbook(file) {
       const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
         header: 1,
         defval: "",
-        raw: false,
+        raw: true,
         blankrows: true,
       });
       const headerIndex = rows.findIndex((row) => {
         const headers = row.map(normalizeHeader);
         return (
           hasHeader(headers, "periodo") &&
-          hasHeader(headers, "identificacion") &&
+          (hasHeader(headers, "identificacion") ||
+            hasHeader(headers, "codigo") ||
+            hasHeader(headers, "correo")) &&
           headers.includes("ACTIVIDAD")
         );
       });
@@ -222,7 +329,9 @@ function readWorkbook(file) {
         if (!row.some((value) => cellText(value))) continue;
         const identifier = valueAt(row, columns, "identificacion");
         const activity = makeActivity(row, columns);
-        if (!identifier && !activity.activity && !activity.project) {
+        const codigo = valueAt(row, columns, "codigo");
+        const correo = valueAt(row, columns, "correo").toLocaleLowerCase("es");
+        if (!identifier && !codigo && !correo && !activity.activity && !activity.project) {
           skippedRows += 1;
           continue;
         }
@@ -263,6 +372,8 @@ function readWorkbook(file) {
         registrations.push({
           activityIndex,
           identifier,
+          codigo,
+          correo,
           role,
           supportNumber: parseSupportNumber(support),
           supportLabel: support,
@@ -302,6 +413,15 @@ export default function ImportarActividadesRealizadas() {
         .length || 0,
     [preview],
   );
+  const programasNoEncontrados = useMemo(
+    () =>
+      preview?.activities?.filter((activity) =>
+        activity.messages?.some((message) =>
+          /programa.*(no coincide|no est[aá] activo)/i.test(message),
+        ),
+      ) || [],
+    [preview],
+  );
 
   async function handleFileChange(event) {
     const selected = event.target.files?.[0] || null;
@@ -333,7 +453,7 @@ export default function ImportarActividadesRealizadas() {
   async function handleConfirm() {
     if (!payload || !preview || matchedRows === 0) return;
     const accepted = window.confirm(
-      `Se registrarán las actividades válidas como FINALIZADAS y se inscribirán únicamente participantes existentes (${matchedRows}). La asistencia no se modificará. ¿Deseas continuar?`,
+      `Se registrarán las actividades válidas como FINALIZADAS y se inscribirán ${matchedRows} participantes encontrados por documento, código o correo institucional. Si falta su perfil VEC, se completará desde la base institucional. La asistencia no se modificará. ¿Deseas continuar?`,
     );
     if (!accepted) return;
 
@@ -341,7 +461,10 @@ export default function ImportarActividadesRealizadas() {
     setError("");
     setMessage("");
     try {
-      const result = await confirmarImportacionActividades(payload);
+      const result = await confirmarImportacionActividades({
+        ...payload,
+        activarProgramas: true,
+      });
       setMessage(
         `Importación terminada: ${result.actividadesCreadas} actividades creadas, ` +
           `${result.actividadesReutilizadas} reutilizadas y ${result.participantesInscritos} participantes inscritos. ` +
@@ -353,6 +476,26 @@ export default function ImportarActividadesRealizadas() {
       setError(requestError.message || "No se pudo confirmar la importación.");
     } finally {
       setSaving(false);
+    }
+
+  }
+
+  async function crearProgramasFaltantes() {
+    if (!payload || !programasNoEncontrados.length) return;
+    const accepted = window.confirm(
+      "No encontramos uno o más programas de Bienestar. Se crearán vinculados a la línea y componente indicados en el Excel para que puedan reutilizarse en futuras cargas. ¿Deseas continuar?",
+    );
+    if (!accepted) return;
+    setLoading(true);
+    setError("");
+    try {
+      const siguientePayload = { ...payload, crearProgramas: true };
+      setPayload(siguientePayload);
+      setPreview(await previsualizarImportacionActividades(siguientePayload));
+    } catch (requestError) {
+      setError(requestError.message || "No se pudieron crear los programas faltantes.");
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -389,28 +532,36 @@ export default function ImportarActividadesRealizadas() {
         </h2>
         <p>
           Carga las hojas de estudiantes, colaboradores, egresados o externos.
-          Revisa la previsualización antes de confirmar; el archivo no marca
-          asistencia ni crea perfiles nuevos.
+          Revisa la previsualización antes de confirmar. Los estudiantes se
+          buscan por documento, código o correo institucional; el archivo no
+          marca asistencia.
         </p>
       </div>
 
       <div className="activity-import__controls">
-        <label className="form-label" htmlFor="activities-import-file">
-          Archivo institucional (.xlsx, .xlsm o .xls)
+        <label className={`activity-import__file-picker${file ? " has-file" : ""}`}>
+          <input
+            id="activities-import-file"
+            type="file"
+            accept=".xlsx,.xlsm,.xls"
+            onChange={handleFileChange}
+            disabled={loading || saving}
+            aria-label="Seleccionar archivo institucional de actividades"
+          />
+          <span className="activity-import__file-picker-icon" aria-hidden="true">
+            <i className={`fas ${loading ? "fa-spinner fa-spin" : "fa-file-excel"}`}></i>
+          </span>
+          <span className="activity-import__file-picker-copy">
+            <strong>{loading ? "Leyendo y validando el archivo..." : file?.name || "Selecciona el archivo institucional"}</strong>
+            <small>
+              Excel .xlsx, .xlsm o .xls · máximo 25 MB · hojas con encabezados reconocibles
+            </small>
+          </span>
+          <span className="activity-import__file-picker-action">
+            <i className="fas fa-folder-open" aria-hidden="true"></i>
+            Elegir archivo
+          </span>
         </label>
-        <input
-          className="form-control"
-          id="activities-import-file"
-          type="file"
-          accept=".xlsx,.xlsm,.xls"
-          onChange={handleFileChange}
-          disabled={loading || saving}
-        />
-        <small className="text-muted">
-          Máximo 25 MB. Solo se leen las hojas de participantes con encabezados
-          reconocibles.
-        </small>
-        {file && !loading && <small>Archivo seleccionado: {file.name}</small>}
       </div>
 
       {loading && (
@@ -526,6 +677,27 @@ export default function ImportarActividadesRealizadas() {
               </tbody>
             </table>
           </div>
+
+          {programasNoEncontrados.length > 0 && (
+            <div className="activity-import__missing-catalog" role="alert">
+              <div>
+                <strong>Hay programas de Bienestar que no están disponibles</strong>
+                <p>
+                  Puedes crear los programas indicados en el Excel y dejarlos
+                  vinculados a su línea y componente para reutilizarlos después.
+                </p>
+              </div>
+              <button
+                className="btn btn-outline"
+                type="button"
+                onClick={crearProgramasFaltantes}
+                disabled={loading || saving}
+              >
+                <i className="fas fa-plus" aria-hidden="true"></i>
+                Crear programas y volver a validar
+              </button>
+            </div>
+          )}
 
           {preview.participantStatuses.some(
             (row) => !["LISTO", "YA_INSCRITO"].includes(row.status),

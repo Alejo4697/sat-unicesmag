@@ -16,6 +16,7 @@ const ROLES_PARTICIPANTE_VEC = new Set([
   "EGRESADO",
   "COLABORADOR",
   "EXTERNO",
+  "ADMINISTRATIVO",
 ]);
 const TIPOS = ROLES_PARTICIPANTE_VEC;
 const TIPOS_DOCUMENTO_PARTICIPANTE = new Set([
@@ -37,6 +38,7 @@ const DETALLE_ROL_PARTICIPANTE = {
   EGRESADO: "Egresado no titulado",
   COLABORADOR: "Colaborador",
   EXTERNO: "Externo",
+  ADMINISTRATIVO: "Administrativo",
 };
 const ESTADOS_ACTIVIDAD = new Set([
   "PROGRAMADA",
@@ -210,6 +212,7 @@ const ASSISTANTS_QUERY = `
            WHEN 'ESTUDIANTE' THEN 'Estudiante'
            WHEN 'COLABORADOR' THEN 'Colaborador'
            WHEN 'EGRESADO' THEN 'Egresado no titulado'
+           WHEN 'ADMINISTRATIVO' THEN 'Administrativo'
            ELSE 'Externo' END) AS "detalleTipoParticipante",
          CASE WHEN COALESCE(e.fecha_nacimiento, p.fecha_nacimiento) IS NULL THEN NULL
               ELSE DATE_PART('year', AGE(CURRENT_DATE, COALESCE(e.fecha_nacimiento, p.fecha_nacimiento)))::int
@@ -302,40 +305,100 @@ const ASSISTANTS_QUERY = `
              )
         )
         UNION ALL
-        SELECT 'COLABORADOR' AS rol
+        SELECT 'ADMINISTRATIVO' AS rol
         WHERE EXISTS (
           SELECT 1
           FROM sat.usuarios employee
+          JOIN sat.usuarios_roles employee_role
+            ON employee_role.id_usuarios = employee.id_usuarios
+          JOIN sat.roles institutional_role
+            ON institutional_role.id_roles = employee_role.id_roles
           WHERE (employee.id_personas = p.id
                  OR employee.numero_documento = p.numero_identificacion)
             AND employee.activo = true
             AND employee.eliminado_en IS NULL
-            AND (
-              EXISTS (
-                SELECT 1
-                FROM sat.usuarios_roles employee_role
-                JOIN sat.roles institutional_role
-                  ON institutional_role.id_roles = employee_role.id_roles
-                WHERE employee_role.id_usuarios = employee.id_usuarios
-                  AND institutional_role.activo = true
-                  AND UPPER(BTRIM(institutional_role.nombre)) IN (
-                    'ADMIN', 'ADMINISTRADOR', 'COLABORADOR', 'DIRECTIVO', 'DOCENTE', 'PROFESIONAL'
-                  )
-              )
-              OR EXISTS (
-                SELECT 1
-                FROM sat.docentes employee_teacher
-                WHERE employee_teacher.id_usuarios = employee.id_usuarios
-                  AND employee_teacher.activo = true
-              )
+            AND institutional_role.activo = true
+            AND UPPER(BTRIM(institutional_role.nombre)) IN (
+              'ADMIN', 'ADMINISTRADOR', 'ADMINISTRADORA',
+              'ADMINISTRATIVO', 'ADMINISTRATIVA'
             )
         )
-        OR EXISTS (
+        UNION ALL
+        SELECT 'ADMINISTRATIVO' AS rol
+        WHERE EXISTS (
           SELECT 1
           FROM sat.docentes employee_teacher
           WHERE employee_teacher.activo = true
             AND (employee_teacher.id_personas = p.id
                  OR employee_teacher.numero_documento = p.numero_identificacion)
+            AND UPPER(BTRIM(employee_teacher.tipo_vinculo)) IN (
+              'ADMINISTRATIVO', 'ADMINISTRATIVA'
+            )
+        )
+        UNION ALL
+        SELECT 'COLABORADOR' AS rol
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM sat.usuarios admin_user
+          JOIN sat.usuarios_roles admin_role_link
+            ON admin_role_link.id_usuarios = admin_user.id_usuarios
+          JOIN sat.roles admin_role
+            ON admin_role.id_roles = admin_role_link.id_roles
+          WHERE (admin_user.id_personas = p.id
+                 OR admin_user.numero_documento = p.numero_identificacion)
+            AND admin_user.activo = true
+            AND admin_user.eliminado_en IS NULL
+            AND admin_role.activo = true
+            AND UPPER(BTRIM(admin_role.nombre)) IN (
+              'ADMIN', 'ADMINISTRADOR', 'ADMINISTRADORA',
+              'ADMINISTRATIVO', 'ADMINISTRATIVA'
+            )
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM sat.docentes administrative_teacher
+          WHERE administrative_teacher.activo = true
+            AND (administrative_teacher.id_personas = p.id
+                 OR administrative_teacher.numero_documento = p.numero_identificacion)
+            AND UPPER(BTRIM(administrative_teacher.tipo_vinculo)) IN (
+              'ADMINISTRATIVO', 'ADMINISTRATIVA'
+            )
+        )
+        AND (
+          EXISTS (
+            SELECT 1
+            FROM sat.usuarios employee
+            WHERE (employee.id_personas = p.id
+                   OR employee.numero_documento = p.numero_identificacion)
+              AND employee.activo = true
+              AND employee.eliminado_en IS NULL
+              AND (
+                EXISTS (
+                  SELECT 1
+                  FROM sat.usuarios_roles employee_role
+                  JOIN sat.roles institutional_role
+                    ON institutional_role.id_roles = employee_role.id_roles
+                  WHERE employee_role.id_usuarios = employee.id_usuarios
+                    AND institutional_role.activo = true
+                    AND UPPER(BTRIM(institutional_role.nombre)) IN (
+                      'COLABORADOR', 'DIRECTIVO', 'DOCENTE', 'PROFESIONAL'
+                    )
+                  )
+                OR EXISTS (
+                  SELECT 1
+                  FROM sat.docentes employee_teacher
+                  WHERE employee_teacher.id_usuarios = employee.id_usuarios
+                    AND employee_teacher.activo = true
+                )
+              )
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM sat.docentes employee_teacher
+            WHERE employee_teacher.activo = true
+              AND (employee_teacher.id_personas = p.id
+                   OR employee_teacher.numero_documento = p.numero_identificacion)
+          )
         )
       ) detected
       WHERE detected.rol IS NOT NULL
@@ -805,6 +868,79 @@ router.post(
         if (!idActividad || status !== "LISTO") {
           if (status === "YA_INSCRITO") participantesYaInscritos += 1;
           continue;
+        }
+        if (!row.idParticipante && row.role === "ESTUDIANTE") {
+          const student = row.studentSource || {};
+          if (!row.idPersona && student.identifier) {
+            const names = dividirNombre(student.nombres || "");
+            const surnames = dividirNombre(student.apellidos || "");
+            const personResult = await client.query(
+              `INSERT INTO sat.personas
+                 (numero_identificacion, primer_nombre, segundo_nombre,
+                  primer_apellido, segundo_apellido, correo_institucional)
+               VALUES ($1, $2, $3, $4, $5, $6)
+               ON CONFLICT (numero_identificacion) DO UPDATE SET
+                 correo_institucional = COALESCE(
+                   NULLIF(sat.personas.correo_institucional, ''),
+                   EXCLUDED.correo_institucional
+                 )
+               RETURNING id`,
+              [
+                student.identifier,
+                names.primero || null,
+                names.segundo || null,
+                surnames.primero || null,
+                surnames.segundo || null,
+                row.correo || student.correo || null,
+              ],
+            );
+            row.idPersona = personResult.rows[0]?.id || null;
+          }
+        }
+        if (!row.idParticipante && row.role === "ESTUDIANTE" && row.idPersona) {
+          const createdProfile = await client.query(
+            `INSERT INTO sat.participantes_vec
+               (id_personas, tipo_participante, detalle_tipo_participante,
+                tipo_documento, codigo, programa_academico, semestre, jornada)
+             VALUES ($1, 'ESTUDIANTE', 'Estudiante', $2, $3, $4, $5, $6)
+             ON CONFLICT (id_personas, tipo_participante) DO UPDATE SET
+               codigo = COALESCE(NULLIF(sat.participantes_vec.codigo, ''), EXCLUDED.codigo),
+               programa_academico = COALESCE(NULLIF(sat.participantes_vec.programa_academico, ''), EXCLUDED.programa_academico),
+               semestre = COALESCE(sat.participantes_vec.semestre, EXCLUDED.semestre),
+               jornada = COALESCE(NULLIF(sat.participantes_vec.jornada, ''), EXCLUDED.jornada),
+               actualizado_en = now()
+             RETURNING id_participantes_vec AS id`,
+            [
+              row.idPersona,
+              student.tipoDocumento || null,
+              row.codigo || student.codigo || null,
+              student.programaAcademico || null,
+              student.semestre || null,
+              student.jornada || null,
+            ],
+          );
+          row.idParticipante = createdProfile.rows[0]?.id || null;
+        }
+        if (!row.idParticipante && row.role === "ADMINISTRATIVO") {
+          const admin = row.administrativeSource || {};
+          const profile = await guardarPerfilDeActividad(client, {
+            identificacion: admin.identifier || row.identifier,
+            nombres: admin.nombres || "",
+            apellidos: admin.apellidos || "",
+            tipoDocumento: "CC",
+            correoInstitucional: row.correo || admin.correo || null,
+            cargo: admin.cargo || null,
+            tipo: "ADMINISTRATIVO",
+            detalleTipoParticipante: "Administrativo",
+          });
+          row.idPersona = profile.idPersona;
+          row.idParticipante = profile.idParticipante;
+        }
+        if (!row.idParticipante) {
+          throw Object.assign(
+            new Error("No se pudo crear o resolver el perfil VEC del participante encontrado."),
+            { status: 409 },
+          );
         }
         const support =
           row.supportNumber == null
@@ -2248,6 +2384,8 @@ router.get("/resumen", async (req, res, next) => {
               COUNT(DISTINCT pv.id_personas)
                 FILTER (WHERE pv.tipo_participante = 'COLABORADOR')::int AS colaboradores,
               COUNT(DISTINCT pv.id_personas)
+                FILTER (WHERE pv.tipo_participante = 'ADMINISTRATIVO')::int AS administrativos,
+              COUNT(DISTINCT pv.id_personas)
                 FILTER (WHERE pv.tipo_participante = 'EGRESADO')::int AS egresados,
               COUNT(DISTINCT pv.id_personas)
                 FILTER (WHERE pv.tipo_participante = 'EXTERNO')::int AS externos,
@@ -2296,16 +2434,68 @@ router.get("/personas/buscar", async (req, res, next) => {
          FROM (
            SELECT tipo_participante FROM sat.participantes_vec WHERE id_personas=p.id
            UNION SELECT 'ESTUDIANTE' WHERE EXISTS (SELECT 1 FROM sat.estudiantes st WHERE st.id_personas=p.id OR st.numero_documento=p.numero_identificacion)
-           UNION SELECT 'COLABORADOR' WHERE EXISTS (
-             SELECT 1 FROM sat.usuarios u LEFT JOIN sat.usuarios_roles ur ON ur.id_usuarios=u.id_usuarios
-             LEFT JOIN sat.roles r ON r.id_roles=ur.id_roles
+           UNION SELECT 'ADMINISTRATIVO' WHERE EXISTS (
+             SELECT 1
+             FROM sat.usuarios u
+             JOIN sat.usuarios_roles ur ON ur.id_usuarios=u.id_usuarios
+             JOIN sat.roles r ON r.id_roles=ur.id_roles
              WHERE (u.id_personas=p.id OR u.numero_documento=p.numero_identificacion)
-               AND u.activo=true AND u.eliminado_en IS NULL
-               AND (UPPER(BTRIM(COALESCE(r.nombre,''))) IN ('ADMIN','ADMINISTRADOR','COLABORADOR','DIRECTIVO','DOCENTE','PROFESIONAL')
-                    OR EXISTS (SELECT 1 FROM sat.docentes dt WHERE dt.id_usuarios=u.id_usuarios AND dt.activo=true))
+               AND u.activo=true AND u.eliminado_en IS NULL AND r.activo=true
+               AND UPPER(BTRIM(r.nombre)) IN ('ADMIN','ADMINISTRADOR','ADMINISTRADORA','ADMINISTRATIVO','ADMINISTRATIVA')
+           )
+           UNION SELECT 'ADMINISTRATIVO' WHERE EXISTS (
+             SELECT 1
+             FROM sat.docentes dt
+             WHERE (dt.id_personas=p.id OR dt.numero_documento=p.numero_identificacion)
+               AND dt.activo=true
+               AND UPPER(BTRIM(dt.tipo_vinculo)) IN ('ADMINISTRATIVO','ADMINISTRATIVA')
            )
            UNION SELECT 'COLABORADOR' WHERE EXISTS (
-             SELECT 1 FROM sat.docentes dt WHERE (dt.id_personas=p.id OR dt.numero_documento=p.numero_identificacion) AND dt.activo=true
+             SELECT 1 FROM sat.usuarios u
+             WHERE (u.id_personas=p.id OR u.numero_documento=p.numero_identificacion)
+               AND u.activo=true AND u.eliminado_en IS NULL
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM sat.docentes administrative_teacher
+                 WHERE (administrative_teacher.id_personas=p.id OR administrative_teacher.numero_documento=p.numero_identificacion)
+                   AND administrative_teacher.activo=true
+                   AND UPPER(BTRIM(administrative_teacher.tipo_vinculo)) IN ('ADMINISTRATIVO','ADMINISTRATIVA')
+               )
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM sat.usuarios_roles admin_ur
+                 JOIN sat.roles admin_role ON admin_role.id_roles=admin_ur.id_roles
+                 WHERE admin_ur.id_usuarios=u.id_usuarios
+                   AND admin_role.activo=true
+                   AND UPPER(BTRIM(admin_role.nombre)) IN ('ADMIN','ADMINISTRADOR','ADMINISTRADORA','ADMINISTRATIVO','ADMINISTRATIVA')
+               )
+               AND (
+                 EXISTS (
+                   SELECT 1
+                   FROM sat.usuarios_roles ur
+                   JOIN sat.roles r ON r.id_roles=ur.id_roles
+                   WHERE ur.id_usuarios=u.id_usuarios
+                     AND r.activo=true
+                     AND UPPER(BTRIM(r.nombre)) IN ('COLABORADOR','DIRECTIVO','DOCENTE','PROFESIONAL')
+                 )
+                 OR EXISTS (SELECT 1 FROM sat.docentes dt WHERE dt.id_usuarios=u.id_usuarios AND dt.activo=true)
+               )
+           )
+           UNION SELECT 'COLABORADOR' WHERE EXISTS (
+             SELECT 1 FROM sat.docentes dt
+             WHERE (dt.id_personas=p.id OR dt.numero_documento=p.numero_identificacion)
+               AND dt.activo=true
+               AND UPPER(BTRIM(COALESCE(dt.tipo_vinculo,''))) NOT IN ('ADMINISTRATIVO','ADMINISTRATIVA')
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM sat.usuarios admin_user
+                 JOIN sat.usuarios_roles admin_ur ON admin_ur.id_usuarios=admin_user.id_usuarios
+                 JOIN sat.roles admin_role ON admin_role.id_roles=admin_ur.id_roles
+                 WHERE (admin_user.id_personas=p.id OR admin_user.numero_documento=p.numero_identificacion)
+                   AND admin_user.activo=true AND admin_user.eliminado_en IS NULL
+                   AND admin_role.activo=true
+                   AND UPPER(BTRIM(admin_role.nombre)) IN ('ADMIN','ADMINISTRADOR','ADMINISTRADORA','ADMINISTRATIVO','ADMINISTRATIVA')
+               )
            )
          ) perfil
        ) roles ON true
@@ -2465,52 +2655,23 @@ router.get("/buscar", async (req, res, next) => {
           participante[campo] = valor;
         }
       }
-      const { rows } = await query(
-        `SELECT DISTINCT roles.rol
-         FROM (
-           SELECT pv.tipo_participante AS rol
-           FROM sat.participantes_vec pv
-           JOIN sat.personas persona ON persona.id = pv.id_personas
-           WHERE ($1::bigint IS NOT NULL AND persona.id = $1::bigint)
-              OR ($2::text IS NOT NULL AND persona.numero_identificacion = $2)
-           UNION
-           SELECT 'ESTUDIANTE'
-           WHERE EXISTS (
-             SELECT 1 FROM sat.estudiantes e
-             WHERE ($1::bigint IS NOT NULL AND e.id_personas = $1::bigint)
-                OR ($2::text IS NOT NULL AND e.numero_documento = $2)
-           )
-           UNION
-           SELECT 'COLABORADOR'
-           WHERE EXISTS (
-             SELECT 1 FROM sat.usuarios u
-             JOIN sat.usuarios_roles ur ON ur.id_usuarios = u.id_usuarios
-             JOIN sat.roles rol ON rol.id_roles = ur.id_roles
-             WHERE u.activo = true AND u.eliminado_en IS NULL
-               AND UPPER(BTRIM(rol.nombre)) IN (
-                 'ADMIN', 'ADMINISTRADOR', 'COLABORADOR', 'DIRECTIVO', 'DOCENTE', 'PROFESIONAL'
-               )
-               AND (($1::bigint IS NOT NULL AND u.id_personas = $1::bigint)
-                 OR ($2::text IS NOT NULL AND u.numero_documento = $2))
-           )
-           UNION
-           SELECT 'COLABORADOR'
-           WHERE EXISTS (
-             SELECT 1 FROM sat.docentes d
-             WHERE d.activo = true
-               AND (($1::bigint IS NOT NULL AND d.id_personas = $1::bigint)
-                 OR ($2::text IS NOT NULL AND d.numero_documento = $2))
-           )
-         ) roles
-         ORDER BY roles.rol`,
+      const { rows: profileRows } = await query(
+        `SELECT DISTINCT pv.tipo_participante AS rol
+         FROM sat.participantes_vec pv
+         JOIN sat.personas persona ON persona.id = pv.id_personas
+         WHERE ($1::bigint IS NOT NULL AND persona.id = $1::bigint)
+            OR ($2::text IS NOT NULL AND persona.numero_identificacion = $2)`,
         [participante.idPersona, identificacion],
       );
-      participante.roles = rows.map((row) => row.rol);
       participante.rolesVerificados = await obtenerRolesVerificados(
         query,
         participante.idPersona,
         identificacion,
       );
+      participante.roles = [...new Set([
+        ...profileRows.map((row) => row.rol),
+        ...participante.rolesVerificados,
+      ])].sort();
       return res.json({ encontrado: true, participante });
     }
 
@@ -2996,22 +3157,28 @@ async function obtenerEstadoPerfilPersona(db, identificacion) {
   };
 }
 
-function validarDatosPerfilImportado(participante) {
-  const required = [
-    ["identificación", participante.identificacion],
-    ["nombres", participante.nombres],
-    ["apellidos", participante.apellidos],
-    ["tipo de documento", participante.tipoDocumento],
-    ["fecha de nacimiento", participante.fechaNacimiento],
-    ["género", participante.genero],
-    ["correo personal", participante.correo],
-    ["teléfono móvil", participante.celular],
-    ["dirección de residencia", participante.direccion],
-    ["ciudad o municipio", participante.municipio],
-  ];
+function validarDatosPerfilImportado(participante, rol) {
+  const required =
+    rol === "ADMINISTRATIVO"
+      ? [
+          ["identificación", participante.identificacion],
+          ["nombre completo", participante.nombres],
+          ["apellido(s)", participante.apellidos],
+          ["correo personal", participante.correo],
+        ]
+      : [
+          ["identificación", participante.identificacion],
+          ["nombres", participante.nombres],
+          ["apellidos", participante.apellidos],
+          ["tipo de documento", participante.tipoDocumento],
+          ["correo personal", participante.correo],
+        ];
   const missing = required.find(([, value]) => !value);
   if (missing) return `Falta el campo obligatorio: ${missing[0]}.`;
-  if (!TIPOS_DOCUMENTO_PARTICIPANTE.has(participante.tipoDocumento)) {
+  if (
+    participante.tipoDocumento &&
+    !TIPOS_DOCUMENTO_PARTICIPANTE.has(participante.tipoDocumento)
+  ) {
     return "Selecciona un tipo de documento válido.";
   }
   if (!/^[\p{L}\p{N}._-]{1,64}$/u.test(participante.identificacion)) {
@@ -3025,6 +3192,7 @@ function validarDatosPerfilImportado(participante) {
     return "Nombres y apellidos deben tener entre 2 y 120 caracteres.";
   }
   if (
+    participante.genero &&
     ![
       "Femenino",
       "Masculino",
@@ -3066,14 +3234,18 @@ function validarDatosPerfilImportado(participante) {
     if (value && value.length > max)
       return `El campo ${label} supera el máximo de ${max} caracteres.`;
   }
-  const birthDate = new Date(`${participante.fechaNacimiento}T00:00:00.000Z`);
-  if (
-    !/^\d{4}-\d{2}-\d{2}$/.test(participante.fechaNacimiento) ||
-    Number.isNaN(birthDate.getTime()) ||
-    birthDate.toISOString().slice(0, 10) !== participante.fechaNacimiento ||
-    participante.fechaNacimiento > new Date().toISOString().slice(0, 10)
-  ) {
-    return "La fecha de nacimiento debe ser una fecha real que no sea posterior a hoy.";
+  if (participante.fechaNacimiento) {
+    const birthDate = new Date(
+      `${participante.fechaNacimiento}T00:00:00.000Z`,
+    );
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(participante.fechaNacimiento) ||
+      Number.isNaN(birthDate.getTime()) ||
+      birthDate.toISOString().slice(0, 10) !== participante.fechaNacimiento ||
+      participante.fechaNacimiento > new Date().toISOString().slice(0, 10)
+    ) {
+      return "La fecha de nacimiento debe ser una fecha real que no sea posterior a hoy.";
+    }
   }
   if (participante.fechaEgreso) {
     const graduationDate = new Date(
@@ -3214,9 +3386,9 @@ async function importarPerfilesMasivo(req, res, next, registrar) {
       : []
     ).map(Number),
   );
-  if (!["EGRESADO", "COLABORADOR", "EXTERNO"].includes(rol)) {
+  if (!["EGRESADO", "COLABORADOR", "EXTERNO", "ADMINISTRATIVO"].includes(rol)) {
     return res.status(400).json({
-      error: "Selecciona Egresado, Colaborador o Externo para esta carga.",
+      error: "Selecciona Egresado, Colaborador, Administrativo o Externo para esta carga.",
     });
   }
   if (!Array.isArray(filas) || filas.length < 1 || filas.length > 500) {
@@ -3228,6 +3400,15 @@ async function importarPerfilesMasivo(req, res, next, registrar) {
   const seen = new Set();
   const normalizedRows = filas.map((row, index) => {
     const participante = normalizarEntrada({ ...row, tipo: rol });
+    if (rol === "ADMINISTRATIVO") {
+      if (!participante.tipoDocumento) participante.tipoDocumento = "CC";
+      if (!participante.apellidos && participante.nombres) {
+        const parts = participante.nombres.split(/\s+/).filter(Boolean);
+        const splitAt = Math.ceil(parts.length / 2);
+        participante.nombres = parts.slice(0, splitAt).join(" ");
+        participante.apellidos = parts.slice(splitAt).join(" ");
+      }
+    }
     return {
       fila: Number(row.fila) || index + 2,
       participante: {
@@ -3253,7 +3434,7 @@ async function importarPerfilesMasivo(req, res, next, registrar) {
         continue;
       }
       seen.add(key);
-      const validationError = validarDatosPerfilImportado(participante);
+      const validationError = validarDatosPerfilImportado(participante, rol);
       if (validationError) {
         results.push({ fila, status: "invalid", message: validationError });
         continue;
@@ -3263,7 +3444,10 @@ async function importarPerfilesMasivo(req, res, next, registrar) {
         client,
         participante.identificacion,
       );
-      if (state.vecRoles.includes(rol)) {
+      const alreadyHasRole =
+        state.vecRoles.includes(rol) ||
+        (rol === "ADMINISTRATIVO" && state.roles.includes(rol));
+      if (alreadyHasRole) {
         results.push({
           fila,
           status: "already-has-role",
@@ -3365,6 +3549,128 @@ router.post(
   },
 );
 
+router.post(
+  "/perfiles/administrativos/importar",
+  requireRole("admin", "coordinador", "administrador"),
+  async (req, res, next) => {
+    const rawRows = req.body?.personas;
+    if (!Array.isArray(rawRows) || rawRows.length < 1 || rawRows.length > 2000) {
+      return res.status(400).json({
+        error: "La carga debe contener entre 1 y 2.000 administrativos.",
+      });
+    }
+
+    const seen = new Set();
+    const results = [];
+    let client;
+    try {
+      client = await pool.connect();
+      await client.query("BEGIN");
+      for (const [index, raw] of rawRows.entries()) {
+        const fila = Number(raw?.fila) || index + 2;
+        const identificacion = String(raw?.identificacion || "")
+          .trim()
+          .replace(/\.0$/, "");
+        const nombreCompleto = String(raw?.nombreCompleto || "")
+          .replace(/\s+/g, " ")
+          .trim();
+        const cargo = String(raw?.cargo || "").trim();
+        const correo = String(raw?.correo || "").trim().toLowerCase();
+        const errors = [];
+        if (!/^[\p{L}\p{N}._-]{1,64}$/u.test(identificacion)) {
+          errors.push("La identificación no es válida.");
+        }
+        if (nombreCompleto.length < 2 || nombreCompleto.length > 240) {
+          errors.push("El nombre completo debe tener entre 2 y 240 caracteres.");
+        }
+        if (cargo.length > 250) errors.push("El cargo supera 250 caracteres.");
+        if (!correo) {
+          errors.push("El correo electrónico es obligatorio.");
+        } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo) || correo.length > 254) {
+          errors.push("El correo electrónico no es válido.");
+        }
+        if (errors.length) {
+          results.push({ fila, status: "invalid", message: errors.join(" ") });
+          continue;
+        }
+        if (seen.has(identificacion)) {
+          results.push({
+            fila,
+            status: "duplicate-file",
+            message: "La identificación ya aparece en este archivo.",
+          });
+          continue;
+        }
+        seen.add(identificacion);
+
+        await client.query("SAVEPOINT importar_administrativo");
+        try {
+          const state = await obtenerEstadoPerfilPersona(client, identificacion);
+          const yaTeniaRolAdministrativo = state.roles.includes("ADMINISTRATIVO");
+          if (yaTeniaRolAdministrativo) {
+            results.push({
+              fila,
+              identificacion,
+              nombreCompleto,
+              status: "already-registered",
+              message: "Ya estaba registrado con el rol Administrativo; no se agregó nuevamente.",
+            });
+            await client.query("RELEASE SAVEPOINT importar_administrativo");
+            continue;
+          }
+          const nameParts = nombreCompleto.split(/\s+/);
+          const nameSplit = Math.ceil(nameParts.length / 2);
+          const profile = await guardarPerfilDeActividad(client, {
+            identificacion,
+            nombres: nameParts.slice(0, nameSplit).join(" "),
+            apellidos: nameParts.slice(nameSplit).join(" "),
+            tipoDocumento: "CC",
+            correoInstitucional: correo || null,
+            cargo: cargo || null,
+            tipo: "ADMINISTRATIVO",
+            detalleTipoParticipante: "Administrativo",
+          });
+          results.push({
+            fila,
+            identificacion,
+            nombreCompleto,
+            status: "created",
+            idPerfil: profile.idParticipante,
+            message: "Perfil administrativo registrado.",
+          });
+          await client.query("RELEASE SAVEPOINT importar_administrativo");
+        } catch (error) {
+          await client.query("ROLLBACK TO SAVEPOINT importar_administrativo");
+          await client.query("RELEASE SAVEPOINT importar_administrativo");
+          results.push({
+            fila,
+            identificacion,
+            nombreCompleto,
+            status: "failed",
+            message: error.message || "No se pudo registrar el perfil administrativo.",
+          });
+        }
+      }
+      await client.query("COMMIT");
+      res.json({
+        resultados: results,
+        resumen: {
+          recibidos: rawRows.length,
+          creados: results.filter((row) => row.status === "created").length,
+          yaRegistrados: results.filter((row) => row.status === "already-registered").length,
+          duplicados: results.filter((row) => row.status === "duplicate-file").length,
+          invalidos: results.filter((row) => row.status === "invalid" || row.status === "failed").length,
+        },
+      });
+    } catch (error) {
+      if (client) await client.query("ROLLBACK").catch(() => {});
+      enviarErrorBaseDatos(error, res, next);
+    } finally {
+      client?.release();
+    }
+  },
+);
+
 router.get(
   "/perfiles/roles",
   requireRole("admin", "coordinador", "administrador"),
@@ -3373,10 +3679,10 @@ router.get(
       .trim()
       .toUpperCase();
     const busqueda = String(req.query.busqueda || "").trim();
-    if (!["EGRESADO", "COLABORADOR", "EXTERNO"].includes(rol)) {
+    if (!["EGRESADO", "COLABORADOR", "EXTERNO", "ADMINISTRATIVO"].includes(rol)) {
       return res
         .status(400)
-        .json({ error: "Selecciona Egresado, Colaborador o Externo." });
+        .json({ error: "Selecciona Egresado, Colaborador, Administrativo o Externo." });
     }
     if (busqueda.length > 120) {
       return res
@@ -3425,6 +3731,22 @@ router.get(
                     SELECT 1 FROM sat.estudiantes e
                     WHERE e.id_personas = p.id OR e.numero_documento = p.numero_identificacion
                   )
+                  UNION
+                  SELECT 'ADMINISTRATIVO'
+                  WHERE EXISTS (
+                    SELECT 1
+                    FROM sat.usuarios u
+                    JOIN sat.usuarios_roles ur ON ur.id_usuarios = u.id_usuarios
+                    JOIN sat.roles r ON r.id_roles = ur.id_roles
+                    WHERE (u.id_personas = p.id OR u.numero_documento = p.numero_identificacion)
+                      AND u.activo = true
+                      AND u.eliminado_en IS NULL
+                      AND r.activo = true
+                      AND UPPER(BTRIM(r.nombre)) IN (
+                        'ADMIN', 'ADMINISTRADOR', 'ADMINISTRADORA',
+                        'ADMINISTRATIVO', 'ADMINISTRATIVA'
+                      )
+                  )
                 ) roles
                 ORDER BY roles.rol
               ) AS roles,
@@ -3451,7 +3773,9 @@ router.get(
                       WHERE ur.id_usuarios = u.id_usuarios
                         AND r.activo = true
                         AND UPPER(BTRIM(r.nombre)) IN (
-                          'ADMIN', 'ADMINISTRADOR', 'COLABORADOR', 'DIRECTIVO', 'DOCENTE', 'PROFESIONAL'
+                          'ADMIN', 'ADMINISTRADOR', 'ADMINISTRADORA',
+                          'ADMINISTRATIVO', 'ADMINISTRATIVA',
+                          'COLABORADOR', 'DIRECTIVO', 'DOCENTE', 'PROFESIONAL'
                         )
                     )
                     OR EXISTS (
@@ -3512,10 +3836,10 @@ router.post(
       return res
         .status(400)
         .json({ error: "Identificador de perfil inválido." });
-    if (!["EGRESADO", "COLABORADOR", "EXTERNO"].includes(rol)) {
+    if (!["EGRESADO", "COLABORADOR", "EXTERNO", "ADMINISTRATIVO"].includes(rol)) {
       return res
         .status(400)
-        .json({ error: "Selecciona Egresado, Colaborador o Externo." });
+        .json({ error: "Selecciona Egresado, Colaborador, Administrativo o Externo." });
     }
     if (req.body?.confirmarRolAdicional !== true) {
       return res.status(400).json({
@@ -3544,7 +3868,7 @@ router.post(
          FROM sat.participantes_vec pv
          JOIN sat.personas p ON p.id = pv.id_personas
          WHERE pv.id_participantes_vec = $1
-           AND pv.tipo_participante IN ('EGRESADO', 'COLABORADOR', 'EXTERNO')
+           AND pv.tipo_participante IN ('EGRESADO', 'COLABORADOR', 'EXTERNO', 'ADMINISTRATIVO')
          FOR UPDATE OF pv, p`,
         [id],
       );
@@ -3663,7 +3987,7 @@ router.put(
        FROM sat.participantes_vec pv
        JOIN sat.personas p ON p.id = pv.id_personas
        WHERE pv.id_participantes_vec = $1
-         AND pv.tipo_participante IN ('EGRESADO', 'COLABORADOR', 'EXTERNO')
+         AND pv.tipo_participante IN ('EGRESADO', 'COLABORADOR', 'EXTERNO', 'ADMINISTRATIVO')
        FOR UPDATE OF pv, p`,
         [id],
       );
@@ -3681,7 +4005,10 @@ router.put(
         perfil.identificacion,
       );
       const datosPersonalesProtegidos = rolesInstitucionales.some(
-        (rol) => rol === "ESTUDIANTE" || rol === "COLABORADOR",
+        (rol) =>
+          rol === "ESTUDIANTE" ||
+          rol === "COLABORADOR" ||
+          rol === "ADMINISTRATIVO",
       );
       const invalidacion = validarEdicionPerfilRol(
         payload,
@@ -3816,7 +4143,7 @@ router.delete(
          FROM sat.participantes_vec pv
          JOIN sat.personas p ON p.id = pv.id_personas
          WHERE pv.id_participantes_vec = $1
-           AND pv.tipo_participante IN ('EGRESADO', 'COLABORADOR', 'EXTERNO')
+           AND pv.tipo_participante IN ('EGRESADO', 'COLABORADOR', 'EXTERNO', 'ADMINISTRATIVO')
          FOR UPDATE OF pv, p`,
         [id],
       );
@@ -3958,7 +4285,7 @@ router.delete(
        FROM sat.participantes_vec pv
        JOIN sat.personas p ON p.id = pv.id_personas
        WHERE pv.id_participantes_vec = $1
-         AND pv.tipo_participante IN ('EGRESADO', 'COLABORADOR', 'EXTERNO')
+         AND pv.tipo_participante IN ('EGRESADO', 'COLABORADOR', 'EXTERNO', 'ADMINISTRATIVO')
        FOR UPDATE OF pv, p`,
         [id],
       );
@@ -3984,7 +4311,10 @@ router.delete(
       );
       const datosPersonalesProtegidos =
         rolesInstitucionales.some(
-          (rol) => rol === "ESTUDIANTE" || rol === "COLABORADOR",
+          (rol) =>
+            rol === "ESTUDIANTE" ||
+            rol === "COLABORADOR" ||
+            rol === "ADMINISTRATIVO",
         ) || estudianteVec[0].existe;
       const tieneRolEstudiante =
         rolesInstitucionales.includes("ESTUDIANTE") || estudianteVec[0].existe;
@@ -4325,10 +4655,10 @@ router.post(
           "Completa los nombres y apellidos antes de registrar a la persona.",
       });
     }
-    if (!["EGRESADO", "COLABORADOR", "EXTERNO"].includes(participante.tipo)) {
+    if (!["EGRESADO", "COLABORADOR", "EXTERNO", "ADMINISTRATIVO"].includes(participante.tipo)) {
       return res.status(400).json({
         error:
-          "Solo puedes crear participantes no encontrados como Egresado, Colaborador o Externo. Los estudiantes y el personal administrativo deben existir en la base institucional.",
+          "Solo puedes crear perfiles no encontrados como Egresado, Colaborador, Administrativo o Externo. Los estudiantes deben existir en la base institucional.",
       });
     }
     if (!TIPOS_DOCUMENTO_PARTICIPANTE.has(participante.tipoDocumento)) {
@@ -5908,11 +6238,11 @@ async function buscarParticipante(tipo, identificacion) {
     return rows[0] ? mapearParticipante(rows[0], "sat.estudiantes") : null;
   }
 
-  if (tipo === "COLABORADOR") {
+  if (tipo === "COLABORADOR" || tipo === "ADMINISTRATIVO") {
     const { rows } = await query(
       `SELECT
          per.id AS "idPersona",
-         'COLABORADOR' AS tipo,
+         $2::text AS tipo,
          COALESCE(per.numero_identificacion, u.numero_documento) AS identificacion,
          pv.tipo_documento AS "tipoDocumento",
          COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', per.primer_nombre, per.segundo_nombre)), ''), u.nombres) AS nombres,
@@ -5949,26 +6279,38 @@ async function buscarParticipante(tipo, identificacion) {
        LEFT JOIN sat.programas_academicos prog ON prog.id_programas_academicos = d.id_programas_academicos
        LEFT JOIN sat.participantes_vec pv
          ON pv.id_personas = per.id
-        AND pv.tipo_participante = 'COLABORADOR'
+        AND pv.tipo_participante = $2
        WHERE u.numero_documento = $1
          AND u.activo = true AND u.eliminado_en IS NULL
          AND (
-           EXISTS (
+           ($2 = 'ADMINISTRATIVO' AND EXISTS (
              SELECT 1
              FROM sat.usuarios_roles ur
              JOIN sat.roles rol ON rol.id_roles = ur.id_roles
              WHERE ur.id_usuarios = u.id_usuarios
+               AND rol.activo = true
                AND UPPER(BTRIM(rol.nombre)) IN (
-                 'ADMIN', 'ADMINISTRADOR', 'COLABORADOR', 'DIRECTIVO', 'DOCENTE', 'PROFESIONAL'
+                 'ADMIN', 'ADMINISTRADOR', 'ADMINISTRADORA',
+                 'ADMINISTRATIVO', 'ADMINISTRATIVA'
                )
-           )
-           OR EXISTS (
+           ))
+           OR ($2 = 'COLABORADOR' AND EXISTS (
+             SELECT 1
+             FROM sat.usuarios_roles ur
+             JOIN sat.roles rol ON rol.id_roles = ur.id_roles
+             WHERE ur.id_usuarios = u.id_usuarios
+               AND rol.activo = true
+               AND UPPER(BTRIM(rol.nombre)) IN (
+                 'COLABORADOR', 'DIRECTIVO', 'DOCENTE', 'PROFESIONAL'
+               )
+           ))
+           OR ($2 = 'COLABORADOR' AND EXISTS (
              SELECT 1 FROM sat.docentes d
              WHERE d.id_usuarios = u.id_usuarios AND d.activo = true
-           )
+           ))
          )
        LIMIT 1`,
-      [identificacion],
+      [identificacion, tipo],
     );
     if (rows[0]) return mapearParticipante(rows[0], "sat.usuarios");
   }
@@ -6077,8 +6419,65 @@ async function obtenerRolesVerificados(db, idPersona, identificacion) {
           )
      )
      UNION
-     SELECT 'COLABORADOR' AS rol
+     SELECT 'ADMINISTRATIVO' AS rol
      WHERE EXISTS (
+       SELECT 1
+       FROM sat.usuarios u
+       JOIN sat.usuarios_roles ur ON ur.id_usuarios = u.id_usuarios
+       JOIN sat.roles r ON r.id_roles = ur.id_roles
+       WHERE (($1::bigint IS NOT NULL AND u.id_personas = $1::bigint)
+              OR u.numero_documento = $2)
+         AND u.activo = true
+         AND u.eliminado_en IS NULL
+         AND r.activo = true
+         AND UPPER(BTRIM(r.nombre)) IN (
+           'ADMIN', 'ADMINISTRADOR', 'ADMINISTRADORA',
+           'ADMINISTRATIVO', 'ADMINISTRATIVA'
+         )
+     )
+     UNION
+     SELECT 'ADMINISTRATIVO' AS rol
+     WHERE EXISTS (
+       SELECT 1
+       FROM sat.docentes d
+       WHERE d.activo = true
+         AND (($1::bigint IS NOT NULL AND d.id_personas = $1::bigint)
+              OR d.numero_documento = $2)
+         AND UPPER(BTRIM(d.tipo_vinculo)) IN (
+           'ADMINISTRATIVO', 'ADMINISTRATIVA'
+         )
+     )
+     UNION
+     SELECT 'COLABORADOR' AS rol
+     WHERE NOT EXISTS (
+       SELECT 1
+       FROM sat.usuarios admin_user
+       JOIN sat.usuarios_roles admin_ur
+         ON admin_ur.id_usuarios = admin_user.id_usuarios
+       JOIN sat.roles admin_role
+         ON admin_role.id_roles = admin_ur.id_roles
+       WHERE (($1::bigint IS NOT NULL AND admin_user.id_personas = $1::bigint)
+              OR admin_user.numero_documento = $2)
+         AND admin_user.activo = true
+         AND admin_user.eliminado_en IS NULL
+         AND admin_role.activo = true
+         AND UPPER(BTRIM(admin_role.nombre)) IN (
+           'ADMIN', 'ADMINISTRADOR', 'ADMINISTRADORA',
+           'ADMINISTRATIVO', 'ADMINISTRATIVA'
+         )
+     )
+     AND NOT EXISTS (
+       SELECT 1
+       FROM sat.docentes administrative_teacher
+       WHERE administrative_teacher.activo = true
+         AND (($1::bigint IS NOT NULL AND administrative_teacher.id_personas = $1::bigint)
+              OR administrative_teacher.numero_documento = $2)
+         AND UPPER(BTRIM(administrative_teacher.tipo_vinculo)) IN (
+           'ADMINISTRATIVO', 'ADMINISTRATIVA'
+         )
+     )
+     AND (
+       EXISTS (
        SELECT 1
        FROM sat.usuarios u
        WHERE (($1::bigint IS NOT NULL AND u.id_personas = $1::bigint)
@@ -6093,7 +6492,7 @@ async function obtenerRolesVerificados(db, idPersona, identificacion) {
              WHERE ur.id_usuarios = u.id_usuarios
                AND r.activo = true
                AND UPPER(BTRIM(r.nombre)) IN (
-                 'ADMIN', 'ADMINISTRADOR', 'COLABORADOR', 'DIRECTIVO', 'DOCENTE', 'PROFESIONAL'
+                 'COLABORADOR', 'DIRECTIVO', 'DOCENTE', 'PROFESIONAL'
                )
            )
            OR EXISTS (
@@ -6108,6 +6507,7 @@ async function obtenerRolesVerificados(db, idPersona, identificacion) {
        WHERE d.activo = true
          AND (($1::bigint IS NOT NULL AND d.id_personas = $1::bigint)
               OR d.numero_documento = $2)
+     )
      )
      ORDER BY rol`,
     [idPersona || null, identificacion],
@@ -6527,6 +6927,8 @@ function normalizarPayloadImportacion(body = {}) {
       index,
       activityIndex: Number(row?.activityIndex),
       identifier: clean(row?.identifier),
+      codigo: clean(row?.codigo),
+      correo: clean(row?.correo).toLowerCase(),
       role: clean(row?.role).toUpperCase(),
       supportNumber,
       supportNumberInvalid: supportProvided && supportNumber == null,
@@ -6577,6 +6979,7 @@ function normalizarPayloadImportacion(body = {}) {
   if (
     registrations.some(
       (row) =>
+        (!row.identifier && !row.codigo && !row.correo) ||
         !Number.isInteger(row.activityIndex) ||
         row.activityIndex < 0 ||
         row.activityIndex >= activities.length,
@@ -6589,7 +6992,15 @@ function normalizarPayloadImportacion(body = {}) {
   if (registrations.some((row) => !TIPOS.has(row.role))) {
     return { error: "El archivo contiene un rol de participante no válido." };
   }
-  return { activities, registrations };
+  if (registrations.some((row) => row.correo && row.correo.length > 254)) {
+    return { error: "Un correo institucional supera el límite permitido." };
+  }
+  return {
+    activities,
+    registrations,
+    crearProgramas: body.crearProgramas === true,
+    activarProgramas: body.activarProgramas !== false,
+  };
 }
 
 function normalizarClaveImportacion(value) {
@@ -6598,6 +7009,54 @@ function normalizarClaveImportacion(value) {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^A-Z0-9]/gi, "")
     .toLocaleUpperCase("es");
+}
+
+function normalizarPeriodoImportacion(value) {
+  const texto = String(value || "");
+  const fecha = texto.match(/\b((?:19|20)\d{2})[-/](\d{1,2})[-/]\d{1,2}\b/);
+  if (fecha) {
+    return `${fecha[1]}${Number(fecha[2]) <= 6 ? 1 : 2}`;
+  }
+  const clave = normalizarClaveImportacion(value);
+  const yearMatch = clave.match(/((?:19|20)\d{2})/);
+  if (!yearMatch) return clave;
+  const prefix = clave.slice(0, yearMatch.index);
+  const suffix = clave.slice(yearMatch.index + yearMatch[0].length);
+  let semester = "";
+  if (/SEGUNDO|IIP|II/.test(prefix) || /^2/.test(suffix)) semester = "2";
+  else if (/PRIMER|IP$|(?:^|[^I])I$/.test(prefix) || /^[1I]/.test(suffix)) semester = "1";
+  return semester ? `${yearMatch[1]}${semester}` : clave;
+}
+
+function definirPeriodoHistorico(start, end) {
+  const firstDate = String(start || "").match(
+    /^((?:19|20)\d{2})-(\d{2})-\d{2}$/,
+  );
+  const lastDate = String(end || "").match(
+    /^((?:19|20)\d{2})-(\d{2})-\d{2}$/,
+  );
+  if (!firstDate || !lastDate || firstDate[1] !== lastDate[1]) return null;
+  const year = Number(firstDate[1]);
+  const month = Number(firstDate[2]);
+  if (month < 1 || month > 12) return null;
+  const semester = month <= 6 ? 1 : 2;
+  return {
+    name: `${year}-${semester}`,
+    start: `${year}-${semester === 1 ? "01-01" : "07-01"}`,
+    end: `${year}-${semester === 1 ? "06-30" : "12-31"}`,
+  };
+}
+
+function similitudTextoImportacion(left, right) {
+  const a = normalizarClaveImportacion(left);
+  const b = normalizarClaveImportacion(right);
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  if (a.includes(b) || b.includes(a)) return 0.88;
+  const wordsA = new Set(a.match(/[A-Z0-9]{3,}/g) || []);
+  const wordsB = new Set(b.match(/[A-Z0-9]{3,}/g) || []);
+  const shared = [...wordsA].filter((word) => wordsB.has(word)).length;
+  return shared / Math.max(wordsA.size, wordsB.size, 1);
 }
 
 function normalizarProgramaImportacion(value) {
@@ -6616,10 +7075,20 @@ function esFechaISOValida(value) {
 }
 
 async function prepararImportacionActividades(client, input) {
-  const [periodRows, supportRows, dependencyRows, profileRows, wellbeingRows] =
+  const [
+    periodRows,
+    supportRows,
+    dependencyRows,
+    profileRows,
+    studentRows,
+    administrativeRows,
+    wellbeingRows,
+  ] =
     await Promise.all([
       client.query(
-        `SELECT id_periodos_academicos AS id, nombre
+        `SELECT id_periodos_academicos AS id, nombre,
+                fecha_inicio::date AS "fechaInicio",
+                fecha_fin::date AS "fechaFin"
        FROM sat.periodos_academicos`,
       ),
       client.query(
@@ -6633,23 +7102,114 @@ async function prepararImportacionActividades(client, input) {
        WHERE activo = true`,
       ),
       client.query(
-        `SELECT pv.id_participantes_vec AS id, pv.tipo_participante AS role,
-              persona.numero_identificacion AS identifier
+        `SELECT pv.id_participantes_vec AS id, pv.id_personas AS "idPersona",
+              pv.tipo_participante AS role,
+              persona.numero_identificacion AS identifier,
+              pv.codigo,
+              LOWER(COALESCE(persona.correo_institucional, persona.correo_electronico)) AS correo
        FROM sat.participantes_vec pv
        JOIN sat.personas persona ON persona.id = pv.id_personas
-       WHERE persona.numero_identificacion = ANY($1::text[])`,
+       WHERE persona.numero_identificacion = ANY($1::text[])
+          OR LOWER(COALESCE(persona.correo_institucional, persona.correo_electronico, '')) = ANY($2::text[])
+          OR pv.codigo = ANY($3::text[])`,
         [
           [
             ...new Set(
               input.registrations.map((row) => row.identifier).filter(Boolean),
             ),
           ],
+          [
+            ...new Set(
+              input.registrations.map((row) => row.correo).filter(Boolean),
+            ),
+          ],
+          [
+            ...new Set(
+              input.registrations.map((row) => row.codigo).filter(Boolean),
+            ),
+          ],
+        ],
+      ),
+      client.query(
+        `SELECT e.id_estudiantes AS "idEstudiante",
+                e.id_personas AS "idPersona",
+                COALESCE(p.numero_identificacion, e.numero_documento) AS identifier,
+                COALESCE(m.codigo_externo, e.codigo_externo) AS codigo,
+                LOWER(COALESCE(e.correo_institucional, e.correo_personal,
+                  p.correo_institucional, p.correo_electronico, '')) AS correo,
+                COALESCE(p.primer_nombre, e.nombres) AS nombres,
+                COALESCE(
+                  CONCAT_WS(' ', p.primer_apellido, p.segundo_apellido),
+                  e.apellidos
+                ) AS apellidos,
+                e.tipo_documento AS "tipoDocumento",
+                COALESCE(m.semestre, e.semestre_actual) AS semestre,
+                m.jornada AS jornada,
+                pv.id_participantes_vec AS "idParticipante"
+         FROM sat.estudiantes e
+         LEFT JOIN sat.personas p
+           ON p.id = e.id_personas OR p.numero_identificacion = e.numero_documento
+         LEFT JOIN LATERAL (
+           SELECT m.codigo_externo, m.semestre, m.jornada
+           FROM sat.matriculas m
+           WHERE m.id_estudiantes = e.id_estudiantes
+           ORDER BY m.id_matriculas DESC NULLS LAST
+           LIMIT 1
+         ) m ON true
+         LEFT JOIN sat.participantes_vec pv
+           ON pv.id_personas = COALESCE(e.id_personas, p.id)
+          AND pv.tipo_participante = 'ESTUDIANTE'
+         WHERE e.numero_documento = ANY($1::text[])
+            OR e.codigo_externo = ANY($2::text[])
+            OR m.codigo_externo = ANY($2::text[])
+            OR LOWER(COALESCE(e.correo_institucional, e.correo_personal,
+              p.correo_institucional, p.correo_electronico, '')) = ANY($3::text[])`,
+        [
+          [...new Set(input.registrations.map((row) => row.identifier).filter(Boolean))],
+          [...new Set(input.registrations.map((row) => row.codigo).filter(Boolean))],
+          [...new Set(input.registrations.map((row) => row.correo).filter(Boolean))],
+        ],
+      ),
+      client.query(
+        `SELECT pv.id_participantes_vec AS id,
+                COALESCE(u.id_personas, p.id) AS "idPersona",
+                'ADMINISTRATIVO'::text AS role,
+                COALESCE(p.numero_identificacion, u.numero_documento) AS identifier,
+                NULL::text AS codigo,
+                LOWER(COALESCE(p.correo_institucional, p.correo_electronico,
+                  u.correo_institucional, '')) AS correo,
+                COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre)), ''),
+                  u.nombres, '') AS nombres,
+                COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', p.primer_apellido, p.segundo_apellido)), ''),
+                  u.apellidos, '') AS apellidos,
+                COALESCE(p.cargo, pv.cargo) AS cargo
+         FROM sat.usuarios u
+         JOIN sat.usuarios_roles ur ON ur.id_usuarios = u.id_usuarios
+         JOIN sat.roles r ON r.id_roles = ur.id_roles
+         LEFT JOIN sat.personas p
+           ON p.id = u.id_personas OR p.numero_identificacion = u.numero_documento
+         LEFT JOIN sat.participantes_vec pv
+           ON pv.id_personas = COALESCE(u.id_personas, p.id)
+          AND pv.tipo_participante = 'ADMINISTRATIVO'
+         WHERE u.activo = true AND u.eliminado_en IS NULL
+           AND r.activo = true
+           AND UPPER(BTRIM(r.nombre)) IN (
+             'ADMIN', 'ADMINISTRADOR', 'ADMINISTRADORA',
+             'ADMINISTRATIVO', 'ADMINISTRATIVA'
+           )
+           AND (
+             COALESCE(p.numero_identificacion, u.numero_documento) = ANY($1::text[])
+             OR LOWER(COALESCE(p.correo_institucional, p.correo_electronico,
+               u.correo_institucional, '')) = ANY($2::text[])
+           )`,
+        [
+          [...new Set(input.registrations.map((row) => row.identifier).filter(Boolean))],
+          [...new Set(input.registrations.map((row) => row.correo).filter(Boolean))],
         ],
       ),
       client.query(
         `SELECT nombre
-       FROM sat.programas_bienestar
-       WHERE activo = true`,
+       FROM sat.programas_bienestar`,
       ),
     ]);
 
@@ -6658,6 +7218,116 @@ async function prepararImportacionActividades(client, input) {
     const key = normalizarClaveImportacion(period.nombre);
     if (!periodsByKey.has(key)) periodsByKey.set(key, []);
     periodsByKey.get(key).push(period);
+  }
+  const periodsByFlexibleKey = new Map();
+  for (const period of periodRows.rows) {
+    const key = normalizarPeriodoImportacion(period.nombre);
+    if (!periodsByFlexibleKey.has(key)) periodsByFlexibleKey.set(key, []);
+    periodsByFlexibleKey.get(key).push(period);
+  }
+  for (const source of input.activities) {
+    const periodKey = normalizarPeriodoImportacion(source.period);
+    const hasPeriodByName =
+      periodsByKey.has(normalizarClaveImportacion(source.period)) ||
+      periodsByFlexibleKey.has(periodKey);
+    const hasPeriodByDates = periodRows.rows.some((period) => {
+      if (!source.start || !source.end || !period.fechaInicio || !period.fechaFin) {
+        return false;
+      }
+      return (
+        source.start >= String(period.fechaInicio).slice(0, 10) &&
+        source.end <= String(period.fechaFin).slice(0, 10)
+      );
+    });
+    if (hasPeriodByName || hasPeriodByDates) continue;
+
+    const period = definirPeriodoHistorico(source.start, source.end);
+    if (!period) continue;
+    const { rows } = await client.query(
+      `INSERT INTO sat.periodos_academicos
+         (nombre, fecha_inicio, fecha_fin, activo)
+       VALUES ($1, $2::date, $3::date, true)
+       ON CONFLICT (nombre) DO UPDATE SET
+         fecha_inicio = COALESCE(sat.periodos_academicos.fecha_inicio, EXCLUDED.fecha_inicio),
+         fecha_fin = COALESCE(sat.periodos_academicos.fecha_fin, EXCLUDED.fecha_fin),
+         activo = true
+       RETURNING id_periodos_academicos AS id, nombre,
+                 fecha_inicio::date AS "fechaInicio",
+                 fecha_fin::date AS "fechaFin"`,
+      [period.name, period.start, period.end],
+    );
+    const created = rows[0];
+    if (!created) continue;
+    periodRows.rows.push(created);
+    const exactKey = normalizarClaveImportacion(created.nombre);
+    if (!periodsByKey.has(exactKey)) periodsByKey.set(exactKey, []);
+    periodsByKey.get(exactKey).push(created);
+    const flexibleKey = normalizarPeriodoImportacion(created.nombre);
+    if (!periodsByFlexibleKey.has(flexibleKey)) {
+      periodsByFlexibleKey.set(flexibleKey, []);
+    }
+    periodsByFlexibleKey.get(flexibleKey).push(created);
+  }
+  if (input.crearProgramas) {
+    for (const [index, source] of input.activities.entries()) {
+      if (!source.wellbeing) continue;
+      const supportNumber = input.registrations.find(
+        (row) => row.activityIndex === index && row.supportNumber,
+      )?.supportNumber || null;
+      await client.query(
+        `WITH linea AS (
+           INSERT INTO sat.lineas_accion (nombre)
+           VALUES ($1)
+           ON CONFLICT (nombre) DO UPDATE SET activo = true
+           RETURNING id_lineas_accion
+         ), componente AS (
+           INSERT INTO sat.componentes_bienestar (nombre, id_lineas_accion)
+           SELECT $2, id_lineas_accion FROM linea
+           ON CONFLICT (nombre) DO UPDATE SET activo = true
+           RETURNING id_componentes_bienestar
+         )
+         INSERT INTO sat.programas_bienestar (nombre, id_componentes_bienestar)
+         SELECT $3, id_componentes_bienestar FROM componente
+         ON CONFLICT (nombre) DO UPDATE SET activo = true`,
+        [
+          source.actionLine || "Actividades realizadas",
+          source.component || "Programas importados de actividades realizadas",
+          source.wellbeing,
+        ],
+      );
+      await client.query(
+        `INSERT INTO sat.catalogo_bienestar_actividades
+           (programa, componente, linea_accion, numero_tipo_apoyo,
+            tipo_apoyo_excel, orden_excel)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (programa) DO UPDATE SET
+           componente = COALESCE(NULLIF(sat.catalogo_bienestar_actividades.componente, ''), EXCLUDED.componente),
+           linea_accion = COALESCE(NULLIF(sat.catalogo_bienestar_actividades.linea_accion, ''), EXCLUDED.linea_accion),
+           numero_tipo_apoyo = COALESCE(sat.catalogo_bienestar_actividades.numero_tipo_apoyo, EXCLUDED.numero_tipo_apoyo),
+           tipo_apoyo_excel = COALESCE(sat.catalogo_bienestar_actividades.tipo_apoyo_excel, EXCLUDED.tipo_apoyo_excel)`,
+        [
+          source.wellbeing,
+          source.component || "Programas importados de actividades realizadas",
+          source.actionLine || "Actividades realizadas",
+          supportNumber,
+          supportNumber ? `Apoyo ${supportNumber}` : null,
+          index + 1,
+        ],
+      );
+    }
+  }
+  if (input.activarProgramas) {
+    const programNames = [
+      ...new Set(input.activities.map((source) => source.wellbeing).filter(Boolean)),
+    ];
+    if (programNames.length) {
+      await client.query(
+        `UPDATE sat.programas_bienestar
+            SET activo = true
+          WHERE nombre = ANY($1::text[])`,
+        [programNames],
+      );
+    }
   }
   const supportsByNumber = new Map(
     supportRows.rows.map((row) => [Number(row.numero), row]),
@@ -6675,8 +7345,32 @@ async function prepararImportacionActividades(client, input) {
     ]),
   );
   const profilesByKey = new Map(
-    profileRows.rows.map((row) => [`${row.identifier}\u001f${row.role}`, row]),
+    profileRows.rows.flatMap((row) => [
+      row.identifier ? [`${normalizarClaveImportacion(row.identifier)}\u001f${row.role}`, row] : null,
+      row.codigo ? [`${normalizarClaveImportacion(row.codigo)}\u001f${row.role}`, row] : null,
+      row.correo ? [`${normalizarClaveImportacion(row.correo)}\u001f${row.role}`, row] : null,
+    ].filter(Boolean)),
   );
+  const administrativeByKey = new Map();
+  for (const row of administrativeRows.rows) {
+    for (const value of [row.identifier, row.correo]) {
+      if (value) {
+        administrativeByKey.set(
+          `${normalizarClaveImportacion(value)}\u001fADMINISTRATIVO`,
+          row,
+        );
+      }
+    }
+  }
+  const studentsByKey = new Map();
+  for (const row of studentRows.rows) {
+    for (const value of [row.identifier, row.codigo, row.correo]) {
+      if (value) studentsByKey.set(
+        `${normalizarClaveImportacion(value)}\u001fESTUDIANTE`,
+        row,
+      );
+    }
+  }
   const programOptions = listarProgramasBienestar();
   const groups = input.activities.map((source, index) => {
     const messages = [];
@@ -6692,8 +7386,21 @@ async function prepararImportacionActividades(client, input) {
       messages.push("La fecha final es anterior a la fecha inicial.");
     }
 
-    const matchingPeriods =
-      periodsByKey.get(normalizarClaveImportacion(source.period)) || [];
+    const periodsByName =
+      periodsByKey.get(normalizarClaveImportacion(source.period)) ||
+      periodsByFlexibleKey.get(normalizarPeriodoImportacion(source.period)) ||
+      [];
+    const matchingPeriodsByDates = periodRows.rows.filter((period) => {
+      if (!source.start || !source.end || !period.fechaInicio || !period.fechaFin) {
+        return false;
+      }
+      const periodStart = String(period.fechaInicio).slice(0, 10);
+      const periodEnd = String(period.fechaFin).slice(0, 10);
+      return source.start >= periodStart && source.end <= periodEnd;
+    });
+    const matchingPeriods = periodsByName.length
+      ? periodsByName
+      : matchingPeriodsByDates;
     if (source.period && matchingPeriods.length !== 1) {
       messages.push(
         matchingPeriods.length
@@ -6707,7 +7414,7 @@ async function prepararImportacionActividades(client, input) {
         normalizarProgramaImportacion(option.programa) === programKey ||
         normalizarProgramaImportacion(option.programaCompleto) === programKey,
     );
-    const canonicalPrograms = [
+    let canonicalPrograms = [
       ...new Map(
         matchingPrograms.map((option) => [
           normalizarClaveImportacion(option.programa),
@@ -6715,6 +7422,21 @@ async function prepararImportacionActividades(client, input) {
         ]),
       ).values(),
     ];
+    if (!canonicalPrograms.length && source.wellbeing && input.crearProgramas) {
+      const createdProgram = wellbeingNamesByKey.get(
+        normalizarClaveImportacion(source.wellbeing),
+      );
+      if (createdProgram) canonicalPrograms = [createdProgram];
+    }
+    if (!canonicalPrograms.length && source.wellbeing) {
+      const closest = programOptions
+        .map((option) => ({
+          option,
+          score: similitudTextoImportacion(source.wellbeing, option.programaCompleto),
+        }))
+        .sort((left, right) => right.score - left.score)[0];
+      if (closest?.score >= 0.62) canonicalPrograms = [closest.option.programa];
+    }
     if (source.wellbeing && canonicalPrograms.length !== 1) {
       messages.push(
         canonicalPrograms.length
@@ -6730,7 +7452,7 @@ async function prepararImportacionActividades(client, input) {
         : null;
     if (canonicalPrograms.length === 1 && !matchedProgram) {
       messages.push(
-        "El programa de Bienestar no está activo o no existe en la base de datos.",
+        `El programa "${canonicalPrograms[0]}" se encontró en el catálogo, pero no está activo en la base de datos.`,
       );
     }
     const programaBienestar = matchedProgram || canonicalPrograms[0] || "";
@@ -6849,15 +7571,18 @@ async function prepararImportacionActividades(client, input) {
       status: value,
       message,
     });
-    if (!row.identifier)
-      return status("IDENTIFICACION_INVALIDA", "Falta la identificación.");
+    const lookupValues = [row.identifier, row.codigo, row.correo].filter(Boolean);
+    if (!lookupValues.length)
+      return status("IDENTIFICACION_INVALIDA", "Falta identificación, código o correo institucional.");
     if (row.identifier.length > MAX_IDENTIFICACION_LENGTH) {
       return status(
         "IDENTIFICACION_INVALIDA",
         "La identificación supera el límite permitido.",
       );
     }
-    const duplicateKey = `${row.activityIndex}\u001f${row.role}\u001f${row.identifier}`;
+    const duplicateKey = `${row.activityIndex}\u001f${row.role}\u001f${lookupValues
+      .map(normalizarClaveImportacion)
+      .join("|")}`;
     if (firstRowByKey.has(duplicateKey)) {
       return status(
         "DUPLICADO",
@@ -6867,9 +7592,22 @@ async function prepararImportacionActividades(client, input) {
     firstRowByKey.add(duplicateKey);
     if (group.messages.length)
       return status("ACTIVIDAD_INVALIDA", group.messages.join(" "));
-    const profile = profilesByKey.get(`${row.identifier}\u001f${row.role}`);
-    if (!profile)
-      return status("SIN_PERFIL", "No existe un perfil guardado con este rol.");
+    const lookupKey = lookupValues
+      .map((value) => `${normalizarClaveImportacion(value)}\u001f${row.role}`)
+      .find(
+        (key) =>
+          profilesByKey.has(key) ||
+          studentsByKey.has(key) ||
+          administrativeByKey.has(key),
+      );
+    const profile = lookupKey
+      ? profilesByKey.get(lookupKey) || administrativeByKey.get(lookupKey)
+      : null;
+    const student = row.role === "ESTUDIANTE" && lookupKey
+      ? studentsByKey.get(lookupKey)
+      : null;
+    if (!profile && !student)
+      return status("SIN_PERFIL", "No se encontró la persona por identificación, código o correo institucional.");
     const modalidades = group.programOptions.filter(
       (option) =>
         option.subdivision &&
@@ -6981,7 +7719,11 @@ async function prepararImportacionActividades(client, input) {
       row.supportNumber == null
         ? null
         : supportsByNumber.get(row.supportNumber)?.id || null;
-    row.idParticipante = profile.id;
+    row.idParticipante = profile?.id || student?.idParticipante || null;
+    row.idPersona = profile?.idPersona || student?.idPersona || null;
+    row.studentSource = student || null;
+    row.administrativeSource =
+      row.role === "ADMINISTRATIVO" ? profile || null : null;
     return status("LISTO", "");
   });
 

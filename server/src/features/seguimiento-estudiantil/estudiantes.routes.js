@@ -52,57 +52,62 @@ async function obtenerRiesgoGlobal(idEstudiante) {
 // hay matrícula backfillada para ese código, cae a los campos legado de
 // sat.estudiantes).
 async function construirFichaPorCodigo(idEstudiante, codigo) {
-  // 1. Obtener todas las matrículas / programas de la persona (tanto Pregrado como Posgrado)
+  // 1. Obtener las matrículas vigentes / programas de la persona (tanto Pregrado como Posgrado),
+  // agrupando por programa para no duplicar periodos históricos del mismo programa (ej. 2025-1 vs 2026-1)
   const { rows: matriculasRows } = await query(
-    `SELECT m.id_matriculas,
-            COALESCE(m.codigo_externo, e.codigo_externo) AS codigo,
-            COALESCE(p.nombre, 'Programa Institucional') AS programa,
-            p.codigo_externo AS "codigoPrograma",
-            CASE 
-              WHEN UPPER(p.nombre) LIKE '%ESPECIALIZA%' OR UPPER(p.nombre) LIKE '%MAESTR%' OR UPPER(p.nombre) LIKE '%POSGRADO%' THEN 'POSGRADO'
-              ELSE 'PREGRADO'
-            END AS nivel,
-            COALESCE(m.semestre, e.semestre_actual, 1) AS semestre,
-            COALESCE(m.jornada, 'DIURNA') AS jornada,
-            COALESCE(pa.nombre, '2026-1') AS periodo,
-            COALESCE(m.estado, 'ACTIVA') AS estado,
-            metricas.promedio AS "promedioAcademico",
-            COALESCE(metricas.inasistencias, 0) AS "inasistenciasAcumuladas",
-            COALESCE(metricas.total_asignaturas, 0) AS "totalAsignaturas",
-            COALESCE(metricas.asignaturas_evaluadas, 0) AS "asignaturasEvaluadas"
-     FROM sat.matriculas m
-     JOIN sat.estudiantes e ON e.id_estudiantes = m.id_estudiantes
-     LEFT JOIN sat.programas_academicos p ON p.id_programas_academicos = m.id_programas_academicos
-     LEFT JOIN sat.periodos_academicos pa ON pa.id_periodos_academicos = m.id_periodos_academicos
-     LEFT JOIN LATERAL (
-       SELECT 
-         ROUND(
-           AVG(
-             COALESCE(
-               ma.nota_final,
-               (
-                 SELECT AVG(val)
-                 FROM (VALUES (ma.nota_corte_1), (ma.nota_corte_2), (ma.nota_corte_3)) AS v(val)
-                 WHERE val IS NOT NULL
+    `SELECT * FROM (
+       SELECT DISTINCT ON (COALESCE(p.nombre, m.id_programas_academicos::text))
+              m.id_matriculas,
+              COALESCE(m.codigo_externo, e.codigo_externo) AS codigo,
+              COALESCE(p.nombre, 'Programa Institucional') AS programa,
+              p.codigo_externo AS "codigoPrograma",
+              CASE 
+                WHEN UPPER(p.nombre) LIKE '%ESPECIALIZA%' OR UPPER(p.nombre) LIKE '%MAESTR%' OR UPPER(p.nombre) LIKE '%POSGRADO%' THEN 'POSGRADO'
+                ELSE 'PREGRADO'
+              END AS nivel,
+              COALESCE(m.semestre, e.semestre_actual, 1) AS semestre,
+              COALESCE(m.jornada, 'DIURNA') AS jornada,
+              COALESCE(pa.nombre, '2026-1') AS periodo,
+              COALESCE(m.estado, 'ACTIVA') AS estado,
+              metricas.promedio AS "promedioAcademico",
+              COALESCE(metricas.inasistencias, 0) AS "inasistenciasAcumuladas",
+              COALESCE(metricas.total_asignaturas, 0) AS "totalAsignaturas",
+              COALESCE(metricas.asignaturas_evaluadas, 0) AS "asignaturasEvaluadas"
+       FROM sat.matriculas m
+       JOIN sat.estudiantes e ON e.id_estudiantes = m.id_estudiantes
+       LEFT JOIN sat.programas_academicos p ON p.id_programas_academicos = m.id_programas_academicos
+       LEFT JOIN sat.periodos_academicos pa ON pa.id_periodos_academicos = m.id_periodos_academicos
+       LEFT JOIN LATERAL (
+         SELECT 
+           ROUND(
+             AVG(
+               COALESCE(
+                 ma.nota_final,
+                 (
+                   SELECT AVG(val)
+                   FROM (VALUES (ma.nota_corte_1), (ma.nota_corte_2), (ma.nota_corte_3)) AS v(val)
+                   WHERE val IS NOT NULL
+                 )
                )
-             )
-           )::numeric, 
-           2
-         ) AS promedio,
-         SUM(COALESCE(ma.inasistencias_corte_1, 0) + COALESCE(ma.inasistencias_corte_2, 0) + COALESCE(ma.inasistencias_corte_3, 0)) AS inasistencias,
-         COUNT(ma.id_matriculas_asignaturas) AS total_asignaturas,
-         COUNT(
-           CASE WHEN ma.nota_final IS NOT NULL 
-             OR ma.nota_corte_1 IS NOT NULL 
-             OR ma.nota_corte_2 IS NOT NULL 
-             OR ma.nota_corte_3 IS NOT NULL 
-           THEN 1 END
-         ) AS asignaturas_evaluadas
-       FROM sat.matriculas_asignaturas ma
-       WHERE ma.id_matriculas = m.id_matriculas
-     ) metricas ON true
-     WHERE m.id_estudiantes = $1
-     ORDER BY (CASE WHEN UPPER(p.nombre) LIKE '%ESPECIALIZA%' OR UPPER(p.nombre) LIKE '%MAESTR%' THEN 2 ELSE 1 END), m.semestre DESC`,
+             )::numeric, 
+             2
+           ) AS promedio,
+           SUM(COALESCE(ma.inasistencias_corte_1, 0) + COALESCE(ma.inasistencias_corte_2, 0) + COALESCE(ma.inasistencias_corte_3, 0)) AS inasistencias,
+           COUNT(ma.id_matriculas_asignaturas) AS total_asignaturas,
+           COUNT(
+             CASE WHEN ma.nota_final IS NOT NULL 
+               OR ma.nota_corte_1 IS NOT NULL 
+               OR ma.nota_corte_2 IS NOT NULL 
+               OR ma.nota_corte_3 IS NOT NULL 
+             THEN 1 END
+           ) AS asignaturas_evaluadas
+         FROM sat.matriculas_asignaturas ma
+         WHERE ma.id_matriculas = m.id_matriculas
+       ) metricas ON true
+       WHERE m.id_estudiantes = $1
+       ORDER BY COALESCE(p.nombre, m.id_programas_academicos::text), pa.fecha_inicio DESC NULLS LAST, m.semestre DESC
+     ) t
+     ORDER BY (CASE WHEN t.nivel = 'POSGRADO' THEN 2 ELSE 1 END), t.semestre DESC`,
     [idEstudiante]
   );
 
@@ -455,7 +460,14 @@ router.get("/", async (req, res, next) => {
                EXISTS(SELECT 1 FROM sat.respuestas_caracterizacion rc WHERE rc.id_estudiantes = e.id_estudiantes) AS "encuestaRespondida"
         FROM sat.estudiantes e
         LEFT JOIN sat.personas per ON per.id = e.id_personas
-        LEFT JOIN sat.matriculas m ON m.id_estudiantes = e.id_estudiantes
+        LEFT JOIN LATERAL (
+          SELECT m_lat.*
+          FROM sat.matriculas m_lat
+          LEFT JOIN sat.periodos_academicos pa_lat ON pa_lat.id_periodos_academicos = m_lat.id_periodos_academicos
+          WHERE m_lat.id_estudiantes = e.id_estudiantes
+          ORDER BY pa_lat.fecha_inicio DESC NULLS LAST, m_lat.semestre DESC
+          LIMIT 1
+        ) m ON true
         LEFT JOIN sat.programas_academicos p ON p.id_programas_academicos = COALESCE(m.id_programas_academicos, e.id_programas_academicos)
         LEFT JOIN LATERAL (
           SELECT 

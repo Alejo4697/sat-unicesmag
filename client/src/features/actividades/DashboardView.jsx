@@ -10,6 +10,7 @@ const CARDS = [
   { label: "Jornadas programadas", key: "total_actividades", icon: "fa-calendar-check", color: "icon-green" },
   { label: "Estudiantes", key: "estudiantes", icon: "fa-user-graduate", color: "icon-blue" },
   { label: "Colaboradores", key: "colaboradores", icon: "fa-user-tie", color: "icon-orange" },
+  { label: "Administrativos", key: "administrativos", icon: "fa-user-gear", color: "icon-violet" },
   { label: "Egresados", key: "egresados", icon: "fa-user-check", color: "icon-green" },
   { label: "Externos", key: "externos", icon: "fa-user-group", color: "icon-red" },
 ];

@@ -16,6 +16,7 @@ function fechaCorta(value) {
 const ROL_LABELS = {
   ESTUDIANTE: "Estudiante",
   COLABORADOR: "Colaborador",
+  ADMINISTRATIVO: "Administrativo",
   EGRESADO: "Egresado",
   EXTERNO: "Externo",
 };
@@ -570,7 +571,7 @@ export default function AsistentesActividadTable() {
                 Selecciona las personas presentes y pulsa “Confirmar asistentes” para guardar las marcas.
               </p>
 
-              <div className="form-group" style={{ maxWidth: "520px" }}>
+              <div className="form-group vec-attendance-search">
                 <label className="form-label" htmlFor="vec-buscar-asistente">
                   Filtrar asistentes inscritos por nombre, identificación, código o correo
                 </label>

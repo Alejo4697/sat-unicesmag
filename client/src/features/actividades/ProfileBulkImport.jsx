@@ -6,6 +6,7 @@ const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_ROWS = 500;
 const ROLES = [
   { value: "COLABORADOR", label: "Colaboradores", singular: "Colaborador", icon: "fa-user-tie" },
+  { value: "ADMINISTRATIVO", label: "Administrativos", singular: "Administrativo", icon: "fa-user-gear" },
   { value: "EGRESADO", label: "Egresados", singular: "Egresado", icon: "fa-user-graduate" },
   { value: "EXTERNO", label: "Externos", singular: "Externo", icon: "fa-user-group" },
 ];
@@ -13,21 +14,22 @@ const ROLE_LABELS = {
   ESTUDIANTE: "Estudiante",
   EGRESADO: "Egresado",
   COLABORADOR: "Colaborador",
+  ADMINISTRATIVO: "Administrativo",
   EXTERNO: "Externo",
 };
 const FIELDS = [
-  { id: "identificacion", label: "Documento de identidad", aliases: ["DOCUMENTO", "IDENTIFICACION", "NUMERODOCUMENTO", "NUMEROIDENTIFICACION", "CEDULA", "CEDULADECIUDADANIA"], required: true },
-  { id: "nombres", label: "Nombres", aliases: ["NOMBRES", "NOMBRE", "PRIMERNOMBRE"], required: true },
-  { id: "apellidos", label: "Apellidos", aliases: ["APELLIDOS", "APELLIDO", "PRIMERAPELLIDO"], required: true },
-  { id: "tipoDocumento", label: "Tipo de documento", aliases: ["TIPODOCUMENTO", "TIPODEDOCUMENTO", "TIPOIDENTIFICACION"], required: true },
-  { id: "fechaNacimiento", label: "Fecha de nacimiento", aliases: ["FECHANACIMIENTO", "FECHADENACIMIENTO"], required: true },
+  { id: "identificacion", label: "Documento de identidad", aliases: ["DOCUMENTO", "IDENTIFICACION", "NUMERODOCUMENTO", "NUMEROIDENTIFICACION", "CEDULA", "CEDULADECIUDADANIA"] },
+  { id: "nombres", label: "Nombres", aliases: ["NOMBRES", "NOMBRE", "NOMBRECOMPLETO", "NOMBRESYAPELLIDOS", "PRIMERNOMBRE"] },
+  { id: "apellidos", label: "Apellidos", aliases: ["APELLIDOS", "APELLIDO", "PRIMERAPELLIDO"] },
+  { id: "tipoDocumento", label: "Tipo de documento", aliases: ["TIPODOCUMENTO", "TIPODEDOCUMENTO", "TIPOIDENTIFICACION"] },
+  { id: "fechaNacimiento", label: "Fecha de nacimiento", aliases: ["FECHANACIMIENTO", "FECHADENACIMIENTO"] },
   { id: "lugarNacimiento", label: "Lugar de nacimiento", aliases: ["LUGARDENACIMIENTO", "LUGARNACIMIENTO"] },
-  { id: "genero", label: "Género", aliases: ["GENERO", "SEXO"], required: true },
-  { id: "correo", label: "Correo personal", aliases: ["CORREOPERSONAL", "CORREO", "EMAIL", "CORREOELECTRONICO"], required: true },
-  { id: "celular", label: "Celular", aliases: ["CELULAR", "MOVIL", "TELEFONOMOVIL"], required: true },
+  { id: "genero", label: "Género", aliases: ["GENERO", "SEXO"] },
+  { id: "correo", label: "Correo", aliases: ["CORREOPERSONAL", "CORREO", "EMAIL", "CORREOELECTRONICO"] },
+  { id: "celular", label: "Celular", aliases: ["CELULAR", "MOVIL", "TELEFONOMOVIL"] },
   { id: "telefono", label: "Teléfono alternativo", aliases: ["TELEFONO", "TELEFONOFIJO", "TELEFONOALTERNATIVO"] },
-  { id: "direccion", label: "Dirección", aliases: ["DIRECCION", "DIRECCIONRESIDENCIA"], required: true },
-  { id: "municipio", label: "Municipio", aliases: ["MUNICIPIO", "CIUDAD", "MUNICIPIORESIDENCIA"], required: true },
+  { id: "direccion", label: "Dirección", aliases: ["DIRECCION", "DIRECCIONRESIDENCIA"] },
+  { id: "municipio", label: "Municipio", aliases: ["MUNICIPIO", "CIUDAD", "MUNICIPIORESIDENCIA"] },
   { id: "fechaEgreso", label: "Fecha de egreso", aliases: ["FECHAEGRESO", "FECHADEEGRESO"] },
   { id: "programaAcademico", label: "Programa académico", aliases: ["PROGRAMAACADEMICO", "PROGRAMA"] },
   { id: "programaPosgradoDependencia", label: "Programa de posgrado", aliases: ["PROGRAMAPOSGRADO", "PROGRAMADEPOSGRADO"] },
@@ -36,6 +38,16 @@ const FIELDS = [
   { id: "etnia", label: "Etnia", aliases: ["ETNIA", "GRUPOETNICO"] },
   { id: "discapacidad", label: "Discapacidad", aliases: ["DISCAPACIDAD"] },
 ];
+
+function requiredFieldsForRole(selectedRole) {
+  return selectedRole === "ADMINISTRATIVO"
+    ? ["identificacion", "nombres", "correo"]
+    : ["identificacion", "nombres", "apellidos", "tipoDocumento", "correo"];
+}
+
+function isRequiredField(field, selectedRole) {
+  return requiredFieldsForRole(selectedRole).includes(field.id);
+}
 
 function cellText(value) {
   return value == null ? "" : String(value).trim();
@@ -165,6 +177,7 @@ function ProfileBulkImport({ onSaved }) {
   const [fileName, setFileName] = useState("");
   const [rows, setRows] = useState([]);
   const [results, setResults] = useState([]);
+  const [resultsFilter, setResultsFilter] = useState("todos");
   const [selectedRows, setSelectedRows] = useState(() => new Set());
   const [confirmRows, setConfirmRows] = useState(() => new Set());
   const [busy, setBusy] = useState(false);
@@ -177,6 +190,8 @@ function ProfileBulkImport({ onSaved }) {
   const headers = activeSheet?.rows[headerRow === 0 ? 0 : headerRow - 1] || [];
   const readyResults = results.filter((result) => result.status === "ready");
   const confirmationResults = results.filter((result) => result.status === "requires-confirmation");
+  const withExistingRolesResults = results.filter((result) => result.roles?.length > 0);
+  const issuesResults = results.filter((result) => !["ready", "requires-confirmation"].includes(result.status));
   const selectableResults = results.filter((result) => ["ready", "requires-confirmation"].includes(result.status));
   const selectedCount = selectableResults.filter((result) => (
     selectedRows.has(result.fila)
@@ -189,6 +204,18 @@ function ProfileBulkImport({ onSaved }) {
       return { ...source, ...result };
     });
   }, [activeSheet, rows, results]);
+  const visiblePreviewRows = useMemo(() => {
+    if (resultsFilter === "roles-previos") {
+      return previewRows.filter((row) => row.roles?.length > 0);
+    }
+    if (resultsFilter === "listos") {
+      return previewRows.filter((row) => row.status === "ready");
+    }
+    if (resultsFilter === "inconvenientes") {
+      return previewRows.filter((row) => !["ready", "requires-confirmation"].includes(row.status));
+    }
+    return previewRows;
+  }, [previewRows, resultsFilter]);
 
   async function onFileChange(event) {
     const file = event.target.files?.[0];
@@ -263,6 +290,15 @@ function ProfileBulkImport({ onSaved }) {
         else if (["fechaNacimiento", "fechaEgreso"].includes(field.id)) participant[field.id] = normalizeDate(value);
         else participant[field.id] = value;
       });
+      if (role === "ADMINISTRATIVO" && participant.nombres && !participant.apellidos) {
+        const parts = participant.nombres.split(/\s+/).filter(Boolean);
+        const splitAt = Math.ceil(parts.length / 2);
+        participant.nombres = parts.slice(0, splitAt).join(" ");
+        participant.apellidos = parts.slice(splitAt).join(" ");
+      }
+      if (role === "ADMINISTRATIVO" && !participant.tipoDocumento) {
+        participant.tipoDocumento = "CC";
+      }
       return { ...participant, fila: start + index + 1 };
     }).filter((row) => Object.entries(row)
       .some(([field, value]) => field !== "fila" && String(value || "").trim()));
@@ -278,9 +314,14 @@ function ProfileBulkImport({ onSaved }) {
       setError(`El archivo contiene ${parsed.length} filas; el máximo por carga es ${MAX_ROWS}.`);
       return;
     }
-    const missingFields = FIELDS.filter((field) => field.required && (mapping[field.id] === "" || mapping[field.id] === undefined));
+    const requiredFields = requiredFieldsForRole(role);
+    const missingFields = FIELDS.filter((field) => requiredFields.includes(field.id)
+      && (mapping[field.id] === "" || mapping[field.id] === undefined));
     if (missingFields.length) {
-      setError(`Asigna las columnas obligatorias: ${missingFields.map((field) => field.label).join(", ")}.`);
+      const labels = missingFields.map((field) => (
+        role === "ADMINISTRATIVO" && field.id === "nombres" ? "Nombre completo" : field.label
+      ));
+      setError(`Asigna las columnas obligatorias: ${labels.join(", ")}.`);
       return;
     }
     setBusy(true);
@@ -290,8 +331,10 @@ function ProfileBulkImport({ onSaved }) {
     setResults([]);
     try {
       const response = await validarPerfilesMasivo({ rol: role, participantes: parsed });
-      setResults(response.resultados || []);
-      const selectable = (response.resultados || []).filter((item) => (
+      const validatedResults = response.resultados || [];
+      setResults(validatedResults);
+      setResultsFilter(validatedResults.some((item) => item.roles?.length > 0) ? "roles-previos" : "todos");
+      const selectable = validatedResults.filter((item) => (
         ["ready", "requires-confirmation"].includes(item.status)
       ));
       setSelectedRows(new Set(selectable.map((item) => item.fila)));
@@ -411,7 +454,7 @@ function ProfileBulkImport({ onSaved }) {
       <div className="vec-profile-import__role-shortcuts" role="group" aria-label="Seleccionar rol para importar">
         {ROLES.map((item) => (
           <button
-            className={`vec-profile-import__role-shortcut${role === item.value ? " is-active" : ""}`}
+            className={`vec-profile-import__role-shortcut is-role-${item.value.toLowerCase()}${role === item.value ? " is-active" : ""}`}
             type="button"
             key={item.value}
             aria-pressed={role === item.value}
@@ -434,7 +477,7 @@ function ProfileBulkImport({ onSaved }) {
           }}
         >
           <section
-            className="vec-profile-import__workspace"
+            className={`vec-profile-import__workspace is-role-${role.toLowerCase()}`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="vec-profile-import-workspace-title"
@@ -468,21 +511,30 @@ function ProfileBulkImport({ onSaved }) {
               <div className="vec-profile-import__requirements">
                 <section>
                   <strong><i className="fas fa-asterisk" aria-hidden="true"></i> Estas columnas sí son necesarias</strong>
-                  <ul>
-                    <li><b>Documento de identidad</b></li>
-                    <li><b>Nombres y apellidos</b></li>
-                    <li><b>Tipo de documento:</b> CC, TI, CE, PA, entre otros.</li>
-                    <li><b>Fecha de nacimiento</b></li>
-                    <li><b>Género, correo personal, celular, dirección y municipio</b></li>
-                  </ul>
+                  {role === "ADMINISTRATIVO" ? (
+                    <ul>
+                      <li><b>Cédula o documento de identidad</b></li>
+                      <li><b>Nombre completo</b> (una sola columna)</li>
+                      <li><b>Correo</b></li>
+                    </ul>
+                  ) : (
+                    <ul>
+                      <li><b>Documento de identidad</b></li>
+                      <li><b>Nombres y apellidos</b></li>
+                      <li><b>Tipo de documento:</b> CC, TI, CE, PA, entre otros.</li>
+                      <li><b>Correo</b></li>
+                    </ul>
+                  )}
                 </section>
                 <section>
                   <strong><i className="fas fa-plus" aria-hidden="true"></i> Estas columnas son opcionales</strong>
-                  <p>Puedes incluir Lugar de nacimiento, Teléfono alternativo, Fecha de egreso, Programa académico, Programa de posgrado, Dependencia, Cargo, Etnia o Discapacidad. Si no los tienes, déjalos fuera.</p>
+                  <p>Puedes incluir Fecha de nacimiento, Género, celular, dirección, municipio, Lugar de nacimiento, Teléfono alternativo, Fecha de egreso, Programa académico, Programa de posgrado, Dependencia, Cargo, Etnia o Discapacidad. Si no los tienes, déjalos fuera.</p>
                 </section>
               </div>
               <p className="vec-profile-import__example">
-                <strong>Ejemplo de encabezados:</strong> Documento | Nombres | Apellidos | Tipo de documento | Fecha de nacimiento | Lugar de nacimiento (opcional) | Género | Correo personal | Celular | Teléfono alternativo (opcional) | Dirección | Municipio
+                <strong>Ejemplo de encabezados:</strong> {role === "ADMINISTRATIVO"
+                  ? "Cédula | Nombre completo | Correo"
+                  : "Documento | Nombres | Apellidos | Tipo de documento | Correo"}
               </p>
               <ol className="vec-profile-import__steps">
                 <li>Pon los títulos arriba y una persona en cada fila.</li>
@@ -506,15 +558,24 @@ function ProfileBulkImport({ onSaved }) {
           </select>
           <small>Este rol se aplicará a todos los perfiles que guardes en esta carga.</small>
         </label>
-        <label className="vec-profile-import__file">
-          <span>Archivo de participantes</span>
+        <label className="vec-profile-import__file vec-profile-import__file-picker">
           <input
             type="file"
             accept=".xlsx,.xls,.xlsm,.xlsb,.ods,.csv,.tsv"
             onChange={onFileChange}
             disabled={busy}
           />
-          <small>{fileName || "Excel o CSV · máximo 5 MB · hasta 500 filas"}</small>
+          <span className="vec-profile-import__file-picker-icon" aria-hidden="true">
+            <i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-file-excel"}`}></i>
+          </span>
+          <span className="vec-profile-import__file-picker-copy">
+            <strong>{busy ? "Procesando archivo..." : fileName || "Selecciona tu archivo Excel o CSV"}</strong>
+            <small>Máximo 5 MB · hasta 500 personas · revisa antes de guardar</small>
+          </span>
+          <span className="vec-profile-import__file-picker-action">
+            <i className="fas fa-folder-open" aria-hidden="true"></i>
+            Explorar archivos
+          </span>
         </label>
       </div>
 
@@ -538,7 +599,10 @@ function ProfileBulkImport({ onSaved }) {
               </label>
               {FIELDS.map((field) => (
                 <label key={field.id}>
-                  <span>{field.label}{field.required ? " *" : ""}</span>
+                  <span>
+                    {role === "ADMINISTRATIVO" && field.id === "nombres" ? "Nombre completo / nombres" : field.label}
+                    {isRequiredField(field, role) ? " *" : ""}
+                  </span>
                   <select
                     className="form-select"
                     value={mapping[field.id] ?? ""}
@@ -573,13 +637,47 @@ function ProfileBulkImport({ onSaved }) {
           <div className="vec-profile-import__summary">
             <span><strong>{readyResults.length}</strong> perfiles de {roleLabel.toLowerCase()} listos</span>
             <span><strong>{confirmationResults.length}</strong> personas requieren confirmar nuevo rol</span>
-            <span><strong>{results.filter((item) => !["ready", "requires-confirmation"].includes(item.status)).length}</strong> omitidas o con errores</span>
+            <span><strong>{issuesResults.length}</strong> omitidas o con errores</span>
+          </div>
+          <div className="vec-profile-import__result-filters" role="group" aria-label="Filtrar personas validadas">
+            <button
+              type="button"
+              className={resultsFilter === "todos" ? "is-active" : ""}
+              aria-pressed={resultsFilter === "todos"}
+              onClick={() => setResultsFilter("todos")}
+            >
+              Todas <span>{results.length}</span>
+            </button>
+            <button
+              type="button"
+              className={resultsFilter === "roles-previos" ? "is-active" : ""}
+              aria-pressed={resultsFilter === "roles-previos"}
+              onClick={() => setResultsFilter("roles-previos")}
+            >
+              Con roles previos <span>{withExistingRolesResults.length}</span>
+            </button>
+            <button
+              type="button"
+              className={resultsFilter === "listos" ? "is-active" : ""}
+              aria-pressed={resultsFilter === "listos"}
+              onClick={() => setResultsFilter("listos")}
+            >
+              Listas para crear <span>{readyResults.length}</span>
+            </button>
+            <button
+              type="button"
+              className={resultsFilter === "inconvenientes" ? "is-active" : ""}
+              aria-pressed={resultsFilter === "inconvenientes"}
+              onClick={() => setResultsFilter("inconvenientes")}
+            >
+              Omitidas o con errores <span>{issuesResults.length}</span>
+            </button>
           </div>
           <div className="table-responsive vec-profile-import__table-wrap">
             <table className="table">
               <thead><tr><th>Incluir</th><th>Fila</th><th>Documento</th><th>Persona</th><th>Roles actuales</th><th>Agregar rol</th><th>Resultado</th></tr></thead>
               <tbody>
-                {previewRows.map((row) => (
+                {visiblePreviewRows.map((row) => (
                   <tr key={row.fila}>
                     <td>
                       {["ready", "requires-confirmation"].includes(row.status) ? (
@@ -623,6 +721,13 @@ function ProfileBulkImport({ onSaved }) {
                     <td><span className={`vec-profile-import__status vec-profile-import__status--${row.status}`}>{row.message}</span></td>
                   </tr>
                 ))}
+                {visiblePreviewRows.length === 0 && (
+                  <tr>
+                    <td colSpan="7" className="vec-profile-import__filter-empty">
+                      No hay personas en esta categoría.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

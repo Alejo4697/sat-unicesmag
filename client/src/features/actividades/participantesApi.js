@@ -248,6 +248,13 @@ export function getPerfilesPorRol({ rol, busqueda = "" }) {
   );
 }
 
+export function importarAdministrativos(personas) {
+  return apiFetch("/actividades/participantes/perfiles/administrativos/importar", {
+    method: "POST",
+    body: { personas },
+  });
+}
+
 export function actualizarPerfilPorRol(id, perfil) {
   return apiFetch(
     `/actividades/participantes/perfiles/roles/${encodeURIComponent(id)}`,
