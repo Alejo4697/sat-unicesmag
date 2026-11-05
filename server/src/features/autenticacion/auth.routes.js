@@ -10,14 +10,14 @@ import { Router } from "express";
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import { query } from "../../shared/db/pool.js";
-import { identifyUser } from "../../shared/middleware/requireRole.js";
+import { identifyUser, requireModule } from "../../shared/middleware/requireRole.js";
 import { MOCK_DATA } from "../../shared/data/mockData.js";
 import { enviarCorreoRecuperacionPassword } from "../../shared/services/emailService.js";
 
 const router = Router();
 
 function normalizarRol(rol) {
-  if (!rol) return "sin_rol";
+  if (!rol) return null;
   const r = String(rol).toLowerCase().trim();
   if (r === "administrador" || r === "coordinador" || r === "admin") return "admin";
   if (r === "docente" || r === "docente_permanencia") return "directivo";
@@ -29,7 +29,7 @@ function normalizarRol(rol) {
  * GET /api/auth/usuarios
  * Lista los usuarios institucionales con su cargo, rol, dependencia y programa asignado.
  */
-router.get("/usuarios", identifyUser, async (req, res) => {
+router.get("/usuarios", identifyUser, requireModule("administracion"), async (req, res) => {
   try {
     const { rows } = await query(`
       SELECT 
@@ -38,7 +38,7 @@ router.get("/usuarios", identifyUser, async (req, res) => {
         u.nombres,
         u.apellidos,
         u.correo_institucional AS email,
-        COALESCE(LOWER(r.nombre), 'admin') AS rol,
+        LOWER(r.nombre) AS rol,
         COALESCE(u.cargo, 'Funcionario Institucional') AS cargo,
         d.nombre AS dependencia,
         p.nombre AS programa,
@@ -51,7 +51,7 @@ router.get("/usuarios", identifyUser, async (req, res) => {
       LEFT JOIN sat.usuarios_programas up ON u.id_usuarios = up.id_usuarios
       LEFT JOIN sat.programas_academicos p ON up.id_programas_academicos = p.id_programas_academicos
       WHERE u.activo = true
-        AND (r.nombre IS NULL OR LOWER(r.nombre) NOT IN ('estudiante'))
+        AND r.nombre IS NOT NULL AND LOWER(r.nombre) NOT IN ('estudiante')
         AND u.correo_institucional NOT IN ('sofia.rosero@unicesmag.edu.co', 'estudianteprueba@unicesmag.edu.co')
       ORDER BY u.nombres ASC
     `);
@@ -107,8 +107,13 @@ router.post("/login", async (req, res) => {
   const targetCleanDoc = targetRaw.replace(/[^0-9a-zA-Z]/g, "");
   const usernameOnly = targetLower.includes("@") ? targetLower.split("@")[0].trim() : targetLower;
 
-  if (!targetRaw || !password) {
-    return res.status(400).json({ error: "Debe ingresar el correo institucional o documento y la contraseña." });
+  // Mismo mensaje y código para cualquier fallo de autenticación (no revela
+  // si el usuario existe, si está bloqueado, inactivo o es estudiante).
+  const credencialesInvalidas = () =>
+    res.status(401).json({ error: "Credenciales inválidas. Verifique su correo o documento y contraseña." });
+
+  if (!targetRaw || !password || typeof password !== "string") {
+    return credencialesInvalidas();
   }
 
   try {
@@ -128,7 +133,7 @@ router.post("/login", async (req, res) => {
         u.activo,
         COALESCE(
           LOWER(r.nombre),
-          CASE WHEN doc_u.id_docentes IS NOT NULL THEN 'profesional' ELSE 'admin' END
+          CASE WHEN doc_u.id_docentes IS NOT NULL THEN 'profesional' END
         ) AS rol,
         d.nombre AS dependencia,
         COALESCE(p.nombre, p_doc.nombre) AS programa
@@ -205,28 +210,23 @@ router.post("/login", async (req, res) => {
     }
 
     if (rows.length === 0) {
-      return res.status(401).json({ error: "Credenciales inválidas. Verifique su correo o documento y contraseña." });
+      return credencialesInvalidas();
     }
 
     const dbUser = rows[0];
 
     if (!dbUser.activo) {
-      return res.status(403).json({ error: "Este usuario se encuentra inactivo. Comuníquese con la administración." });
+      return credencialesInvalidas();
     }
 
-    // Bloqueo explícito: los estudiantes solo usan su portal con OTP
+    // Los estudiantes solo usan su portal con OTP
     if (normalizarRol(dbUser.rol) === "estudiante") {
-      return res.status(403).json({
-        error: "Los estudiantes no tienen un perfil en este módulo. Deben ingresar a través del portal 'Estudiantes (OTP)' con su código estudiantil."
-      });
+      return credencialesInvalidas();
     }
 
-    // 2. Comprobar bloqueo temporal por fuerza bruta
+    // 2. Comprobar bloqueo temporal por fuerza bruta (sin revelar el motivo)
     if (dbUser.bloqueado_hasta && new Date(dbUser.bloqueado_hasta) > new Date()) {
-      const minutosRestantes = Math.ceil((new Date(dbUser.bloqueado_hasta) - new Date()) / 60000);
-      return res.status(403).json({
-        error: `Cuenta temporalmente bloqueada por seguridad tras múltiples intentos fallidos. Intente nuevamente en ${minutosRestantes} minuto(s).`
-      });
+      return credencialesInvalidas();
     }
 
     // 3. Validar contraseña con bcrypt (con tolerancia a espacios y clave institucional por defecto)
@@ -265,15 +265,7 @@ router.post("/login", async (req, res) => {
         WHERE id_usuarios = $3
       `, [nuevosIntentos, bloquearHasta, dbUser.id_usuarios]);
 
-      if (nuevosIntentos >= 5) {
-        return res.status(403).json({
-          error: "Has superado el límite de 5 intentos fallidos. Tu cuenta ha sido bloqueada por 15 minutos."
-        });
-      }
-
-      return res.status(401).json({
-        error: `Credenciales inválidas. Intentos restantes: ${5 - nuevosIntentos}.`
-      });
+      return credencialesInvalidas();
     }
 
     // 4. Contraseña correcta -> Resetear intentos fallidos
@@ -283,6 +275,11 @@ router.post("/login", async (req, res) => {
           bloqueado_hasta = NULL
       WHERE id_usuarios = $1
     `, [dbUser.id_usuarios]);
+
+    // Sin rol válido no hay acceso (solo se informa tras validar la contraseña)
+    if (!normalizarRol(dbUser.rol)) {
+      return res.status(403).json({ error: "Su usuario no tiene un rol asignado. Comuníquese con la administración." });
+    }
 
     // 5. Generar token criptográfico y registrar sesión
     const rawToken = crypto.randomBytes(32).toString("hex");

@@ -18,12 +18,16 @@ import { rolesParaModulo } from "../security/permisosModulos.js";
 import { query } from "../db/pool.js";
 
 function normalizarRol(rol) {
-  if (!rol) return "sin_rol";
+  if (!rol) return null;
   const r = String(rol).toLowerCase().trim();
   if (r === "administrador" || r === "coordinador" || r === "admin") return "admin";
   if (r === "docente" || r === "docente_permanencia") return "directivo";
   if (r === "profesional_asistencial") return "profesional";
   return r;
+}
+
+function respuestaSinRol(res) {
+  return res.status(403).json({ error: "Su usuario no tiene un rol asignado. Comuníquese con la administración." });
 }
 
 export async function identifyUser(req, res, next) {
@@ -66,7 +70,7 @@ export async function identifyUser(req, res, next) {
               u.correo_institucional AS email,
               COALESCE(
                 LOWER(r.nombre),
-                CASE WHEN doc_u.id_docentes IS NOT NULL THEN 'profesional' ELSE 'funcionario' END
+                CASE WHEN doc_u.id_docentes IS NOT NULL THEN 'profesional' END
               ) AS rol,
               COALESCE(u.cargo, doc_u.tipo_vinculo, 'Funcionario Institucional') AS cargo,
               d.nombre AS dependencia,
@@ -86,6 +90,7 @@ export async function identifyUser(req, res, next) {
           `, [ses.id_usuarios]);
 
           if (userRows.length > 0) {
+            if (!normalizarRol(userRows[0].rol)) return respuestaSinRol(res);
             req.user = {
               ...userRows[0],
               rol: normalizarRol(userRows[0].rol)
@@ -137,7 +142,7 @@ export async function identifyUser(req, res, next) {
                CONCAT(u.nombres, ' ', u.apellidos) AS nombre,
                COALESCE(
                  LOWER(r.nombre),
-                 CASE WHEN doc_u.id_docentes IS NOT NULL THEN 'profesional' ELSE 'admin' END
+                 CASE WHEN doc_u.id_docentes IS NOT NULL THEN 'profesional' END
                ) AS rol,
                COALESCE(u.cargo, doc_u.tipo_vinculo, 'Funcionario Institucional') AS cargo,
                d.nombre AS dependencia,
@@ -158,6 +163,7 @@ export async function identifyUser(req, res, next) {
       `, [legacyUserId]);
 
       if (userRows.length > 0) {
+        if (!normalizarRol(userRows[0].rol)) return respuestaSinRol(res);
         req.user = {
           ...userRows[0],
           rol: normalizarRol(userRows[0].rol)
