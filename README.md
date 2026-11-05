@@ -104,8 +104,8 @@ mismo formulario, tabla y lógica del mockup original, ahora contra la API
 real (nada vive ya solo en `localStorage` salvo lo que es legítimamente
 por-dispositivo, como el borrador de intervenciones):
 
-- **Autenticación**: login por selección de rol, igual UX que
-  `index.html`.
+- **Autenticación**: login del personal con correo institucional y contraseña
+  (ver «Autenticación y seguridad» más abajo) y portal de estudiantes con OTP.
 - **Monitoreo**: KPIs, barra de filtros y las dos gráficas Chart.js de
   `dashboard.html`. La de "Semaforización por Campos de Riesgo" ya no usa
   los números inventados del mockup: se calcula de verdad agregando los
@@ -294,6 +294,29 @@ por-dispositivo, como el borrador de intervenciones):
   y el servidor lo sirve por API; los envíos de Caracterización y los
   umbrales de riesgo ya se persisten ahí también.
 
+## Autenticación y seguridad
+
+- **Personal**: `POST /api/auth/login` con correo institucional y contraseña
+  (bcrypt). Tras 5 intentos fallidos la cuenta se bloquea 15 minutos. Todo
+  fallo de login responde igual (401, mensaje genérico). Un usuario sin rol
+  asignado no entra (403).
+- **Sesión**: token opaco aleatorio; en `sat.sesiones` solo se guarda su
+  SHA-256 y vence a las 24 h. El cliente lo envía como `Authorization: Bearer`
+  (único mecanismo de identidad que acepta `identifyUser`). Además, el cliente
+  cierra la sesión tras 30 minutos de inactividad y, ante un 401, vuelve al
+  login.
+- **Roles y permisos**: `admin`, `profesional`, `directivo`,
+  `reporte_actividades` y `estudiante`; acceso por módulo según la matriz
+  `sat.modulos/permisos/roles_permisos` (editable en Administración).
+- **Estudiantes**: acceso con documento + correo institucional y un OTP de 6
+  dígitos (15 min, máx. 5 intentos). `verificar-otp` emite una sesión con el
+  mismo esquema de token; los endpoints del portal toman la identidad de la
+  sesión, nunca de un id enviado por el cliente.
+- **API**: `helmet` con su configuración por defecto, CORS limitado a
+  `CLIENT_ORIGIN` y `express-rate-limit` (límite estricto en login y OTP, y uno
+  general para `/api`). Si se despliega detrás de un proxy inverso hay que
+  activar `app.set("trust proxy")` para que el límite use la IP real.
+
 ## Qué queda pendiente
 
 Además de los puntos abiertos marcados con `// TODO`, Actividades VEC tiene
@@ -308,9 +331,12 @@ estos pendientes de conexión/datos:
 Otros puntos abiertos del proyecto:
 
 - **"Editar usuario"** en Administración es un botón de marcador — falta la pantalla de edición de permisos.
-- No hay **autenticación real** (contraseñas/JWT): el login sigue siendo
-  "de mockup" por selección de rol, documentado como tal en
-  `server/src/shared/middleware/requireRole.js`.
+- **Autenticación**: ya es real (ver «Autenticación y seguridad»). Sigue
+  pendiente que la API no usa la RLS definida en `sat.intervenciones` (la
+  confidencialidad VBG se aplica en el código, `shared/security/vbg.js`), y que
+  el personal no tiene segundo factor.
+- Varias features aún complementan o sustituyen datos de la BD con `MOCK_DATA`
+  (`server/src/shared/data/mockData.js`).
 - Los **adjuntos PDF** se validan (tipo y tamaño) y se listan, pero no se
   suben a un storage real — solo se guarda su nombre/tamaño, igual que en
   el mockup.
@@ -335,13 +361,17 @@ correr el proyecto, copia las plantillas y rellénalas con valores reales:
 
 ```bash
 cp server/.env.example server/.env
-cp client/.env.example client/.env
 ```
+
+El cliente no tiene plantilla: `client/.env` es opcional y solo se crea si
+necesitas cambiar `VITE_API_URL`.
 
 - **`server/.env`**:
   - `PORT`, `CLIENT_ORIGIN` — puerto del backend y origen permitido por CORS. Obligatorias.
   - `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` — conexión a PostgreSQL (schema `sat`, `shared/db/pool.js`). Obligatorias.
-  - `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASS`/`SMTP_FROM` (o los alias `EMAIL_USER`/`EMAIL_PASS`), y como alternativa `GMAIL_USER`/`GMAIL_PASS` — envío del código OTP a estudiantes (`shared/services/emailService.js`). Opcionales: sin ellas, el OTP solo se imprime en la consola del servidor.
+  - `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASS`/`SMTP_FROM` (o los alias `EMAIL_USER`/`EMAIL_PASS`), y como alternativa `GMAIL_USER`/`GMAIL_PASS` — envío del código OTP a estudiantes (`shared/services/emailService.js`). Opcionales: sin ellas no se envía correo; con `NODE_ENV=development` el OTP se imprime en la consola del servidor y se devuelve en la respuesta de `solicitar-otp` (en cualquier otro caso no).
+  - `NODE_ENV` — usa `development` solo en local (ver OTP arriba).
+  - `SEED_TEMP_PASSWORD` — contraseña temporal que asignan `seed_passwords.js` y `seed_integrantes_diagrama.js`; obligatoria solo para ejecutar esos scripts (fallan si falta). No la subas al repositorio.
   - `ACADEMIC_DB_HOST`, `ACADEMIC_DB_PORT`, `ACADEMIC_DB_NAME`, `ACADEMIC_DB_USER`, `ACADEMIC_DB_PASSWORD` — conexión a la base de datos académica institucional para la sincronización (`shared/services/syncService.js`, `autoSyncScheduler.js`). **`ACADEMIC_DB_HOST`, `ACADEMIC_DB_USER` y `ACADEMIC_DB_PASSWORD` son obligatorias**: el código ya no tiene ningún valor de respaldo (antes sí lo tenía, era un riesgo de seguridad ya corregido) — si faltan, la sincronización lanza un error en vez de conectarse con datos incorrectos.
 - **`client/.env`**: solo `VITE_API_URL` (opcional, por defecto `http://localhost:4000/api`).
 

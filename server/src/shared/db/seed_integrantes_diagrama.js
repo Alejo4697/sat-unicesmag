@@ -4,7 +4,12 @@ import { query } from "./pool.js";
 async function poblarUsuariosCompletos() {
   console.log("Iniciando verificación y poblado de usuarios reales según diagrama...");
 
-  const passwordHash = await bcrypt.hash("cesmag2026*", 10);
+  const passwordTemporal = process.env.SEED_TEMP_PASSWORD;
+  if (!passwordTemporal) {
+    console.error("Falta la variable de entorno SEED_TEMP_PASSWORD (contraseña temporal para los usuarios). Defínela en server/.env o en el entorno antes de ejecutar este script.");
+    process.exit(1);
+  }
+  const passwordHash = await bcrypt.hash(passwordTemporal, 10);
 
   // 1. Desvincular estudiantes de sat.usuarios_roles para que NUNCA aparezcan como funcionarios
   await query(`
