@@ -18,12 +18,16 @@ import { rolesParaModulo } from "../security/permisosModulos.js";
 import { query } from "../db/pool.js";
 
 function normalizarRol(rol) {
-  if (!rol) return "admin";
+  if (!rol) return null;
   const r = String(rol).toLowerCase().trim();
   if (r === "administrador" || r === "coordinador") return "admin";
   if (r === "docente" || r === "docente_permanencia") return "directivo";
   if (r === "profesional_asistencial") return "profesional";
   return r;
+}
+
+function respuestaSinRol(res) {
+  return res.status(403).json({ error: "Su usuario no tiene un rol asignado. Comuníquese con la administración." });
 }
 
 export async function identifyUser(req, res, next) {
@@ -64,7 +68,7 @@ export async function identifyUser(req, res, next) {
               u.apellidos,
               CONCAT(u.nombres, ' ', u.apellidos) AS nombre,
               u.correo_institucional AS email,
-              COALESCE(LOWER(r.nombre), 'admin') AS rol,
+              LOWER(r.nombre) AS rol,
               COALESCE(u.cargo, 'Funcionario Institucional') AS cargo,
               d.nombre AS dependencia,
               p.nombre AS programa,
@@ -81,6 +85,7 @@ export async function identifyUser(req, res, next) {
           `, [ses.id_usuarios]);
 
           if (userRows.length > 0) {
+            if (!normalizarRol(userRows[0].rol)) return respuestaSinRol(res);
             req.user = {
               ...userRows[0],
               rol: normalizarRol(userRows[0].rol)
@@ -130,7 +135,7 @@ export async function identifyUser(req, res, next) {
       const { rows: userRows } = await query(`
         SELECT u.id_usuarios AS id, u.nombres, u.apellidos, u.correo_institucional AS email,
                CONCAT(u.nombres, ' ', u.apellidos) AS nombre,
-               COALESCE(LOWER(r.nombre), 'admin') AS rol,
+               LOWER(r.nombre) AS rol,
                COALESCE(u.cargo, 'Funcionario Institucional') AS cargo,
                d.nombre AS dependencia,
                p.nombre AS programa,
@@ -148,6 +153,7 @@ export async function identifyUser(req, res, next) {
       `, [legacyUserId]);
 
       if (userRows.length > 0) {
+        if (!normalizarRol(userRows[0].rol)) return respuestaSinRol(res);
         req.user = {
           ...userRows[0],
           rol: normalizarRol(userRows[0].rol)
