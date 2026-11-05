@@ -25,6 +25,15 @@ const router = Router();
 
 router.use(identifyUser, requireModule("caracterizacion"));
 
+// Estas rutas reciben un código/documento de OTRO estudiante: el rol estudiante
+// (que sí tiene el módulo) solo usa /api/estudiante/* para sus propios datos.
+function noEstudiante(req, res, next) {
+  if (req.user?.rol === "estudiante") {
+    return res.status(403).json({ error: "Un estudiante solo puede consultar sus propios datos desde su portal." });
+  }
+  next();
+}
+
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function isUuid(val) {
   return typeof val === "string" && UUID_REGEX.test(val);
@@ -569,7 +578,7 @@ router.get("/instrumento", async (req, res) => {
 // --------------------------------------------------------------------------
 // 9. GET /estudiante-info/:codigo - Consultar datos de solo lectura del estudiante
 // --------------------------------------------------------------------------
-router.get("/estudiante-info/:codigo", async (req, res, next) => {
+router.get("/estudiante-info/:codigo", noEstudiante, async (req, res, next) => {
   const { codigo } = req.params;
   try {
     let estudianteData = null;
@@ -704,7 +713,7 @@ function construirDetallesSesion(respuestas = {}, items = INSTRUMENTO_ITEMS) {
 // --------------------------------------------------------------------------
 // 10. GET /:codigo - Historial de caracterizaciones con desglose de respuestas
 // --------------------------------------------------------------------------
-router.get("/:codigo", async (req, res, next) => {
+router.get("/:codigo", noEstudiante, async (req, res, next) => {
   const { codigo } = req.params;
   try {
     // 1. Obtener preguntas activas para armar los ítems
@@ -874,7 +883,7 @@ router.get("/:codigo", async (req, res, next) => {
 // --------------------------------------------------------------------------
 // 11. POST / - Enviar y calificar encuesta
 // --------------------------------------------------------------------------
-router.post("/", async (req, res, next) => {
+router.post("/", noEstudiante, async (req, res, next) => {
   try {
     const { codigoEstudiante, respuestas } = req.body;
 

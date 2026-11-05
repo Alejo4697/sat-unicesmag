@@ -3,21 +3,13 @@
    ==========================================================================
    Gestiona peticiones a la API adjuntando:
    1. Authorization: Bearer <token> (seguridad de sesión real)
-   2. x-user-id (compatibilidad hacia atrás)
+   Si la API responde 401 con una sesión guardada (token vencido o cerrado),
+   se limpia la sesión y se redirige al login que corresponde.
    ========================================================================== */
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000/api";
 export const ACTIVE_USER_KEY = "SAT_UNICESMAG_ACTIVE_USER";
 export const AUTH_TOKEN_KEY = "SAT_UNICESMAG_AUTH_TOKEN";
-
-function getActiveUserId() {
-  try {
-    const raw = localStorage.getItem(ACTIVE_USER_KEY);
-    return raw ? JSON.parse(raw).id : null;
-  } catch {
-    return null;
-  }
-}
 
 function getAuthToken() {
   try {
@@ -25,6 +17,26 @@ function getAuthToken() {
   } catch {
     return null;
   }
+}
+
+// En estas rutas un 401 es un error normal del formulario, no una sesión vencida.
+const RUTAS_SIN_REDIRECCION = ["/auth/login", "/estudiante/solicitar-otp", "/estudiante/verificar-otp"];
+
+function manejarSesionVencida(path, res) {
+  if (res.status !== 401 || !getAuthToken() || RUTAS_SIN_REDIRECCION.includes(path)) return;
+  let esEstudiante = false;
+  try {
+    esEstudiante = JSON.parse(localStorage.getItem(ACTIVE_USER_KEY))?.rol === "estudiante";
+  } catch {
+    // sin usuario guardado: se redirige al login del personal
+  }
+  try {
+    localStorage.removeItem(ACTIVE_USER_KEY);
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+  } catch {
+    // almacenamiento no disponible
+  }
+  window.location.assign(esEstudiante ? "/estudiante/login" : "/");
 }
 
 async function fetchApi(url, options) {
@@ -42,7 +54,6 @@ async function fetchApi(url, options) {
 }
 
 export async function apiFetch(path, options = {}) {
-  const userId = getActiveUserId();
   const token = getAuthToken();
 
   const res = await fetchApi(`${API_URL}${path}`, {
@@ -50,13 +61,13 @@ export async function apiFetch(path, options = {}) {
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(userId ? { "x-user-id": userId } : {}),
       ...options.headers
     },
     body: options.body ? JSON.stringify(options.body) : undefined
   });
 
   if (!res.ok) {
+    manejarSesionVencida(path, res);
     const payload = await res.json().catch(() => ({}));
     throw new Error(payload.error || `Error ${res.status} en ${path}`);
   }
@@ -65,20 +76,19 @@ export async function apiFetch(path, options = {}) {
 }
 
 export async function apiDownload(path, options = {}) {
-  const userId = getActiveUserId();
   const token = getAuthToken();
 
   const res = await fetchApi(`${API_URL}${path}`, {
     ...options,
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(userId ? { "x-user-id": userId } : {}),
       ...options.headers
     },
     body: options.body ? JSON.stringify(options.body) : undefined
   });
 
   if (!res.ok) {
+    manejarSesionVencida(path, res);
     const payload = await res.json().catch(() => ({}));
     throw new Error(payload.error || `Error ${res.status} en ${path}`);
   }
