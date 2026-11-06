@@ -7,18 +7,19 @@ import {
   registrarActividad,
 } from "./participantesApi.js";
 import BulkParticipantImport from "./BulkParticipantImport.jsx";
+import { etiquetaRolInstitucional } from "./rolePresentation.js";
 
 const TIPOS = [
   { value: "ESTUDIANTE", label: "Estudiante" },
   { value: "EGRESADO", label: "Egresado" },
-  { value: "COLABORADOR", label: "Colaborador" },
+  { value: "COLABORADOR", label: "Docente" },
   { value: "ADMINISTRATIVO", label: "Administrativo" },
   { value: "EXTERNO", label: "Externo" },
 ];
 const DETALLES_POR_TIPO = {
   ESTUDIANTE: [{ value: "Estudiante", label: "Estudiante" }],
   EGRESADO: [{ value: "Egresado no titulado", label: "Egresado" }],
-  COLABORADOR: [{ value: "Colaborador", label: "Colaborador" }],
+  COLABORADOR: [{ value: "Docente", label: "Docente" }],
   ADMINISTRATIVO: [{ value: "Administrativo", label: "Administrativo" }],
   EXTERNO: [{ value: "Externo", label: "Externo" }],
 };
@@ -71,6 +72,14 @@ function normalizarTipoDocumento(value) {
   const compact = normalized.replace(/\s+/g, "");
   const code = TIPOS_DOCUMENTO.find((item) => item.value === compact)?.value;
   return code || ALIAS_TIPOS_DOCUMENTO.get(normalized) || normalized;
+}
+
+function normalizarBusquedaActividad(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("es")
+    .trim();
 }
 
 const EMPTY_FORM = {
@@ -160,6 +169,25 @@ function opcionesConValorActual(base, valor) {
   return opciones.map((item) => typeof item === "string"
     ? { value: item, label: item }
     : item);
+}
+
+function opcionesEstrategia(catalogo, campo, valorActual) {
+  const valores = new Map();
+  for (const item of catalogo) {
+    const value = String(item[campo] || "").replace(/\s+/g, " ").trim();
+    const key = value.toLocaleLowerCase("es");
+    if (value && !valores.has(key)) {
+      valores.set(key, value);
+    }
+  }
+  const currentValue = String(valorActual || "").replace(/\s+/g, " ").trim();
+  const currentKey = currentValue.toLocaleLowerCase("es");
+  if (currentValue && !valores.has(currentKey)) {
+    valores.set(currentKey, currentValue);
+  }
+  return [...valores.values()]
+    .sort((a, b) => a.localeCompare(b, "es"))
+    .map((value) => ({ value, label: value }));
 }
 
 function autoCompletarRamasUnicas(next, catalogoActividades, startAt) {
@@ -370,6 +398,7 @@ export default function NewParticipantView({ onCancel }) {
   const [catalogos, setCatalogos] = useState(EMPTY_CATALOGOS);
   const [catalogoActividades, setCatalogoActividades] = useState([]);
   const [eventosProximos, setEventosProximos] = useState([]);
+  const [busquedaEvento, setBusquedaEvento] = useState("");
   const [catalogosStatus, setCatalogosStatus] = useState("idle");
   const [error, setError] = useState("");
   const [guardando, setGuardando] = useState(false);
@@ -443,6 +472,19 @@ export default function NewParticipantView({ onCancel }) {
   const eventoSeleccionado = eventosProximos.find(
     (evento) => String(evento.id) === String(actividad.idEventoExistente),
   );
+  const eventosFiltrados = eventosProximos.filter((evento) => {
+    if (String(evento.id) === String(actividad.idEventoExistente)) return true;
+    const termino = normalizarBusquedaActividad(busquedaEvento);
+    if (!termino) return true;
+    return normalizarBusquedaActividad([
+      evento.actividad,
+      evento.periodo,
+      evento.proyecto,
+      evento.programaBienestar,
+      evento.fechaInicio,
+      evento.fechaFinalizacion,
+    ].filter(Boolean).join(" ")).includes(termino);
+  });
   const modalidadesEventoSeleccionado = eventoSeleccionado?.variablesModalidades || [];
   const requiereSeleccionModalidadEvento = modalidadesEventoSeleccionado.length > 0;
   const opcionesModalidadEvento = modalidadesEventoSeleccionado
@@ -543,6 +585,13 @@ export default function NewParticipantView({ onCancel }) {
         if (result.encontrado) {
           const participante = result.participante;
           if (
+            participante.rolesVerificados?.includes("COLABORADOR")
+            && tipo !== "COLABORADOR"
+          ) {
+            setTipo("COLABORADOR");
+            return;
+          }
+          if (
             participante.rolesVerificados?.includes("ADMINISTRATIVO")
             && tipo !== "ADMINISTRATIVO"
           ) {
@@ -576,7 +625,11 @@ export default function NewParticipantView({ onCancel }) {
           setForm({
             ...EMPTY_FORM,
             ...datosParticipante,
-            detalleTipoParticipante: detalleOtro ? "Otro" : datosParticipante.detalleTipoParticipante,
+            detalleTipoParticipante: detalleOtro
+              ? "Otro"
+              : tipo === "COLABORADOR" && datosParticipante.detalleTipoParticipante === "Colaborador"
+                ? "Docente"
+                : datosParticipante.detalleTipoParticipante,
             detalleTipoParticipanteOtro: detalleOtro?.[1] || "",
             celular: participante.contacto || "",
             contacto: participante.contacto || "",
@@ -765,7 +818,7 @@ export default function NewParticipantView({ onCancel }) {
       return;
     }
     if (estudianteSinRegistroInstitucional) {
-      setError("No se pueden crear estudiantes que no estén en la base institucional. Selecciona Egresado, Colaborador o Externo.");
+      setError("No se pueden crear estudiantes que no estén en la base institucional. Selecciona Egresado, Docente o Externo.");
       return;
     }
     if (esperandoResultado || busqueda.status === "idle") {
@@ -1088,7 +1141,7 @@ export default function NewParticipantView({ onCancel }) {
                   }}
                   aria-label="Rol permitido para crear una persona no encontrada"
                 >
-                  <option value="" disabled>Selecciona Egresado, Colaborador, Administrativo o Externo</option>
+                  <option value="" disabled>Selecciona Egresado, Docente, Administrativo o Externo</option>
                   {TIPOS.filter((item) => ["EGRESADO", "COLABORADOR", "ADMINISTRATIVO", "EXTERNO"].includes(item.value))
                     .map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
                 </select>
@@ -1105,6 +1158,24 @@ export default function NewParticipantView({ onCancel }) {
                 {TIPOS.find((item) => item.value === role)?.label || role}
               </span>
             ))}
+          </div>
+        )}
+        {busqueda.participante?.rolesInstitucionales?.length > 0 && (
+          <div
+            className="vec-institutional-roles"
+            aria-label="Roles institucionales asignados en el sistema"
+          >
+            <span className="vec-institutional-roles__label">
+              <i className="fas fa-shield-halved" aria-hidden="true"></i>
+              Roles institucionales en SAT
+            </span>
+            <div className="vec-institutional-roles__badges">
+              {busqueda.participante.rolesInstitucionales.map((role) => (
+                <span className="vec-institutional-role" key={role} title={role}>
+                  {etiquetaRolInstitucional(role)}
+                </span>
+              ))}
+            </div>
           </div>
         )}
         {mostrarPerfil && ["ESTUDIANTE", "COLABORADOR"].includes(tipo)
@@ -1264,19 +1335,53 @@ export default function NewParticipantView({ onCancel }) {
                   summary={actividad.idEventoExistente ? "Evento existente" : "Nueva jornada"}
                 >
                   <FormGrid>
-                    <Field
-                      name="eventoDisponible"
-                      label="Actividad"
-                      value={actividad.idEventoExistente || "NUEVA"}
-                      onChange={(_name, value) => seleccionarEvento(value)}
-                      options={[
-                        { value: "NUEVA", label: "Programar una nueva jornada del catálogo" },
-                        ...eventosProximos.filter((evento) => evento.estado !== "CANCELADA").map((evento) => ({
-                          value: evento.id,
-                          label: `${evento.actividad} · ${evento.periodo} · ${String(evento.fechaInicio).slice(0, 10)} · ${evento.totalParticipantes} inscritos`,
-                        })),
-                      ]}
-                    />
+                    <div className="vec-event-picker vec-event-picker--individual">
+                      <div className="vec-event-picker__heading">
+                        <div>
+                          <span className="vec-event-picker__step">JORNADA</span>
+                          <h3 className="vec-event-picker__title">Busca y selecciona una actividad</h3>
+                          <p>Encuentra una jornada programada o en curso, o crea una nueva.</p>
+                        </div>
+                        <span className="vec-event-picker__count" role="status">
+                          <i className="fas fa-calendar-check" aria-hidden="true"></i>
+                          {eventosFiltrados.length} {eventosFiltrados.length === 1 ? "disponible" : "disponibles"}
+                        </span>
+                      </div>
+                      <div className="vec-event-picker__fields">
+                        <label className="vec-event-picker__search">
+                          <i className="fas fa-magnifying-glass" aria-hidden="true"></i>
+                          <input
+                            id="participant-event-search"
+                            type="search"
+                            value={busquedaEvento}
+                            onChange={(event) => setBusquedaEvento(event.target.value.slice(0, 100))}
+                            maxLength={100}
+                            placeholder="Buscar por nombre, periodo, proyecto o programa"
+                            aria-label="Buscar actividad programada o en curso"
+                            disabled={guardando}
+                          />
+                        </label>
+                        <Field
+                          name="eventoDisponible"
+                          label="Actividad"
+                          value={actividad.idEventoExistente || "NUEVA"}
+                          onChange={(_name, value) => seleccionarEvento(value)}
+                          options={[
+                            { value: "NUEVA", label: "Programar una nueva jornada del catálogo" },
+                            ...eventosFiltrados.map((evento) => ({
+                              value: evento.id,
+                              label: `${evento.actividad} · ${evento.periodo} · ${evento.estado === "EN_CURSO" ? "En curso" : "Programada"} · ${String(evento.fechaInicio).slice(0, 10)} · ${evento.totalParticipantes} inscritos`,
+                            })),
+                          ]}
+                        />
+                      </div>
+                      {eventosProximos.length === 0 && (
+                        <p className="vec-event-picker__message">No hay actividades programadas o en curso. Puedes programar una nueva jornada aquí.</p>
+                      )}
+                      {eventosProximos.length > 0 && eventosFiltrados.length === 0 && (
+                        <p className="vec-event-picker__message">No hay actividades que coincidan con la búsqueda. Puedes programar una nueva jornada.</p>
+                      )}
+                    </div>
                     <Field
                       name="idPeriodo"
                       label="Periodo"
@@ -1300,11 +1405,6 @@ export default function NewParticipantView({ onCancel }) {
                     <Field name="ubicacion" label="Ubicación" value={actividad.ubicacion} onChange={actualizarActividad} readOnly={Boolean(actividad.idEventoExistente)} />
                     <Field name="descripcion" label="Descripción de la jornada" value={actividad.descripcion || actividadSeleccionada?.descripcion || ""} onChange={actualizarActividad} type="textarea" readOnly={Boolean(actividad.idEventoExistente)} />
                   </FormGrid>
-                  {eventosProximos.every((evento) => evento.estado === "CANCELADA") && (
-                    <p className="text-muted" role="status">
-                      No hay actividades creadas disponibles. Puedes programar una desde el catálogo institucional.
-                    </p>
-                  )}
                   {actividad.idEventoExistente && (
                     <p className="text-muted" role="status">
                       Los campos de esta jornada se cargaron desde Actividades y se conservan sin cambios al vincular al participante.
@@ -1644,25 +1744,37 @@ export default function NewParticipantView({ onCancel }) {
                           label="Estrategia de bienestar"
                           value={actividad.estrategiaPoliticaBienestar}
                           onChange={actualizarActividad}
-                          type="textarea"
+                  options={opcionesEstrategia(
+                    catalogoActividades,
+                    "estrategiaPoliticaBienestar",
+                    actividad.estrategiaPoliticaBienestar,
+                  )}
+                  readOnly={Boolean(actividad.idEventoExistente)}
+                />
+                <Field
+                  name="estrategiaPoliticaPermanencia"
+                  label="Estrategia de permanencia y graduación"
+                  value={actividad.estrategiaPoliticaPermanencia}
+                  onChange={actualizarActividad}
+                  options={opcionesEstrategia(
+                    catalogoActividades,
+                    "estrategiaPoliticaPermanencia",
+                    actividad.estrategiaPoliticaPermanencia,
+                  )}
                           readOnly={Boolean(actividad.idEventoExistente)}
                         />
                 <Field
-                          name="estrategiaPoliticaPermanencia"
-                          label="Estrategia de permanencia y graduación"
-                          value={actividad.estrategiaPoliticaPermanencia}
-                          onChange={actualizarActividad}
-                          type="textarea"
-                          readOnly={Boolean(actividad.idEventoExistente)}
-                        />
-                <Field
-                          name="estrategiaPoliticaEducacionInclusiva"
-                          label="Estrategia de educación inclusiva"
-                          value={actividad.estrategiaPoliticaEducacionInclusiva}
-                          onChange={actualizarActividad}
-                          type="textarea"
-                          readOnly={Boolean(actividad.idEventoExistente)}
-                        />
+                  name="estrategiaPoliticaEducacionInclusiva"
+                  label="Estrategia de educación inclusiva"
+                  value={actividad.estrategiaPoliticaEducacionInclusiva}
+                  onChange={actualizarActividad}
+                  options={opcionesEstrategia(
+                    catalogoActividades,
+                    "estrategiaPoliticaEducacionInclusiva",
+                    actividad.estrategiaPoliticaEducacionInclusiva,
+                  )}
+                  readOnly={Boolean(actividad.idEventoExistente)}
+                />
                       </FormGrid>
                     ) : (
                       <p className="text-muted" role="status">No aplica a esta actividad.</p>

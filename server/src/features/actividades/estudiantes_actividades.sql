@@ -143,3 +143,6 @@ JOIN sat.lineas_accion la ON la.id_lineas_accion = cb.id_lineas_accion
 LEFT JOIN sat.apoyos_actividades_vec ta ON ta.id_tipos_apoyo = avp.id_tipos_apoyo;
 
 COMMIT;
+
+
+

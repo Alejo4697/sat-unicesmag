@@ -13,18 +13,17 @@ const MAX_ROWS = 500;
 const ROLE_OPTIONS = [
   { value: "ESTUDIANTE", label: "Estudiante" },
   { value: "EGRESADO", label: "Egresado" },
-  { value: "COLABORADOR", label: "Colaborador" },
+  { value: "COLABORADOR", label: "Docente" },
   { value: "ADMINISTRATIVO", label: "Administrativo" },
   { value: "EXTERNO", label: "Externo" },
 ];
 const ROLE_SUMMARY_PRIORITY = [
+  "COLABORADOR",
   "ESTUDIANTE",
   "ADMINISTRATIVO",
-  "COLABORADOR",
   "EGRESADO",
   "EXTERNO",
 ];
-const UNKNOWN_ROLE_OPTIONS = ROLE_OPTIONS.filter((role) => role.value !== "ESTUDIANTE");
 const STATUS_FILTER_OPTIONS = [
   ["valid", "Listo para inscribir"],
   ["invalid", "Hay que revisar"],
@@ -34,6 +33,23 @@ const STATUS_FILTER_OPTIONS = [
   ["not_found", "Sin perfil"],
   ["registering", "Inscribiendo"],
 ];
+const UNKNOWN_ROLE_OPTIONS = ROLE_OPTIONS.filter(
+  (role) => role.value !== "ESTUDIANTE",
+);
+const EMPTY_EXCEL_FILTER_VALUE = "__SIN_DATO_EN_EXCEL__";
+
+function emptyAdvancedFilters() {
+  return {
+    search: "",
+    role: "all",
+    program: "all",
+    dependency: "all",
+    documentType: "all",
+    gender: "all",
+    municipality: "all",
+    birthPlace: "all",
+  };
+}
 
 function normalizeText(value) {
   return String(value || "")
@@ -116,7 +132,7 @@ function validarBorradorNoEncontrado(draft) {
   const namePattern = /^[\p{L}\p{M}][\p{L}\p{M}\s'.-]*$/u;
 
   if (!UNKNOWN_ROLE_OPTIONS.some((role) => role.value === draft.tipo)) {
-    errors.tipo = "Selecciona Egresado, Colaborador, Administrativo o Externo. Los estudiantes deben estar en la base institucional.";
+    errors.tipo = "Selecciona Egresado, Docente, Administrativo o Externo. Los estudiantes deben estar en la base institucional.";
   }
   if (!["CC", "TI", "CE", "PA", "RC", "NIT", "PPT", "PEP", "CD", "SC", "NUIP", "OTRO"].includes(draft.tipoDocumento)) {
     errors.tipoDocumento = "Selecciona un tipo de documento válido.";
@@ -920,6 +936,13 @@ function roleValue(value) {
     ESTUDIANTES: "ESTUDIANTE",
     ALUMNO: "ESTUDIANTE",
     ALUMNA: "ESTUDIANTE",
+    DOCENTE: "COLABORADOR",
+    DOCENTES: "COLABORADOR",
+    DOCENTEPERMANENCIA: "COLABORADOR",
+    PROFESOR: "COLABORADOR",
+    PROFESORA: "COLABORADOR",
+    PROFESORES: "COLABORADOR",
+    DOCENTEACOMPANANTE: "COLABORADOR",
     EGRESADO: "EGRESADO",
     EGRESADOS: "EGRESADO",
     GRADUADO: "EGRESADO",
@@ -939,6 +962,22 @@ function roleValue(value) {
 function uniqueValues(rows, field) {
   return [...new Set(rows.map((row) => String(row[field] || "").trim()).filter(Boolean))]
     .sort((left, right) => left.localeCompare(right, "es"));
+}
+
+function excelFilterOptions(rows, field) {
+  const values = uniqueValues(rows, field);
+  if (!values.length) return values;
+  if (rows.some((row) => !String(row[field] || "").trim())) {
+    values.push(EMPTY_EXCEL_FILTER_VALUE);
+  }
+  return values;
+}
+
+function excelFilterMatches(row, field, selectedValue) {
+  if (selectedValue === "all") return true;
+  const value = String(row[field] || "").trim();
+  if (selectedValue === EMPTY_EXCEL_FILTER_VALUE) return !value;
+  return normalizeText(value) === normalizeText(selectedValue);
 }
 
 async function mapConcurrent(items, limit, worker) {
@@ -963,15 +1002,13 @@ export default function BulkParticipantImport({ onPendingChange }) {
   const confirmedNavigationRef = useRef(false);
   const restoringHistoryRef = useRef(false);
   const historyIndexRef = useRef(window.history.state?.idx);
+  const eventPickerInputRef = useRef(null);
   const [events, setEvents] = useState([]);
   const [selectedEventId, setSelectedEventId] = useState("");
-  const [advancedFilters, setAdvancedFilters] = useState({
-    search: "",
-    role: "all",
-    status: "all",
-    program: "all",
-    dependency: "all",
-  });
+  const [eventQuery, setEventQuery] = useState("");
+  const [eventPickerOpen, setEventPickerOpen] = useState(false);
+  const [activeEventIndex, setActiveEventIndex] = useState(-1);
+  const [advancedFilters, setAdvancedFilters] = useState(emptyAdvancedFilters);
   const [bulkSupportVariable, setBulkSupportVariable] = useState("");
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1004,6 +1041,19 @@ export default function BulkParticipantImport({ onPendingChange }) {
   }, []);
 
   const selectedEvent = events.find((event) => event.id === selectedEventId);
+  const normalizedEventQuery = normalizeText(eventQuery);
+  const filteredEvents = events.filter((event) => normalizeText([
+    event.actividad,
+    event.periodo,
+    event.proyecto,
+    event.programaBienestar,
+    event.fechaInicio,
+    event.fechaFinalizacion,
+  ].filter(Boolean).join(" ")).includes(normalizedEventQuery));
+  const selectedEventLabel = selectedEvent
+    ? `${selectedEvent.actividad} · ${selectedEvent.periodo} · ${selectedEvent.estado === "EN_CURSO" ? "En curso" : "Programada"}`
+    : "";
+  const displayedEventLabel = eventPickerOpen ? eventQuery : selectedEventLabel || eventQuery;
   const supportOptions = supportOptionsForEvent(selectedEvent);
   const requiresSupportVariable = Boolean(selectedEvent?.variablesModalidades?.length);
   const validCount = rows.filter((row) => ["valid", "registered"].includes(row.status)).length;
@@ -1041,27 +1091,51 @@ export default function BulkParticipantImport({ onPendingChange }) {
       row.nombres,
       row.nombreCompleto,
       row.apellidos,
+      row.tipoDocumento,
+      row.fechaNacimiento,
+      row.lugarNacimiento,
+      row.genero,
       row.correo,
+      row.celular,
+      row.telefono,
+      row.direccion,
+      row.municipio,
+      row.rolOriginal,
+      row.programaOriginal,
+      row.dependenciaOriginal,
     ].filter(Boolean).join(" "));
-    const rowRoles = [...(row.roles || []), row.tipo, row.rolOriginal]
-      .map(roleValue)
-      .filter(Boolean);
     return (!search || searchableText.includes(search))
-      && (advancedFilters.role === "all" || rowRoles.includes(advancedFilters.role))
-      && (advancedFilters.status === "all" || row.status === advancedFilters.status)
-      && (advancedFilters.program === "all"
-        || normalizeText(row.programaOriginal) === normalizeText(advancedFilters.program))
-      && (advancedFilters.dependency === "all"
-        || normalizeText(row.dependenciaOriginal) === normalizeText(advancedFilters.dependency));
+      && excelFilterMatches(row, "rolOriginal", advancedFilters.role)
+      && excelFilterMatches(row, "programaOriginal", advancedFilters.program)
+      && excelFilterMatches(row, "dependenciaOriginal", advancedFilters.dependency)
+      && excelFilterMatches(row, "tipoDocumento", advancedFilters.documentType)
+      && excelFilterMatches(row, "genero", advancedFilters.gender)
+      && excelFilterMatches(row, "municipio", advancedFilters.municipality)
+      && excelFilterMatches(row, "lugarNacimiento", advancedFilters.birthPlace);
   };
   const filteredReviewRows = reviewRows.filter(filterByAdvancedOptions);
   const filteredNotFoundRows = notFoundRows.filter(filterByAdvancedOptions);
-  const programOptions = uniqueValues(rows, "programaOriginal");
-  const dependencyOptions = uniqueValues(rows, "dependenciaOriginal");
+  const roleOptions = excelFilterOptions(rows, "rolOriginal");
+  const programOptions = excelFilterOptions(rows, "programaOriginal");
+  const dependencyOptions = excelFilterOptions(rows, "dependenciaOriginal");
+  const documentTypeOptions = excelFilterOptions(rows, "tipoDocumento");
+  const genderOptions = excelFilterOptions(rows, "genero");
+  const municipalityOptions = excelFilterOptions(rows, "municipio");
+  const birthPlaceOptions = excelFilterOptions(rows, "lugarNacimiento");
+  const excelFilterDefinitions = [
+    { key: "role", field: "rolOriginal", label: "Rol indicado en el Excel", allLabel: "Todos los roles", options: roleOptions },
+    { key: "program", field: "programaOriginal", label: "Programa", allLabel: "Todos los programas", options: programOptions },
+    { key: "dependency", field: "dependenciaOriginal", label: "Dependencia", allLabel: "Todas las dependencias", options: dependencyOptions },
+    { key: "documentType", field: "tipoDocumento", label: "Tipo de documento", allLabel: "Todos los tipos", options: documentTypeOptions },
+    { key: "gender", field: "genero", label: "Género", allLabel: "Todos", options: genderOptions },
+    { key: "municipality", field: "municipio", label: "Municipio", allLabel: "Todos los municipios", options: municipalityOptions },
+    { key: "birthPlace", field: "lugarNacimiento", label: "Lugar de nacimiento", allLabel: "Todos los lugares", options: birthPlaceOptions },
+  ].filter((filter) => filter.options.length > 0);
   const advancedFilterCount = Object.entries(advancedFilters).filter(([key, value]) => (
     key === "search" ? Boolean(value.trim()) : value !== "all"
   )).length;
   const advancedFiltersActive = advancedFilterCount > 0;
+  const filteredRowsCount = filteredReviewRows.length + filteredNotFoundRows.length;
   const enabledNotFoundRows = notFoundRows.filter((row) => autoCreateRoles[row.tipo]);
   const readyUnknownRows = enabledNotFoundRows.filter(
     (row) => (!requiresSupportVariable || row.modalidadVariable)
@@ -1147,7 +1221,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
     setRows([]);
     setUnknownDrafts({});
     setEditingUnknownId("");
-    setAdvancedFilters({ search: "", role: "all", status: "all", program: "all", dependency: "all" });
+    setAdvancedFilters(emptyAdvancedFilters());
     setUnknownSubmitError("");
     setUnknownBatchProgress({ completed: 0, total: 0 });
     setAutoCreateRoles({ EXTERNO: false, EGRESADO: false, COLABORADOR: false });
@@ -1195,7 +1269,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
     setBulkSupportVariable("");
     setUnknownDrafts({});
     setEditingUnknownId("");
-    setAdvancedFilters({ search: "", role: "all", status: "all", program: "all", dependency: "all" });
+    setAdvancedFilters(emptyAdvancedFilters());
     setUnknownSubmitError("");
     setUnknownBatchProgress({ completed: 0, total: 0 });
     setAutoCreateRoles({ EXTERNO: false, EGRESADO: false, COLABORADOR: false });
@@ -1499,11 +1573,11 @@ export default function BulkParticipantImport({ onPendingChange }) {
     instructions.addRows([
       ["Plantilla para registrar participantes"],
       ["Completa una fila por participante usando documento o código institucional."],
-      ["Para crear e inscribir en lote perfiles nuevos de egresados, colaboradores o externos, completa identificación, nombres, apellidos, tipo de documento, fecha y lugar de nacimiento, género, correo personal, celular, teléfono alternativo, dirección y municipio."],
+      ["Para crear e inscribir en lote perfiles nuevos de egresados, docentes o externos, completa identificación, nombres, apellidos, tipo de documento, fecha y lugar de nacimiento, género, correo personal, celular, teléfono alternativo, dirección y municipio."],
       ["Las personas que ya existen se validan contra sus datos institucionales; los datos adicionales del Excel no reemplazan información existente."],
       ["La búsqueda se hace por documento o código institucional. Si la persona existe, se mostrarán e inscribirán todos sus roles registrados; la columna Rol es opcional y no cambia los roles guardados."],
-      ["Si la persona no está registrada con ningún rol de participante, podrás crear su perfil como egresado, colaborador o externo. No se creará como estudiante."],
-      ["Al marcar en la revisión los roles permitidos, se crean los perfiles en las tablas sat.egresados, sat.colaboradores o sat.externos (requiere la migración de roles) y se inscriben en la actividad seleccionada."],
+      ["Si la persona no está registrada con ningún rol de participante, podrás crear su perfil como egresado, docente o externo. No se creará como estudiante."],
+      ["Al marcar en la revisión los roles permitidos, se crean los perfiles correspondientes para egresados, docentes o externos (requiere la migración de roles) y se inscriben en la actividad seleccionada."],
       ["Para fechas usa AAAA-MM-DD o DD/MM/AAAA; el género debe coincidir con una opción permitida en el formulario."],
       ["Elige la modalidad antes de subir el archivo; todas las personas de esta lista quedarán inscritas en esa modalidad. La columna Apoyo del archivo no cambia esta selección."],
       ["Se admiten archivos .xlsx, .xls, .xlsm, .xlsb, .ods, .csv y .tsv; encabezados en distintas filas o una columna identificable sin encabezados."],
@@ -1535,7 +1609,10 @@ export default function BulkParticipantImport({ onPendingChange }) {
     const event = events.find((item) => item.id === value);
     const options = supportOptionsForEvent(event);
     setSelectedEventId(value);
-    setAdvancedFilters({ search: "", role: "all", status: "all", program: "all", dependency: "all" });
+    setEventQuery("");
+    setEventPickerOpen(false);
+    setActiveEventIndex(0);
+    setAdvancedFilters(emptyAdvancedFilters());
     setBulkSupportVariable(
       event?.variablesModalidades?.length === 1 && options.length === 1
         ? options[0].programaCompleto
@@ -1560,27 +1637,90 @@ export default function BulkParticipantImport({ onPendingChange }) {
       </header>
 
       <div className="vec-bulk-registration__section">
-        <label className="form-label" htmlFor="bulk-activity">Paso 1 · Elige la actividad</label>
-        <select
-          className="form-select"
-          id="bulk-activity"
-          value={selectedEventId}
-          onChange={(event) => onActivityChange(event.target.value)}
-          disabled={loading || validating || registering || creatingUnknownBatch}
-        >
-          <option value="">{loading ? "Cargando actividades..." : "Elige una actividad"}</option>
-          {events.map((event) => (
-            <option key={event.id} value={event.id} disabled={event.estado === "CANCELADA"}>
-              {event.actividad}
-            </option>
-          ))}
-        </select>
-        {!loading && !events.length && (
-          <p className="vec-bulk-registration__hint">Todavía no hay actividades disponibles. Pídele a la persona encargada que cree una actividad primero.</p>
-        )}
-        {events.some((event) => event.estado === "CANCELADA") && (
-          <p className="vec-bulk-registration__hint">Las actividades canceladas aparecen en la lista, pero no se pueden seleccionar.</p>
-        )}
+        <div className="vec-event-picker vec-event-picker--bulk vec-event-picker--simple">
+          <div className="vec-event-picker__select">
+            <label htmlFor="bulk-activity">Actividad para inscribir</label>
+            <div className="vec-event-picker__combobox">
+              <i className="fas fa-magnifying-glass" aria-hidden="true"></i>
+              <input
+              id="bulk-activity"
+              ref={eventPickerInputRef}
+              type="text"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={eventPickerOpen}
+              aria-controls="bulk-activity-options"
+              aria-activedescendant={eventPickerOpen && filteredEvents[activeEventIndex]
+                ? `bulk-activity-option-${filteredEvents[activeEventIndex].id}`
+                : undefined}
+              value={displayedEventLabel}
+              onFocus={() => {
+                setEventQuery("");
+                setEventPickerOpen(true);
+                setActiveEventIndex(-1);
+              }}
+              onChange={(event) => {
+                setEventQuery(event.target.value);
+                setEventPickerOpen(true);
+                setActiveEventIndex(0);
+              }}
+              onBlur={() => {
+                setEventPickerOpen(false);
+                setEventQuery("");
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setEventPickerOpen(true);
+                  setActiveEventIndex((index) => Math.min(index + 1, filteredEvents.length - 1));
+                } else if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setEventPickerOpen(true);
+                  setActiveEventIndex((index) => Math.max(index - 1, 0));
+                } else if (event.key === "Enter" && eventPickerOpen && filteredEvents[activeEventIndex]) {
+                  event.preventDefault();
+                  onActivityChange(filteredEvents[activeEventIndex].id);
+                } else if (event.key === "Escape") {
+                  setEventPickerOpen(false);
+                  setEventQuery("");
+                }
+              }}
+              placeholder={loading ? "Cargando actividades..." : "Busca o selecciona una actividad"}
+              disabled={loading || validating || registering || creatingUnknownBatch}
+              autoComplete="off"
+              />
+              <i className={`fas ${eventPickerOpen ? "fa-chevron-up" : "fa-chevron-down"}`} aria-hidden="true"></i>
+            </div>
+            {eventPickerOpen && (
+              <div className="vec-event-picker__options" id="bulk-activity-options" role="listbox" aria-label="Actividades disponibles">
+              {filteredEvents.map((event, index) => (
+                <div
+                  className={`vec-event-picker__option${event.id === selectedEventId ? " is-selected" : ""}${index === activeEventIndex ? " is-active" : ""}`}
+                  id={`bulk-activity-option-${event.id}`}
+                  key={event.id}
+                  role="option"
+                  aria-selected={event.id === selectedEventId}
+                  onMouseDown={(mouseEvent) => mouseEvent.preventDefault()}
+                  onMouseEnter={() => setActiveEventIndex(index)}
+                  onClick={() => onActivityChange(event.id)}
+                >
+                  <span className="vec-event-picker__option-copy">
+                    <strong>{event.actividad}</strong>
+                    <small>{event.periodo} · {event.estado === "EN_CURSO" ? "En curso" : "Programada"}</small>
+                  </span>
+                  {event.id === selectedEventId && <i className="fas fa-check" aria-label="Seleccionada"></i>}
+                </div>
+              ))}
+              {!loading && events.length === 0 && (
+                <p className="vec-event-picker__empty">No hay actividades programadas o en curso disponibles.</p>
+              )}
+              {events.length > 0 && filteredEvents.length === 0 && (
+                <p className="vec-event-picker__empty">No hay actividades que coincidan con la búsqueda.</p>
+              )}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {selectedEvent && (
@@ -1682,7 +1822,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
             </section>
             <section>
               <strong>El rol no hace falta</strong>
-              <p>Buscamos sus roles en el sistema. Si no aparece, podrás completar sus datos y crearla como egresado, colaborador o externo; nunca la haremos estudiante automáticamente.</p>
+              <p>Buscamos sus roles en el sistema. Si no aparece, podrás completar sus datos y crearla como egresado, docente o externo; nunca la haremos estudiante automáticamente.</p>
             </section>
           </div>
           <div className="vec-upload-guide__example">
@@ -1767,100 +1907,74 @@ export default function BulkParticipantImport({ onPendingChange }) {
           <details className="vec-bulk-advanced-filters">
             <summary>
               <span className="vec-bulk-advanced-filters__title">
-                <i className="fas fa-sliders" aria-hidden="true"></i>
-                Filtros avanzados
+                <span className="vec-bulk-advanced-filters__icon" aria-hidden="true">
+                  <i className="fas fa-sliders"></i>
+                </span>
+                <span className="vec-bulk-advanced-filters__heading">
+                  <strong>Filtros avanzados</strong>
+                  <small>Busca y filtra usando los campos que vienen en el Excel</small>
+                </span>
                 {advancedFilterCount > 0 && (
                   <strong className="vec-bulk-advanced-filters__active-count">
                     {advancedFilterCount} activo{advancedFilterCount === 1 ? "" : "s"}
                   </strong>
                 )}
               </span>
-              <small>Busca y organiza los resultados visibles</small>
+              <span className="vec-bulk-advanced-filters__summary-count">
+                {filteredRowsCount} de {rows.length} visibles
+              </span>
             </summary>
             <div className="vec-bulk-advanced-filters__fields">
               <label className="form-group">
-                <span className="form-label">Nombre, documento o código</span>
+                <span className="form-label">Buscar en los datos del Excel</span>
                 <input
                   className="form-control"
                   type="search"
                   value={advancedFilters.search}
                   onChange={(event) => setAdvancedFilters((current) => ({ ...current, search: event.target.value }))}
-                  placeholder="Escribe para buscar"
+                  placeholder="Nombre, documento, correo, teléfono, dirección..."
+                  aria-label="Buscar en todos los datos importados desde el Excel"
                 />
               </label>
-              <label className="form-group">
-                <span className="form-label">Rol</span>
-                <select
-                  className="form-select"
-                  value={advancedFilters.role}
-                  onChange={(event) => setAdvancedFilters((current) => ({ ...current, role: event.target.value }))}
-                >
-                  <option value="all">Todos los roles</option>
-                  {ROLE_OPTIONS.map((role) => (
-                    <option key={role.value} value={role.value}>{role.label}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="form-group">
-                <span className="form-label">Estado de validación</span>
-                <select
-                  className="form-select"
-                  value={advancedFilters.status}
-                  onChange={(event) => setAdvancedFilters((current) => ({ ...current, status: event.target.value }))}
-                >
-                  <option value="all">Todos los estados</option>
-                  {STATUS_FILTER_OPTIONS.map(([value, label]) => (
-                    <option key={value} value={value}>{label}</option>
-                  ))}
-                </select>
-              </label>
-              {programOptions.length > 0 && (
-                <label className="form-group">
-                  <span className="form-label">Programa (según el Excel)</span>
+              {excelFilterDefinitions.map((filter) => (
+                <label className="form-group" key={filter.key}>
+                  <span className="form-label">{filter.label}</span>
                   <select
                     className="form-select"
-                    value={advancedFilters.program}
-                    onChange={(event) => setAdvancedFilters((current) => ({ ...current, program: event.target.value }))}
+                    value={advancedFilters[filter.key]}
+                    onChange={(event) => setAdvancedFilters((current) => ({
+                      ...current,
+                      [filter.key]: event.target.value,
+                    }))}
                   >
-                    <option value="all">Todos los programas</option>
-                    {programOptions.map((program) => <option key={program} value={program}>{program}</option>)}
-                  </select>
-                </label>
-              )}
-              {dependencyOptions.length > 0 && (
-                <label className="form-group">
-                  <span className="form-label">Dependencia (según el Excel)</span>
-                  <select
-                    className="form-select"
-                    value={advancedFilters.dependency}
-                    onChange={(event) => setAdvancedFilters((current) => ({ ...current, dependency: event.target.value }))}
-                  >
-                    <option value="all">Todas las dependencias</option>
-                    {dependencyOptions.map((dependency) => (
-                      <option key={dependency} value={dependency}>{dependency}</option>
+                    <option value="all">{filter.allLabel}</option>
+                    {filter.options.map((value) => (
+                      <option key={value} value={value}>
+                        {value === EMPTY_EXCEL_FILTER_VALUE ? "Sin dato en Excel" : value}
+                      </option>
                     ))}
                   </select>
                 </label>
-              )}
-              <button
-                className="btn btn-outline btn-sm"
-                type="button"
-                onClick={() => setAdvancedFilters({
-                  search: "",
-                  role: "all",
-                  status: "all",
-                  program: "all",
-                  dependency: "all",
-                })}
-                disabled={!advancedFiltersActive}
-              >
-                Limpiar filtros
-              </button>
+              ))}
+              <div className="vec-bulk-advanced-filters__footer">
+                <p role="status" aria-live="polite">
+                  <i className="fas fa-eye" aria-hidden="true"></i>
+                  Mostrando <strong>{filteredRowsCount}</strong> de <strong>{rows.length}</strong> registros
+                  {advancedFiltersActive ? " con los filtros aplicados." : "."}
+                </p>
+                <button
+                  className="btn btn-outline btn-sm"
+                  type="button"
+                  onClick={() => setAdvancedFilters(emptyAdvancedFilters())}
+                  disabled={!advancedFiltersActive}
+                >
+                  <i className="fas fa-rotate-left" aria-hidden="true"></i>
+                  Limpiar filtros
+                </button>
+              </div>
               <p className="vec-bulk-advanced-filters__note">
                 Los filtros avanzados solo cambian la lista visible; no excluyen personas de las acciones por lote.
-                {programOptions.length === 0 && dependencyOptions.length === 0
-                  ? " Los filtros por programa y dependencia aparecen cuando el Excel incluye esas columnas."
-                  : ""}
+                {" "}Los filtros desplegables aparecen según las columnas y valores detectados en el archivo; la búsqueda libre revisa todos los campos leídos del Excel.
               </p>
             </div>
           </details>
@@ -1934,7 +2048,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
                 </div>
                 <div>
                   <h4>Personas que todavía no aparecen</h4>
-                  <p>Estas personas no tienen un perfil que podamos usar. Puedes completar sus datos para crear un perfil de egresado, colaborador o externo. No se crearán estudiantes automáticamente.</p>
+                  <p>Estas personas no tienen un perfil que podamos usar. Puedes completar sus datos para crear un perfil de egresado, docente o externo. No se crearán estudiantes automáticamente.</p>
                 </div>
                 <span className="vec-bulk-preview__section-total">{filteredNotFoundRows.length} pendientes</span>
               </div>

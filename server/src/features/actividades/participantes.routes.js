@@ -6,6 +6,7 @@ import {
   requireModule,
   requireRole,
 } from "../../shared/middleware/requireRole.js";
+import { ejecutarSincronizacion } from "../../shared/services/syncService.js";
 import { generarExcelAsistentes } from "./excelAsistentes.js";
 
 const require = createRequire(import.meta.url);
@@ -19,6 +20,30 @@ const ROLES_PARTICIPANTE_VEC = new Set([
   "ADMINISTRATIVO",
 ]);
 const TIPOS = ROLES_PARTICIPANTE_VEC;
+const PRIORIDAD_ROLES_PARTICIPANTE = [
+  "COLABORADOR",
+  "ADMINISTRATIVO",
+  "ESTUDIANTE",
+  "EGRESADO",
+  "EXTERNO",
+];
+const PRIORIDAD_ROLES_MAP = new Map(
+  PRIORIDAD_ROLES_PARTICIPANTE.map((role, index) => [role, index]),
+);
+function priorizarRoles(roles) {
+  return [...new Set(
+    (roles || []).filter(Boolean).map(normalizarTipoParticipante),
+  )].sort(
+    (first, second) =>
+      (PRIORIDAD_ROLES_MAP.get(first) ?? PRIORIDAD_ROLES_PARTICIPANTE.length) -
+        (PRIORIDAD_ROLES_MAP.get(second) ?? PRIORIDAD_ROLES_PARTICIPANTE.length) ||
+      String(first).localeCompare(String(second), "es"),
+  );
+}
+function normalizarTipoParticipante(tipo) {
+  const normalized = String(tipo || "").trim().toUpperCase();
+  return normalized === "DOCENTE" ? "COLABORADOR" : normalized;
+}
 const TIPOS_DOCUMENTO_PARTICIPANTE = new Set([
   "CC",
   "TI",
@@ -36,7 +61,7 @@ const TIPOS_DOCUMENTO_PARTICIPANTE = new Set([
 const DETALLE_ROL_PARTICIPANTE = {
   ESTUDIANTE: "Estudiante",
   EGRESADO: "Egresado no titulado",
-  COLABORADOR: "Colaborador",
+  COLABORADOR: "Docente",
   EXTERNO: "Externo",
   ADMINISTRATIVO: "Administrativo",
 };
@@ -190,7 +215,10 @@ const ASSISTANTS_QUERY = `
          BTRIM(CONCAT_WS(' ', p.primer_apellido, p.segundo_apellido,
                           p.primer_nombre, p.segundo_nombre)) AS "apellidosNombres",
          BTRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre)) AS "nombres",
-         pv.tipo_participante AS "rolParticipacion",
+         CASE
+           WHEN pv.tipo_participante = 'DOCENTE' THEN 'COLABORADOR'
+           ELSE pv.tipo_participante
+         END AS "rolParticipacion",
          COALESCE(roles.roles, ARRAY[pv.tipo_participante]) AS roles,
          COALESCE((to_jsonb(avp)->>'asistencia_verificada')::boolean, false) AS "asistenciaVerificada",
          COALESCE(
@@ -207,13 +235,17 @@ const ASSISTANTS_QUERY = `
          COALESCE(e.correo_institucional, e.correo_personal,
                   p.correo_institucional, p.correo_electronico) AS "correo",
          COALESCE(p.celular, p.telefono, e.telefono, e.telefono_fijo) AS "contacto",
-         pv.tipo_participante AS "tipoParticipante",
-         COALESCE(pv.detalle_tipo_participante, CASE pv.tipo_participante
-           WHEN 'ESTUDIANTE' THEN 'Estudiante'
-           WHEN 'COLABORADOR' THEN 'Colaborador'
-           WHEN 'EGRESADO' THEN 'Egresado no titulado'
-           WHEN 'ADMINISTRATIVO' THEN 'Administrativo'
-           ELSE 'Externo' END) AS "detalleTipoParticipante",
+         CASE
+           WHEN pv.tipo_participante = 'DOCENTE' THEN 'COLABORADOR'
+           ELSE pv.tipo_participante
+         END AS "tipoParticipante",
+         CASE
+           WHEN pv.tipo_participante IN ('DOCENTE', 'COLABORADOR') THEN 'Docente'
+           WHEN pv.tipo_participante = 'ESTUDIANTE' THEN 'Estudiante'
+           WHEN pv.tipo_participante = 'EGRESADO' THEN 'Egresado no titulado'
+           WHEN pv.tipo_participante = 'ADMINISTRATIVO' THEN 'Administrativo'
+           ELSE 'Externo'
+         END AS "detalleTipoParticipante",
          CASE WHEN COALESCE(e.fecha_nacimiento, p.fecha_nacimiento) IS NULL THEN NULL
               ELSE DATE_PART('year', AGE(CURRENT_DATE, COALESCE(e.fecha_nacimiento, p.fecha_nacimiento)))::int
          END AS "edad",
@@ -242,8 +274,23 @@ const ASSISTANTS_QUERY = `
          a.estrategia_politica_permanencia AS "estrategiaPermanencia",
          a.estrategia_politica_educacion_inclusiva AS "estrategiaInclusiva",
          avp.programa_modalidad AS "programaModalidad",
-         ta.nombre AS "tipoApoyo",
-         avp.id_tipos_apoyo AS "idTipoApoyo"
+         COALESCE(NULLIF(BTRIM(avp.tipo_apoyo_otro), ''), ta.nombre) AS "tipoApoyo",
+         NULLIF(BTRIM(avp.tipo_apoyo_otro), '') AS "tipoApoyoObservacion",
+         avp.id_tipos_apoyo AS "idTipoApoyo",
+         ARRAY(
+           SELECT DISTINCT BTRIM(rol_institucional.nombre)
+           FROM sat.usuarios usuario_institucional
+           JOIN sat.usuarios_roles usuario_rol_institucional
+             ON usuario_rol_institucional.id_usuarios = usuario_institucional.id_usuarios
+           JOIN sat.roles rol_institucional
+             ON rol_institucional.id_roles = usuario_rol_institucional.id_roles
+           WHERE (usuario_institucional.id_personas = p.id
+                  OR usuario_institucional.numero_documento = p.numero_identificacion)
+             AND usuario_institucional.activo = true
+             AND usuario_institucional.eliminado_en IS NULL
+             AND rol_institucional.activo = true
+           ORDER BY BTRIM(rol_institucional.nombre)
+         ) AS "rolesInstitucionales"
   FROM sat.actividades_vec a
   JOIN sat.actividades_vec_participantes avp
     ON avp.id_actividades_vec = a.id_actividades_vec
@@ -321,6 +368,31 @@ const ASSISTANTS_QUERY = `
             AND UPPER(BTRIM(institutional_role.nombre)) IN (
               'ADMIN', 'ADMINISTRADOR', 'ADMINISTRADORA',
               'ADMINISTRATIVO', 'ADMINISTRATIVA'
+            )
+        )
+        UNION ALL
+        SELECT 'DOCENTE' AS rol
+        WHERE EXISTS (
+          SELECT 1
+          FROM sat.docentes teacher
+          WHERE teacher.activo = true
+            AND (teacher.id_personas = p.id
+                 OR teacher.numero_documento = p.numero_identificacion)
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM sat.usuarios teacher_user
+          JOIN sat.usuarios_roles teacher_role
+            ON teacher_role.id_usuarios = teacher_user.id_usuarios
+          JOIN sat.roles institutional_role
+            ON institutional_role.id_roles = teacher_role.id_roles
+          WHERE (teacher_user.id_personas = p.id
+                 OR teacher_user.numero_documento = p.numero_identificacion)
+            AND teacher_user.activo = true
+            AND teacher_user.eliminado_en IS NULL
+            AND institutional_role.activo = true
+            AND UPPER(BTRIM(institutional_role.nombre)) IN (
+              'DOCENTE', 'DOCENTE_PERMANENCIA'
             )
         )
         UNION ALL
@@ -432,26 +504,19 @@ function asistentesSinIdPersona(asistentes) {
     if (!existente) {
       asistentesPorPersona.set(key, {
         ...asistente,
-        roles: [
-          ...new Set(
-            [...(asistente.roles || []), asistente.rolParticipacion].filter(
-              Boolean,
-            ),
-          ),
-        ],
+        roles: priorizarRoles([
+          ...(asistente.roles || []),
+          asistente.rolParticipacion,
+        ]),
         estadosAsistencia: new Set([asistente.asistenciaEstado]),
       });
       continue;
     }
-    existente.roles = [
-      ...new Set(
-        [
-          ...existente.roles,
-          ...(asistente.roles || []),
-          asistente.rolParticipacion,
-        ].filter(Boolean),
-      ),
-    ];
+    existente.roles = priorizarRoles([
+      ...existente.roles,
+      ...(asistente.roles || []),
+      asistente.rolParticipacion,
+    ]);
     existente.estadosAsistencia.add(asistente.asistenciaEstado);
   }
 
@@ -469,6 +534,30 @@ function asistentesSinIdPersona(asistentes) {
 }
 
 router.use(identifyUser, requireModule("actividades"));
+
+router.post(
+  "/sincronizacion-institucional",
+  requireRole("admin", "coordinador", "administrador"),
+  async (_req, res, next) => {
+    try {
+      const resultado = await ejecutarSincronizacion();
+      res.json({
+        ok: true,
+        docentes: resultado.docentes,
+        estudiantes: resultado.estudiantes,
+        matriculas: resultado.matriculas,
+        facultades: resultado.facultades,
+        calificaciones: resultado.calificaciones,
+        apoyos: resultado.apoyos,
+        totalProcesados: resultado.totalProcesados,
+        duracionSegundos: resultado.duracionSegundos,
+        mensaje: `Sincronización institucional completada: ${resultado.docentes || 0} docentes y ${resultado.estudiantes || 0} estudiantes procesados en ${resultado.duracionSegundos}s.`,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 router.get("/actividades-disponibles", async (req, res, next) => {
   try {
@@ -584,6 +673,7 @@ router.get("/eventos-proximos", async (_req, res, next) => {
        LEFT JOIN sat.apoyos_actividades_vec apoyo
          ON apoyo.id_tipos_apoyo = modalidad.id_tipos_apoyo
         AND apoyo.activo = true
+       WHERE a.estado IN ('PROGRAMADA', 'EN_CURSO')
        GROUP BY cat.id_catalogo_actividades_vec, a.id_periodos_academicos, pa.nombre,
                 COALESCE(cat.actividad, a.actividad),
                 COALESCE(cat.descripcion, a.descripcion_actividad),
@@ -618,10 +708,23 @@ router.get("/eventos", async (req, res, next) => {
     .trim()
     .toUpperCase();
   const busqueda = String(req.query.busqueda || "").trim();
+  const requestedIds = req.query.id;
+  const ids = requestedIds == null
+    ? []
+    : (Array.isArray(requestedIds) ? requestedIds : [requestedIds])
+      .map((id) => String(id).trim());
   if (estado && !ESTADOS_ACTIVIDAD.has(estado)) {
     return res
       .status(400)
       .json({ error: "Selecciona un estado de actividad válido." });
+  }
+  if (
+    ids.length > 250 ||
+    ids.some((id) => !UUID_PATTERN.test(id))
+  ) {
+    return res.status(400).json({
+      error: "La lista de actividades solicitada no es válida.",
+    });
   }
   try {
     const { rows } = await query(
@@ -681,13 +784,26 @@ router.get("/eventos", async (req, res, next) => {
               OR COALESCE(cat.programa, pb.nombre, '') ILIKE '%' || $2 || '%'
               OR COALESCE(cat.componente, cb.nombre, '') ILIKE '%' || $2 || '%'
               OR COALESCE(cat.proyecto, a.proyecto) ILIKE '%' || $2 || '%'
-              OR pa.nombre ILIKE '%' || $2 || '%')
+              OR pa.nombre ILIKE '%' || $2 || '%'
+              OR COALESCE(a.modalidad, '') ILIKE '%' || $2 || '%'
+              OR COALESCE(a.ubicacion::text, '') ILIKE '%' || $2 || '%'
+              OR COALESCE(cat.tipo_actividad, a.tipo_actividad, '') ILIKE '%' || $2 || '%'
+              OR COALESCE(a.fecha_inicio::text, '') ILIKE '%' || $2 || '%'
+              OR COALESCE(a.fecha_finalizacion::text, '') ILIKE '%' || $2 || '%'
+              OR COALESCE(a.estado, '') ILIKE '%' || $2 || '%'
+              OR COALESCE(avm.programa, '') ILIKE '%' || $2 || '%'
+              OR COALESCE(ta.nombre, '') ILIKE '%' || $2 || '%'
+              OR array_to_string(
+                   COALESCE(a.variables_modalidades, ARRAY[]::text[]),
+                   ' '
+                 ) ILIKE '%' || $2 || '%')
+         AND (cardinality($3::uuid[]) = 0 OR a.id_actividades_vec = ANY($3::uuid[]))
        GROUP BY a.id_actividades_vec, pa.nombre, cat.actividad, cat.descripcion,
                 cat.programa, pb.nombre, cat.componente, cb.nombre,
                 cat.proyecto, cat.tipo_actividad, a.variables_modalidades
        ORDER BY a.fecha_inicio DESC, a.creado_en DESC
        LIMIT 500`,
-      [estado, busqueda],
+      [estado, busqueda, ids],
     );
     res.json(
       rows.map((row) => ({
@@ -760,22 +876,51 @@ router.post(
     try {
       client = await pool.connect();
       await client.query("BEGIN");
-      const prepared = await prepararImportacionActividades(client, input);
-      const importable = prepared.groups.filter(
+      let prepared = await prepararImportacionActividades(client, input);
+      const candidates = prepared.groups.filter(
         (group) => group.status === "LISTA",
       );
-      if (!importable.length) {
+      if (!candidates.length) {
         await client.query("ROLLBACK");
         return res.status(409).json({
           error:
-            "No hay actividades con participantes existentes listas para importar. Revisa la previsualización.",
+            "No hay actividades listas para importar. Corrige las observaciones de la previsualización y vuelve a intentarlo; no se guardó ningún cambio.",
         });
       }
+      const candidateIndexes = new Set(candidates.map((group) => group.index));
+      const candidateActivities = input.activities.filter((_, index) =>
+        candidateIndexes.has(index),
+      );
+      await crearPeriodosHistoricos(client, candidateActivities);
+      if (input.crearProgramas) {
+        await crearProgramasHistoricos(client, input, candidateIndexes);
+      }
+      if (input.activarProgramas) {
+        await activarProgramasHistoricos(client, candidateActivities);
+      }
+      prepared = await prepararImportacionActividades(client, input);
+      const invalidatedCandidate = candidates.find(
+        (group) => prepared.groups[group.index]?.status !== "LISTA",
+      );
+      if (invalidatedCandidate) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          error:
+            `La actividad "${invalidatedCandidate.activity.nombreActividad}" dejó de cumplir la validación antes de guardar. Actualiza la previsualización e inténtalo de nuevo; no se guardó ningún cambio.`,
+        });
+      }
+      const importable = candidates.map(
+        (group) => prepared.groups[group.index],
+      );
+      const importedIndexes = new Set(importable.map((group) => group.index));
 
       let actividadesCreadas = 0;
       let actividadesReutilizadas = 0;
       let participantesInscritos = 0;
       let participantesYaInscritos = 0;
+      const participantesDuplicados = prepared.preview.participantStatuses.filter(
+        (row) => row.status === "DUPLICADO",
+      ).length;
       const eventIds = new Map();
 
       for (const group of importable) {
@@ -814,28 +959,9 @@ router.post(
           const created = await crearActividadTransaccion(
             client,
             {
-              idPeriodo: activity.idPeriodo,
-              actividad: activity.nombreActividad,
-              proyecto: activity.proyecto,
-              programaBienestar: activity.programaBienestar,
-              subdivisionProgramas: activity.subdivisionProgramas,
-              descripcion: activity.descripcion,
-              tipoActividad: activity.tipoActividad,
-              alianzaInterinstitucional: activity.alianza,
-              entidadAlianza: activity.entidadAlianza,
-              articulacionInstitucional: activity.articulacion,
-              idDependencia: activity.idDependencia,
+              ...activity,
               dependenciaOtra: activity.dependencia,
-              modalidad: activity.modalidad,
               ubicacion: null,
-              fechaInicio: activity.fechaInicio,
-              fechaFinalizacion: activity.fechaFinalizacion,
-              estrategiaPoliticaBienestar: activity.estrategiaBienestar,
-              estrategiaPoliticaPermanencia: activity.estrategiaPermanencia,
-              estrategiaPoliticaEducacionInclusiva:
-                activity.estrategiaInclusiva,
-              componente: activity.componente,
-              lineaAccion: activity.lineaAccion,
             },
             req.user?.id,
           );
@@ -865,80 +991,18 @@ router.post(
       for (const row of prepared.registrations) {
         const status = prepared.preview.participantStatuses[row.index]?.status;
         const idActividad = eventIds.get(row.activityIndex);
-        if (!idActividad || status !== "LISTO") {
+        if (
+          !idActividad ||
+          status !== "LISTO"
+        ) {
           if (status === "YA_INSCRITO") participantesYaInscritos += 1;
           continue;
         }
-        if (!row.idParticipante && row.role === "ESTUDIANTE") {
-          const student = row.studentSource || {};
-          if (!row.idPersona && student.identifier) {
-            const names = dividirNombre(student.nombres || "");
-            const surnames = dividirNombre(student.apellidos || "");
-            const personResult = await client.query(
-              `INSERT INTO sat.personas
-                 (numero_identificacion, primer_nombre, segundo_nombre,
-                  primer_apellido, segundo_apellido, correo_institucional)
-               VALUES ($1, $2, $3, $4, $5, $6)
-               ON CONFLICT (numero_identificacion) DO UPDATE SET
-                 correo_institucional = COALESCE(
-                   NULLIF(sat.personas.correo_institucional, ''),
-                   EXCLUDED.correo_institucional
-                 )
-               RETURNING id`,
-              [
-                student.identifier,
-                names.primero || null,
-                names.segundo || null,
-                surnames.primero || null,
-                surnames.segundo || null,
-                row.correo || student.correo || null,
-              ],
-            );
-            row.idPersona = personResult.rows[0]?.id || null;
-          }
-        }
-        if (!row.idParticipante && row.role === "ESTUDIANTE" && row.idPersona) {
-          const createdProfile = await client.query(
-            `INSERT INTO sat.participantes_vec
-               (id_personas, tipo_participante, detalle_tipo_participante,
-                tipo_documento, codigo, programa_academico, semestre, jornada)
-             VALUES ($1, 'ESTUDIANTE', 'Estudiante', $2, $3, $4, $5, $6)
-             ON CONFLICT (id_personas, tipo_participante) DO UPDATE SET
-               codigo = COALESCE(NULLIF(sat.participantes_vec.codigo, ''), EXCLUDED.codigo),
-               programa_academico = COALESCE(NULLIF(sat.participantes_vec.programa_academico, ''), EXCLUDED.programa_academico),
-               semestre = COALESCE(sat.participantes_vec.semestre, EXCLUDED.semestre),
-               jornada = COALESCE(NULLIF(sat.participantes_vec.jornada, ''), EXCLUDED.jornada),
-               actualizado_en = now()
-             RETURNING id_participantes_vec AS id`,
-            [
-              row.idPersona,
-              student.tipoDocumento || null,
-              row.codigo || student.codigo || null,
-              student.programaAcademico || null,
-              student.semestre || null,
-              student.jornada || null,
-            ],
-          );
-          row.idParticipante = createdProfile.rows[0]?.id || null;
-        }
-        if (!row.idParticipante && row.role === "ADMINISTRATIVO") {
-          const admin = row.administrativeSource || {};
-          const profile = await guardarPerfilDeActividad(client, {
-            identificacion: admin.identifier || row.identifier,
-            nombres: admin.nombres || "",
-            apellidos: admin.apellidos || "",
-            tipoDocumento: "CC",
-            correoInstitucional: row.correo || admin.correo || null,
-            cargo: admin.cargo || null,
-            tipo: "ADMINISTRATIVO",
-            detalleTipoParticipante: "Administrativo",
-          });
-          row.idPersona = profile.idPersona;
-          row.idParticipante = profile.idParticipante;
-        }
         if (!row.idParticipante) {
           throw Object.assign(
-            new Error("No se pudo crear o resolver el perfil VEC del participante encontrado."),
+            new Error(
+              "No se encontró un perfil VEC existente para inscribir. No se creó ningún perfil ni se guardó la inscripción.",
+            ),
             { status: 409 },
           );
         }
@@ -949,27 +1013,75 @@ router.post(
         const modalidad = row.programaModalidad || null;
         const { rows } = await client.query(
           `INSERT INTO sat.actividades_vec_participantes
-             (id_actividades_vec, id_participantes_vec, id_tipos_apoyo, programa_modalidad)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT (id_actividades_vec, id_participantes_vec) DO NOTHING
-           RETURNING id_actividades_vec_participantes`,
-          [idActividad, row.idParticipante, support?.id || null, modalidad],
-        );
+               (id_actividades_vec, id_participantes_vec, id_tipos_apoyo,
+                programa_modalidad, tipo_apoyo_otro)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (id_actividades_vec, id_participantes_vec) DO NOTHING
+             RETURNING id_actividades_vec_participantes`,
+            [
+              idActividad,
+              row.idParticipante,
+              support?.id || null,
+              modalidad,
+              row.supportOther || null,
+            ],
+          );
         if (rows[0]) participantesInscritos += 1;
         else participantesYaInscritos += 1;
       }
 
       await client.query("COMMIT");
-      const participantesPendientes =
-        prepared.preview.summary.totalParticipants -
-        participantesInscritos -
-        participantesYaInscritos;
+      const estadosParticipanteResueltos = new Set([
+        "LISTO",
+        "YA_INSCRITO",
+        "DUPLICADO",
+      ]);
+      const pendingParticipantReasons = prepared.preview.participantStatuses
+        .map((status, index) => {
+          const registration = prepared.registrations[index];
+          const group = prepared.groups[registration.activityIndex];
+          if (importedIndexes.has(registration.activityIndex)) {
+            return estadosParticipanteResueltos.has(status.status)
+              ? null
+              : status.message || status.status;
+          }
+          return (
+            group.messages.join(" ") ||
+            "La actividad asociada no se importó porque requiere revisión."
+          );
+        })
+        .filter(Boolean);
+      const participantesPendientes = pendingParticipantReasons.length;
+      const actividadesPendientes = prepared.groups.filter(
+        (group) => !importedIndexes.has(group.index),
+      ).length;
+      const participantesPendientesPorMotivo = Object.entries(
+        pendingParticipantReasons.reduce((counts, motivo) => {
+          counts[motivo] = (counts[motivo] || 0) + 1;
+          return counts;
+        }, {}),
+      ).map(([motivo, cantidad]) => ({ motivo, cantidad }));
+      const actividadesPendientesPorMotivo = Object.entries(
+        prepared.groups.reduce((counts, group) => {
+          if (importedIndexes.has(group.index)) return counts;
+          const motivo =
+            group.messages.join(" ") ||
+            "La actividad no estaba lista al iniciar la confirmación; vuelve a previsualizar el archivo.";
+          counts[motivo] = (counts[motivo] || 0) + 1;
+          return counts;
+        }, {}),
+      ).map(([motivo, cantidad]) => ({ motivo, cantidad }));
       res.json({
         actividadesCreadas,
         actividadesReutilizadas,
+        actividadesImportadas: [...new Set(eventIds.values())],
+        actividadesPendientes,
         participantesInscritos,
         participantesYaInscritos,
+        participantesDuplicados,
         participantesPendientes: Math.max(0, participantesPendientes),
+        participantesPendientesPorMotivo,
+        actividadesPendientesPorMotivo,
         asistenciaModificada: false,
       });
     } catch (err) {
@@ -1039,9 +1151,9 @@ router.put(
           activity.fechaInicio,
           activity.fechaFinalizacion,
           catalog.idProgramaBienestar,
-          catalog.estrategiaBienestar || activity.estrategiaBienestar,
-          catalog.estrategiaPermanencia || activity.estrategiaPermanencia,
-          catalog.estrategiaInclusiva || activity.estrategiaInclusiva,
+          activity.estrategiaBienestar || catalog.estrategiaBienestar,
+          activity.estrategiaPermanencia || catalog.estrategiaPermanencia,
+          activity.estrategiaInclusiva || catalog.estrategiaInclusiva,
           activity.ubicacion,
           activity.subdivisionProgramas,
         ],
@@ -1109,6 +1221,83 @@ router.patch(
       );
       await client.query("COMMIT");
       res.json(rows[0]);
+    } catch (err) {
+      if (client) await client.query("ROLLBACK").catch(() => {});
+      enviarErrorBaseDatos(err, res, next);
+    } finally {
+      client?.release();
+    }
+  },
+);
+
+router.post(
+  "/eventos/eliminar-lote",
+  requireRole("admin", "coordinador", "administrador"),
+  async (req, res, next) => {
+    const rawIds = req.body?.ids;
+    if (
+      !Array.isArray(rawIds) ||
+      rawIds.length === 0 ||
+      rawIds.length > 250 ||
+      rawIds.some((id) => !UUID_PATTERN.test(String(id || "")))
+    ) {
+      return res.status(400).json({
+        error: "Selecciona entre 1 y 250 identificadores de actividad válidos.",
+      });
+    }
+    const ids = [...new Set(rawIds.map(String))];
+    if (ids.length !== rawIds.length) {
+      return res.status(400).json({
+        error: "La selección contiene actividades repetidas.",
+      });
+    }
+
+    let client;
+    try {
+      client = await pool.connect();
+      await client.query("BEGIN");
+      const { rows: activities } = await client.query(
+        `SELECT a.id_actividades_vec AS id,
+                COALESCE(cat.actividad, a.actividad) AS actividad
+         FROM sat.actividades_vec a
+         LEFT JOIN sat.catalogo_actividades_vec cat
+           ON cat.id_catalogo_actividades_vec = a.id_catalogo_actividades_vec
+          AND cat.tipo_registro = 'ACTIVIDAD'
+         WHERE a.id_actividades_vec = ANY($1::uuid[])
+         ORDER BY a.id_actividades_vec
+         FOR UPDATE OF a`,
+        [ids],
+      );
+      if (activities.length !== ids.length) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          error:
+            "Una o más actividades ya no existen. Actualiza la lista; no se eliminó ninguna.",
+        });
+      }
+
+      const { rows: countRows } = await client.query(
+        `SELECT id_actividades_vec AS id, COUNT(*)::int AS participantes
+         FROM sat.actividades_vec_participantes
+         WHERE id_actividades_vec = ANY($1::uuid[])
+         GROUP BY id_actividades_vec`,
+        [ids],
+      );
+      const inscripcionesEliminadas = countRows.reduce(
+        (total, row) => total + Number(row.participantes || 0),
+        0,
+      );
+      await client.query(
+        "DELETE FROM sat.actividades_vec WHERE id_actividades_vec = ANY($1::uuid[])",
+        [ids],
+      );
+      await client.query("COMMIT");
+      res.json({
+        actividadesEliminadas: activities.length,
+        inscripcionesEliminadas,
+        actividades: activities.map((activity) => activity.actividad),
+        mensaje: `Se eliminaron ${activities.length} actividades y sus datos asociados.`,
+      });
     } catch (err) {
       if (client) await client.query("ROLLBACK").catch(() => {});
       enviarErrorBaseDatos(err, res, next);
@@ -1516,35 +1705,6 @@ router.patch(
       enviarErrorBaseDatos(err, res, next);
     } finally {
       client?.release();
-    }
-  },
-);
-
-router.get(
-  "/inscripciones/:id/auditoria",
-  requireRole("admin", "coordinador", "administrador"),
-  async (req, res, next) => {
-    const id = String(req.params.id || "");
-    if (!UUID_PATTERN.test(id))
-      return res.status(400).json({ error: "Inscripción no válida." });
-    try {
-      const { rows } = await query(
-        `SELECT audit.id_auditoria AS id, audit.accion, audit.id_usuario AS "usuarioId",
-              audit.detalle, audit.creado_en AS "creadoEn",
-              COALESCE(anterior.nombre, 'Sin clasificar') AS "tipoAnterior",
-              COALESCE(nuevo.nombre, 'Sin clasificar') AS "tipoNuevo"
-       FROM sat.actividades_vec_participantes_auditoria audit
-       LEFT JOIN sat.apoyos_actividades_vec anterior
-         ON anterior.id_tipos_apoyo = NULLIF(audit.detalle->>'anterior', '')::uuid
-       LEFT JOIN sat.apoyos_actividades_vec nuevo
-         ON nuevo.id_tipos_apoyo = NULLIF(audit.detalle->>'nuevo', '')::uuid
-       WHERE audit.id_actividades_vec_participantes=$1
-       ORDER BY audit.creado_en DESC, audit.id_auditoria DESC`,
-        [id],
-      );
-      res.json(rows);
-    } catch (err) {
-      enviarErrorBaseDatos(err, res, next);
     }
   },
 );
@@ -2215,7 +2375,11 @@ router.get("/apoyos", async (req, res, next) => {
                 p.numero_identificacion AS identificacion,
                 BTRIM(CONCAT_WS(' ', p.primer_apellido, p.segundo_apellido,
                                  p.primer_nombre, p.segundo_nombre)) AS "apellidosNombres",
-                pv.tipo_participante AS "rolParticipacion",
+                CASE
+                  WHEN 'DOCENTE' = ANY(COALESCE(roles.roles, ARRAY[pv.tipo_participante]))
+                    THEN 'COLABORADOR'
+                  ELSE pv.tipo_participante
+                END AS "rolParticipacion",
                 COALESCE(roles.roles, ARRAY[pv.tipo_participante]) AS roles,
                 COALESCE(cat.actividad, a.actividad) AS actividad,
                 COALESCE(cat.proyecto, a.proyecto) AS proyecto,
@@ -2235,9 +2399,32 @@ router.get("/apoyos", async (req, res, next) => {
          LEFT JOIN sat.programas_bienestar pb
            ON pb.id_programas_bienestar = a.id_programas_bienestar
          LEFT JOIN LATERAL (
-           SELECT ARRAY_AGG(DISTINCT other_pv.tipo_participante ORDER BY other_pv.tipo_participante) AS roles
-           FROM sat.participantes_vec other_pv
-           WHERE other_pv.id_personas = p.id
+           SELECT ARRAY(
+             SELECT profile.rol
+             FROM (
+               SELECT other_pv.tipo_participante AS rol
+               FROM sat.participantes_vec other_pv
+               WHERE other_pv.id_personas = p.id
+               UNION
+               SELECT 'DOCENTE'
+               WHERE EXISTS (
+                 SELECT 1
+                 FROM sat.docentes teacher
+                 WHERE teacher.activo = true
+                   AND (teacher.id_personas = p.id
+                        OR teacher.numero_documento = p.numero_identificacion)
+               )
+             ) profile
+             ORDER BY CASE profile.rol
+               WHEN 'DOCENTE' THEN 0
+               WHEN 'ADMINISTRATIVO' THEN 1
+               WHEN 'ESTUDIANTE' THEN 2
+               WHEN 'COLABORADOR' THEN 3
+               WHEN 'EGRESADO' THEN 4
+               WHEN 'EXTERNO' THEN 5
+               ELSE 6
+             END
+           ) AS roles
          ) roles ON TRUE
          WHERE avp.id_tipos_apoyo = $1
          ORDER BY a.fecha_inicio DESC, a.fecha_finalizacion DESC,
@@ -2319,7 +2506,10 @@ router.get("/apoyos", async (req, res, next) => {
       ]);
 
     res.json({
-      beneficiarios: beneficiarios.rows,
+      beneficiarios: beneficiarios.rows.map((row) => ({
+        ...row,
+        roles: priorizarRoles(row.roles),
+      })),
       beneficiosEconomicos: beneficiosEconomicos.rows,
       rutas: rutas.rows,
       total: total.rows[0].total,
@@ -2451,6 +2641,21 @@ router.get("/personas/buscar", async (req, res, next) => {
                AND UPPER(BTRIM(dt.tipo_vinculo)) IN ('ADMINISTRATIVO','ADMINISTRATIVA')
            )
            UNION SELECT 'COLABORADOR' WHERE EXISTS (
+             SELECT 1
+             FROM sat.docentes dt
+             WHERE (dt.id_personas=p.id OR dt.numero_documento=p.numero_identificacion)
+               AND dt.activo=true
+           )
+           OR EXISTS (
+             SELECT 1
+             FROM sat.usuarios u
+             JOIN sat.usuarios_roles ur ON ur.id_usuarios=u.id_usuarios
+             JOIN sat.roles r ON r.id_roles=ur.id_roles
+             WHERE (u.id_personas=p.id OR u.numero_documento=p.numero_identificacion)
+               AND u.activo=true AND u.eliminado_en IS NULL AND r.activo=true
+               AND UPPER(BTRIM(r.nombre)) IN ('DOCENTE','DOCENTE_PERMANENCIA')
+           )
+           UNION SELECT 'COLABORADOR' WHERE EXISTS (
              SELECT 1 FROM sat.usuarios u
              WHERE (u.id_personas=p.id OR u.numero_documento=p.numero_identificacion)
                AND u.activo=true AND u.eliminado_en IS NULL
@@ -2482,10 +2687,9 @@ router.get("/personas/buscar", async (req, res, next) => {
                )
            )
            UNION SELECT 'COLABORADOR' WHERE EXISTS (
-             SELECT 1 FROM sat.docentes dt
+             SELECT 1              FROM sat.docentes dt
              WHERE (dt.id_personas=p.id OR dt.numero_documento=p.numero_identificacion)
                AND dt.activo=true
-               AND UPPER(BTRIM(COALESCE(dt.tipo_vinculo,''))) NOT IN ('ADMINISTRATIVO','ADMINISTRATIVA')
                AND NOT EXISTS (
                  SELECT 1
                  FROM sat.usuarios admin_user
@@ -2506,7 +2710,7 @@ router.get("/personas/buscar", async (req, res, next) => {
        LIMIT 50`,
       [term],
     );
-    res.json(rows);
+    res.json(rows.map((row) => ({ ...row, roles: priorizarRoles(row.roles) })));
   } catch (err) {
     enviarErrorBaseDatos(err, res, next);
   }
@@ -2523,7 +2727,31 @@ router.get("/historial/:identificacion", async (req, res, next) => {
               COALESCE(cat.proyecto, a.proyecto) AS proyecto,
               pa.nombre AS periodo, a.fecha_inicio AS "fechaInicio",
               a.fecha_finalizacion AS "fechaFinalizacion", a.estado,
-              pv.tipo_participante AS rol,
+              CASE
+                WHEN EXISTS (
+                  SELECT 1
+                  FROM sat.docentes docente
+                  WHERE docente.activo = true
+                    AND (docente.id_personas = p.id
+                         OR docente.numero_documento = p.numero_identificacion)
+                ) OR EXISTS (
+                  SELECT 1
+                  FROM sat.usuarios usuario
+                  JOIN sat.usuarios_roles usuario_rol
+                    ON usuario_rol.id_usuarios = usuario.id_usuarios
+                  JOIN sat.roles rol
+                    ON rol.id_roles = usuario_rol.id_roles
+                  WHERE (usuario.id_personas = p.id
+                         OR usuario.numero_documento = p.numero_identificacion)
+                    AND usuario.activo = true
+                    AND usuario.eliminado_en IS NULL
+                    AND rol.activo = true
+                    AND UPPER(BTRIM(rol.nombre)) IN (
+                      'DOCENTE', 'DOCENTE_PERMANENCIA'
+                    )
+                ) THEN 'COLABORADOR'
+                ELSE pv.tipo_participante
+              END AS rol,
               ta.nombre AS "tipoApoyo", avp.creado_en AS "fechaRegistro",
               COALESCE((to_jsonb(avp)->>'asistencia_verificada')::boolean, false) AS "asistenciaVerificada"
        FROM sat.personas p
@@ -2548,6 +2776,7 @@ router.get("/", async (req, res, next) => {
   const limit = Number.isInteger(limitRequested)
     ? Math.min(Math.max(limitRequested, 1), 100)
     : 100;
+  const busqueda = String(req.query.busqueda || "").trim().slice(0, 100);
   try {
     const { rows } = await query(
       `SELECT pv.id_participantes_vec AS id,
@@ -2565,9 +2794,49 @@ router.get("/", async (req, res, next) => {
                     SELECT 1 FROM sat.estudiantes e
                     WHERE e.id_personas = pv.id_personas OR e.numero_documento = p.numero_identificacion
                   )
+                  UNION
+                  SELECT 'COLABORADOR'
+                  WHERE EXISTS (
+                    SELECT 1 FROM sat.docentes d
+                    WHERE d.activo = true
+                      AND (d.id_personas = pv.id_personas
+                           OR d.numero_documento = p.numero_identificacion)
+                  ) OR EXISTS (
+                    SELECT 1
+                    FROM sat.usuarios u
+                    JOIN sat.usuarios_roles ur ON ur.id_usuarios = u.id_usuarios
+                    JOIN sat.roles r ON r.id_roles = ur.id_roles
+                    WHERE (u.id_personas = pv.id_personas
+                           OR u.numero_documento = p.numero_identificacion)
+                      AND u.activo = true
+                      AND u.eliminado_en IS NULL
+                      AND r.activo = true
+                      AND UPPER(BTRIM(r.nombre)) IN ('DOCENTE', 'DOCENTE_PERMANENCIA')
+                  )
                 ) roles
-                ORDER BY roles.rol
+                ORDER BY CASE roles.rol
+                  WHEN 'COLABORADOR' THEN 0
+                  WHEN 'ADMINISTRATIVO' THEN 1
+                  WHEN 'ESTUDIANTE' THEN 2
+                  WHEN 'EGRESADO' THEN 3
+                  WHEN 'EXTERNO' THEN 4
+                  ELSE 5
+                END
               ) AS roles,
+              ARRAY(
+                SELECT DISTINCT BTRIM(rol_institucional.nombre)
+                FROM sat.usuarios usuario_institucional
+                JOIN sat.usuarios_roles usuario_rol_institucional
+                  ON usuario_rol_institucional.id_usuarios = usuario_institucional.id_usuarios
+                JOIN sat.roles rol_institucional
+                  ON rol_institucional.id_roles = usuario_rol_institucional.id_roles
+                WHERE (usuario_institucional.id_personas = p.id
+                       OR usuario_institucional.numero_documento = p.numero_identificacion)
+                  AND usuario_institucional.activo = true
+                  AND usuario_institucional.eliminado_en IS NULL
+                  AND rol_institucional.activo = true
+                ORDER BY BTRIM(rol_institucional.nombre)
+              ) AS "rolesInstitucionales",
               EXISTS (
                 SELECT 1 FROM sat.estudiantes e
                 WHERE e.id_personas = pv.id_personas OR e.numero_documento = p.numero_identificacion
@@ -2606,9 +2875,27 @@ router.get("/", async (req, res, next) => {
        ) estudiante ON TRUE
        LEFT JOIN sat.programas_academicos prog
          ON prog.id_programas_academicos = estudiante.id_programas_academicos
+       WHERE $2 = ''
+          OR CONCAT_WS(' ',
+               p.numero_identificacion,
+               p.primer_nombre,
+               p.segundo_nombre,
+               p.primer_apellido,
+               p.segundo_apellido,
+               pv.codigo,
+               pv.programa_academico,
+               prog.nombre,
+               pv.dependencia,
+               pv.cargo,
+               p.correo_institucional,
+               p.correo_electronico,
+               p.celular,
+               p.telefono,
+               pv.tipo_participante
+             ) ILIKE $2
        ORDER BY pv.creado_en DESC, pv.id_participantes_vec DESC
        LIMIT $1`,
-      [limit],
+      [limit, `%${busqueda}%`],
     );
     res.json(rows);
   } catch (err) {
@@ -2620,8 +2907,9 @@ router.get("/buscar", async (req, res, next) => {
   const tipo = String(req.query.tipo || "")
     .trim()
     .toUpperCase();
+  const tipoNormalizado = normalizarTipoParticipante(tipo);
   const identificacion = String(req.query.identificacion || "").trim();
-  if (!TIPOS.has(tipo)) {
+  if (!TIPOS.has(tipoNormalizado)) {
     return res
       .status(400)
       .json({ error: "Selecciona un tipo de participante válido." });
@@ -2635,18 +2923,18 @@ router.get("/buscar", async (req, res, next) => {
   try {
     let participante = null;
     const tiposBusqueda = [
-      tipo,
-      ...["ESTUDIANTE", "COLABORADOR"].filter((rol) => rol !== tipo),
+      tipoNormalizado,
+      ...["ESTUDIANTE", "COLABORADOR"].filter((rol) => rol !== tipoNormalizado),
     ];
     for (const tipoBusqueda of tiposBusqueda) {
       participante = await buscarParticipante(tipoBusqueda, identificacion);
       if (participante) break;
     }
     if (!participante) {
-      participante = await buscarParticipanteEnPersonas(tipo, identificacion);
+      participante = await buscarParticipanteEnPersonas(tipoNormalizado, identificacion);
     }
     if (participante) {
-      participante.tipo = tipo;
+      participante.tipo = tipoNormalizado;
       const datosComplementarios = await buscarDatosComplementariosPersona(
         participante.idPersona,
       );
@@ -2668,10 +2956,15 @@ router.get("/buscar", async (req, res, next) => {
         participante.idPersona,
         identificacion,
       );
-      participante.roles = [...new Set([
+      participante.rolesInstitucionales = await obtenerRolesInstitucionales(
+        query,
+        participante.idPersona,
+        identificacion,
+      );
+      participante.roles = priorizarRoles([
         ...profileRows.map((row) => row.rol),
         ...participante.rolesVerificados,
-      ])].sort();
+      ]);
       return res.json({ encontrado: true, participante });
     }
 
@@ -2890,7 +3183,7 @@ async function validarCargaMasiva(idActividad, filas) {
           identificacion: identificacionCanonica,
         },
         message:
-          "La persona existe, pero no tiene un rol de participante registrado. Puedes crearla como egresado, colaborador o externo.",
+          "La persona existe, pero no tiene un rol de participante registrado. Puedes crearla como egresado, docente o externo.",
       };
     }
     if (roles.includes("EXTERNO") && roles.length > 1) {
@@ -2979,7 +3272,7 @@ async function validarCargaMasiva(idActividad, filas) {
         {
           ESTUDIANTE: "Estudiante",
           EGRESADO: "Egresado no titulado",
-          COLABORADOR: "Colaborador",
+          COLABORADOR: "Docente",
           EXTERNO: "Externo",
         }[roles[0]],
       semestre:
@@ -3152,8 +3445,8 @@ async function obtenerEstadoPerfilPersona(db, identificacion) {
   return {
     existe: Boolean(idPersona || sourceRows[0]?.existe || roles.size),
     idPersona,
-    roles: [...roles].sort(),
-    vecRoles: [...vecRoles].sort(),
+    roles: priorizarRoles([...roles]),
+    vecRoles: priorizarRoles([...vecRoles]),
   };
 }
 
@@ -3388,7 +3681,7 @@ async function importarPerfilesMasivo(req, res, next, registrar) {
   );
   if (!["EGRESADO", "COLABORADOR", "EXTERNO", "ADMINISTRATIVO"].includes(rol)) {
     return res.status(400).json({
-      error: "Selecciona Egresado, Colaborador, Administrativo o Externo para esta carga.",
+      error: "Selecciona Egresado, Docente, Administrativo o Externo para esta carga.",
     });
   }
   if (!Array.isArray(filas) || filas.length < 1 || filas.length > 500) {
@@ -3498,7 +3791,7 @@ async function importarPerfilesMasivo(req, res, next, registrar) {
         results.push({
           fila,
           status: "created",
-          roles: [...new Set([...state.roles, rol])].sort(),
+          roles: priorizarRoles([...state.roles, rol]),
           idPerfil: profile.idParticipante,
           personaNueva: profile.personaNueva,
           message: `Perfil de ${DETALLE_ROL_PARTICIPANTE[rol]} creado en sus tablas correspondientes.`,
@@ -3675,14 +3968,14 @@ router.get(
   "/perfiles/roles",
   requireRole("admin", "coordinador", "administrador"),
   async (req, res, next) => {
-    const rol = String(req.query.rol || "")
-      .trim()
-      .toUpperCase();
+    const rol = normalizarTipoParticipante(
+      String(req.query.rol || "").trim().toUpperCase(),
+    );
     const busqueda = String(req.query.busqueda || "").trim();
     if (!["EGRESADO", "COLABORADOR", "EXTERNO", "ADMINISTRATIVO"].includes(rol)) {
       return res
         .status(400)
-        .json({ error: "Selecciona Egresado, Colaborador, Administrativo o Externo." });
+        .json({ error: "Selecciona Egresado, Docente, Administrativo o Externo." });
     }
     if (busqueda.length > 120) {
       return res
@@ -3712,6 +4005,21 @@ router.get(
               p.numero_identificacion AS identificacion,
               BTRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre)) AS nombres,
               BTRIM(CONCAT_WS(' ', p.primer_apellido, p.segundo_apellido)) AS apellidos,
+              docente.codigo_externo AS "codigoDocente",
+              docente.id_docentes IS NOT NULL AS "docenteSincronizado",
+              NULLIF(BTRIM(docente.tipo_vinculo), '') AS "cargoDocente",
+              programa_docente.nombre AS "programaDocente",
+              EXISTS (
+                SELECT 1
+                FROM sat.usuarios cuenta
+                WHERE cuenta.eliminado_en IS NULL
+                  AND (
+                    cuenta.id_usuarios = docente.id_usuarios
+                    OR cuenta.id_personas = p.id
+                    OR (p.numero_identificacion IS NOT NULL
+                        AND cuenta.numero_documento = p.numero_identificacion)
+                  )
+              ) AS "tieneCuenta",
               p.genero,
               p.fecha_nacimiento AS "fechaNacimiento",
               COALESCE(p.correo_electronico, p.correo_electronico_opcional) AS correo,
@@ -3732,6 +4040,25 @@ router.get(
                     WHERE e.id_personas = p.id OR e.numero_documento = p.numero_identificacion
                   )
                   UNION
+                  SELECT 'COLABORADOR'
+                  WHERE EXISTS (
+                    SELECT 1 FROM sat.docentes d
+                    WHERE d.activo = true
+                      AND (d.id_personas = p.id
+                           OR d.numero_documento = p.numero_identificacion)
+                  ) OR EXISTS (
+                    SELECT 1
+                    FROM sat.usuarios u
+                    JOIN sat.usuarios_roles ur ON ur.id_usuarios = u.id_usuarios
+                    JOIN sat.roles r ON r.id_roles = ur.id_roles
+                    WHERE (u.id_personas = p.id
+                           OR u.numero_documento = p.numero_identificacion)
+                      AND u.activo = true
+                      AND u.eliminado_en IS NULL
+                      AND r.activo = true
+                      AND UPPER(BTRIM(r.nombre)) IN ('DOCENTE', 'DOCENTE_PERMANENCIA')
+                  )
+                  UNION
                   SELECT 'ADMINISTRATIVO'
                   WHERE EXISTS (
                     SELECT 1
@@ -3748,8 +4075,29 @@ router.get(
                       )
                   )
                 ) roles
-                ORDER BY roles.rol
+                ORDER BY CASE roles.rol
+                  WHEN 'COLABORADOR' THEN 0
+                  WHEN 'ADMINISTRATIVO' THEN 1
+                  WHEN 'ESTUDIANTE' THEN 2
+                  WHEN 'EGRESADO' THEN 3
+                  WHEN 'EXTERNO' THEN 4
+                  ELSE 5
+                END
               ) AS roles,
+              ARRAY(
+                SELECT DISTINCT BTRIM(rol_institucional.nombre)
+                FROM sat.usuarios usuario_institucional
+                JOIN sat.usuarios_roles usuario_rol_institucional
+                  ON usuario_rol_institucional.id_usuarios = usuario_institucional.id_usuarios
+                JOIN sat.roles rol_institucional
+                  ON rol_institucional.id_roles = usuario_rol_institucional.id_roles
+                WHERE (usuario_institucional.id_personas = p.id
+                       OR usuario_institucional.numero_documento = p.numero_identificacion)
+                  AND usuario_institucional.activo = true
+                  AND usuario_institucional.eliminado_en IS NULL
+                  AND rol_institucional.activo = true
+                ORDER BY BTRIM(rol_institucional.nombre)
+              ) AS "rolesInstitucionales",
               EXISTS (
                 SELECT 1
                 FROM sat.estudiantes e
@@ -3807,6 +4155,19 @@ router.get(
                WHERE all_profiles.id_personas = p.id) AS "totalInscripcionesPersona"
        FROM sat.participantes_vec pv
        JOIN sat.personas p ON p.id = pv.id_personas
+       LEFT JOIN LATERAL (
+         SELECT d.id_docentes, d.id_usuarios, d.codigo_externo,
+                d.tipo_vinculo, d.id_programas_academicos
+         FROM sat.docentes d
+         WHERE d.activo = true
+           AND (d.id_personas = p.id
+                OR (p.numero_identificacion IS NOT NULL
+                    AND d.numero_documento = p.numero_identificacion))
+         ORDER BY (d.id_personas = p.id) DESC, d.id_docentes
+         LIMIT 1
+       ) docente ON true
+       LEFT JOIN sat.programas_academicos programa_docente
+         ON programa_docente.id_programas_academicos = docente.id_programas_academicos
        WHERE pv.tipo_participante = $1
          AND ($2::text = ''
               OR p.numero_identificacion ILIKE '%' || $2 || '%'
@@ -3839,7 +4200,7 @@ router.post(
     if (!["EGRESADO", "COLABORADOR", "EXTERNO", "ADMINISTRATIVO"].includes(rol)) {
       return res
         .status(400)
-        .json({ error: "Selecciona Egresado, Colaborador, Administrativo o Externo." });
+        .json({ error: "Selecciona Egresado, Docente, Administrativo o Externo." });
     }
     if (req.body?.confirmarRolAdicional !== true) {
       return res.status(400).json({
@@ -3940,7 +4301,7 @@ router.post(
       return res.json({
         agregado: true,
         idPerfil: perfil.idParticipante,
-        roles: [...new Set([...roles, rol])].sort(),
+        roles: priorizarRoles([...roles, rol]),
         mensaje: `Se agregó el rol ${DETALLE_ROL_PARTICIPANTE[rol]}. Los roles anteriores se conservaron.`,
       });
     } catch (err) {
@@ -4658,7 +5019,7 @@ router.post(
     if (!["EGRESADO", "COLABORADOR", "EXTERNO", "ADMINISTRATIVO"].includes(participante.tipo)) {
       return res.status(400).json({
         error:
-          "Solo puedes crear perfiles no encontrados como Egresado, Colaborador, Administrativo o Externo. Los estudiantes deben existir en la base institucional.",
+          "Solo puedes crear perfiles no encontrados como Egresado, Docente, Administrativo o Externo. Los estudiantes deben existir en la base institucional.",
       });
     }
     if (!TIPOS_DOCUMENTO_PARTICIPANTE.has(participante.tipoDocumento)) {
@@ -5007,6 +5368,11 @@ router.post("/registro-actividad", (req, res, next) =>
 );
 
 export async function crearActividadTransaccion(client, activity, userId) {
+  if (!String(activity?.nombreActividad ?? "").trim()) {
+    throw Object.assign(new Error("El nombre de la actividad es obligatorio."), {
+      status: 400,
+    });
+  }
   const catalog = await obtenerCatalogoActividadManual(client, activity);
   return insertarActividadTransaccion(client, activity, catalog, userId);
 }
@@ -5040,9 +5406,9 @@ async function insertarActividadTransaccion(client, activity, catalog, userId) {
       activity.fechaInicio,
       activity.fechaFinalizacion,
       catalog.idProgramaBienestar,
-      catalog.estrategiaBienestar || activity.estrategiaBienestar,
-      catalog.estrategiaPermanencia || activity.estrategiaPermanencia,
-      catalog.estrategiaInclusiva || activity.estrategiaInclusiva,
+      activity.estrategiaBienestar || catalog.estrategiaBienestar,
+      activity.estrategiaPermanencia || catalog.estrategiaPermanencia,
+      activity.estrategiaInclusiva || catalog.estrategiaInclusiva,
       activity.ubicacion,
       activity.subdivisionProgramas,
     ],
@@ -5292,7 +5658,12 @@ function completarCatalogoManual(catalog, bienestar, activity = {}) {
   };
 }
 
-async function guardarPerfilDeActividad(client, participante) {
+async function guardarPerfilDeActividad(
+  client,
+  participante,
+  { reutilizarRolExistente = false } = {},
+) {
+  participante.tipo = normalizarTipoParticipante(participante.tipo);
   await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
     participante.identificacion,
   ]);
@@ -5323,8 +5694,8 @@ async function guardarPerfilDeActividad(client, participante) {
         participante.fechaNacimiento,
         participante.correo,
         participante.correoInstitucional,
-        participante.celular,
-        participante.telefono,
+        normalizarTelefonoPersona(participante.celular),
+        normalizarTelefonoPersona(participante.telefono),
         participante.direccion,
       ],
     );
@@ -5374,8 +5745,8 @@ async function guardarPerfilDeActividad(client, participante) {
       participante.fechaNacimiento,
       participante.correo,
       participante.correoInstitucional,
-      participante.celular,
-      participante.telefono,
+      normalizarTelefonoPersona(participante.celular),
+      normalizarTelefonoPersona(participante.telefono),
       participante.direccion,
     ],
   );
@@ -5385,6 +5756,79 @@ async function guardarPerfilDeActividad(client, participante) {
     persona.id,
     participante.identificacion,
   );
+  const { rows: perfilesExistentes } = await client.query(
+    `SELECT id_participantes_vec AS id, tipo_participante AS rol
+     FROM sat.participantes_vec
+     WHERE id_personas = $1`,
+    [persona.id],
+  );
+  const perfilMismoRol = perfilesExistentes.find(
+    ({ rol }) => normalizarTipoParticipante(rol) === participante.tipo,
+  );
+  if (perfilMismoRol) {
+    return {
+      idPersona: persona.id,
+      idParticipante: perfilMismoRol.id,
+      personaNueva,
+      rolesVerificados,
+      tipoParticipante: normalizarTipoParticipante(perfilMismoRol.rol),
+    };
+  }
+
+  const rolesExistentes = priorizarRoles([
+    ...rolesVerificados,
+    ...perfilesExistentes.map(({ rol }) => rol),
+  ]);
+  const conflictoExterno =
+    (participante.tipo === "EXTERNO" &&
+      rolesExistentes.some((rol) => rol !== "EXTERNO")) ||
+    (participante.tipo !== "EXTERNO" && rolesExistentes.includes("EXTERNO"));
+  let conflictoResuelto = false;
+  if (conflictoExterno && reutilizarRolExistente) {
+    const rolesPerfilesExistentes = priorizarRoles(
+      perfilesExistentes.map(({ rol }) => rol),
+    );
+    const rolExistente =
+      rolesPerfilesExistentes.find((rol) => rol !== "EXTERNO") ||
+      rolesPerfilesExistentes[0] ||
+      rolesExistentes.find((rol) => rol !== "EXTERNO") ||
+      rolesExistentes[0];
+    if (rolExistente) {
+      const perfilExistente = perfilesExistentes.find(
+        ({ rol }) => normalizarTipoParticipante(rol) === rolExistente,
+      );
+      if (perfilExistente) {
+        return {
+          idPersona: persona.id,
+          idParticipante: perfilExistente.id,
+          personaNueva,
+          rolesVerificados,
+          tipoParticipante: rolExistente,
+        };
+      }
+      participante.tipo = rolExistente;
+      conflictoResuelto = true;
+      participante.detalleTipoParticipante =
+        DETALLE_ROL_PARTICIPANTE[rolExistente] ||
+        participante.detalleTipoParticipante;
+    }
+  }
+  if (conflictoExterno && reutilizarRolExistente && !conflictoResuelto) {
+    throw Object.assign(
+      new Error(
+        "No se pudo resolver un rol compatible para esta persona. Revisa los roles registrados antes de importar.",
+      ),
+      { status: 409 },
+    );
+  }
+  if (conflictoExterno && !reutilizarRolExistente) {
+    throw Object.assign(
+      new Error(
+        "El rol Externo es exclusivo y no se puede combinar con otros roles. Revisa los roles registrados para esta persona.",
+      ),
+      { status: 409 },
+    );
+  }
 
   // Reutilizar el perfil existente y completar los datos aportados sin reemplazar
   // información institucional ya registrada.
@@ -5438,6 +5882,7 @@ async function guardarPerfilDeActividad(client, participante) {
     idParticipante: profiles[0].id,
     personaNueva,
     rolesVerificados,
+    tipoParticipante: participante.tipo,
   };
 }
 
@@ -5725,7 +6170,7 @@ async function registrarActividad(req, res, next, tipoForzado = null) {
       ) {
         throw Object.assign(
           new Error(
-            "No se puede crear un estudiante desde este registro. Debe existir en la base institucional; para personas no encontradas elige Egresado, Colaborador o Externo.",
+            "No se puede crear un estudiante desde este registro. Debe existir en la base institucional; para personas no encontradas elige Egresado, Docente o Externo.",
           ),
           { status: 409 },
         );
@@ -6041,7 +6486,7 @@ router.post("/", async (req, res, next) => {
       await client.query("ROLLBACK");
       return res.status(409).json({
         error:
-          "No se puede crear un perfil de estudiante si no existe en la base institucional. Para personas no encontradas, usa Egresado, Colaborador o Externo.",
+          "No se puede crear un perfil de estudiante si no existe en la base institucional. Para personas no encontradas, usa Egresado, Docente o Externo.",
       });
     }
 
@@ -6090,6 +6535,11 @@ router.post("/", async (req, res, next) => {
     }
     await vincularFuentesExistentes(client, persona.id, payload.identificacion);
 
+    const rolesVerificados = await obtenerRolesVerificados(
+      client,
+      persona.id,
+      payload.identificacion,
+    );
     const { rows: existente } = await client.query(
       `SELECT id_participantes_vec
        FROM sat.participantes_vec
@@ -6398,7 +6848,7 @@ async function obtenerRolesParticipante(db, idPersona, identificacion) {
     [idPersona || null, identificacion],
   );
   rows.forEach((row) => roles.add(row.rol));
-  return [...roles].sort();
+  return priorizarRoles([...roles]);
 }
 
 /** Roles institucionales comprobados directamente en las fuentes del SAT. */
@@ -6446,6 +6896,27 @@ async function obtenerRolesVerificados(db, idPersona, identificacion) {
          AND UPPER(BTRIM(d.tipo_vinculo)) IN (
            'ADMINISTRATIVO', 'ADMINISTRATIVA'
          )
+     )
+     UNION
+     SELECT 'COLABORADOR' AS rol
+     WHERE EXISTS (
+       SELECT 1
+       FROM sat.docentes d
+       WHERE d.activo = true
+         AND (($1::bigint IS NOT NULL AND d.id_personas = $1::bigint)
+              OR d.numero_documento = $2)
+     )
+     OR EXISTS (
+       SELECT 1
+       FROM sat.usuarios u
+       JOIN sat.usuarios_roles ur ON ur.id_usuarios = u.id_usuarios
+       JOIN sat.roles r ON r.id_roles = ur.id_roles
+       WHERE (($1::bigint IS NOT NULL AND u.id_personas = $1::bigint)
+              OR u.numero_documento = $2)
+         AND u.activo = true
+         AND u.eliminado_en IS NULL
+         AND r.activo = true
+         AND UPPER(BTRIM(r.nombre)) IN ('DOCENTE', 'DOCENTE_PERMANENCIA')
      )
      UNION
      SELECT 'COLABORADOR' AS rol
@@ -6510,6 +6981,24 @@ async function obtenerRolesVerificados(db, idPersona, identificacion) {
      )
      )
      ORDER BY rol`,
+    [idPersona || null, identificacion],
+  );
+  return priorizarRoles(rows.map((row) => row.rol));
+}
+
+async function obtenerRolesInstitucionales(db, idPersona, identificacion) {
+  const ejecutarQuery = typeof db === "function" ? db : db.query.bind(db);
+  const { rows } = await ejecutarQuery(
+    `SELECT DISTINCT BTRIM(r.nombre) AS rol
+     FROM sat.usuarios u
+     JOIN sat.usuarios_roles ur ON ur.id_usuarios = u.id_usuarios
+     JOIN sat.roles r ON r.id_roles = ur.id_roles
+     WHERE (($1::bigint IS NOT NULL AND u.id_personas = $1::bigint)
+            OR u.numero_documento = $2)
+       AND u.activo = true
+       AND u.eliminado_en IS NULL
+       AND r.activo = true
+     ORDER BY BTRIM(r.nombre)`,
     [idPersona || null, identificacion],
   );
   return rows.map((row) => row.rol);
@@ -6863,6 +7352,17 @@ function normalizarGeneroPersona(genero) {
   );
 }
 
+function normalizarTelefonoPersona(telefono) {
+  const digits = String(telefono ?? "").replace(/\D/g, "");
+  const nacional =
+    digits.length === 12 && digits.startsWith("57")
+      ? digits.slice(2)
+      : digits.length === 14 && digits.startsWith("0057")
+        ? digits.slice(4)
+        : digits;
+  return nacional.length >= 7 && nacional.length <= 10 ? nacional : null;
+}
+
 function normalizarPayloadImportacion(body = {}) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return { error: "El contenido del archivo no tiene un formato válido." };
@@ -6878,11 +7378,10 @@ function normalizarPayloadImportacion(body = {}) {
   }
   if (
     !Array.isArray(body.registrations) ||
-    !body.registrations.length ||
     body.registrations.length > 5000
   ) {
     return {
-      error: "El archivo debe contener entre 1 y 5.000 filas de participantes.",
+      error: "El archivo no puede superar las 5.000 filas de participantes.",
     };
   }
 
@@ -6896,6 +7395,7 @@ function normalizarPayloadImportacion(body = {}) {
     wellbeing: clean(activity?.wellbeing),
     description: clean(activity?.description),
     activityType: clean(activity?.activityType),
+    activityTypeOther: clean(activity?.activityTypeOther),
     alliance:
       activity?.alliance === true || activity?.alliance === false
         ? activity.alliance
@@ -6903,14 +7403,19 @@ function normalizarPayloadImportacion(body = {}) {
     allianceEntity: clean(activity?.allianceEntity),
     articulation: clean(activity?.articulation),
     dependency: clean(activity?.dependency),
+    dependencyOther: clean(activity?.dependencyOther),
     modality: clean(activity?.modality),
     component: clean(activity?.component),
     actionLine: clean(activity?.actionLine),
     strategyWellbeing: clean(activity?.strategyWellbeing),
     strategyRetention: clean(activity?.strategyRetention),
     strategyInclusive: clean(activity?.strategyInclusive),
+    digitadorResponsable: clean(activity?.digitadorResponsable),
     conflicts: Array.isArray(activity?.conflicts)
       ? [...new Set(activity.conflicts.map(clean))]
+      : [],
+    warnings: Array.isArray(activity?.warnings)
+      ? [...new Set(activity.warnings.map(clean))]
       : [],
   }));
   const registrations = body.registrations.map((row, index) => {
@@ -6929,11 +7434,31 @@ function normalizarPayloadImportacion(body = {}) {
       identifier: clean(row?.identifier),
       codigo: clean(row?.codigo),
       correo: clean(row?.correo).toLowerCase(),
-      role: clean(row?.role).toUpperCase(),
+      role: normalizarTipoParticipante(clean(row?.role).toUpperCase()),
       supportNumber,
       supportNumberInvalid: supportProvided && supportNumber == null,
       supportLabel: clean(row?.supportLabel),
+      supportOther: clean(row?.supportOther),
       programaModalidad: clean(row?.programaModalidad),
+      tipoDocumento: clean(row?.tipoDocumento),
+      nombres: clean(row?.nombres),
+      apellidos: clean(row?.apellidos),
+      programaAcademico: clean(row?.programaAcademico),
+      programaPosgradoDependencia: clean(row?.programaPosgradoDependencia),
+      semestre:
+        Number.isInteger(Number(row?.semestre)) &&
+        Number(row?.semestre) > 0 &&
+        Number(row?.semestre) <= 32767
+          ? Number(row.semestre)
+          : null,
+      jornada: clean(row?.jornada),
+      dependencia: clean(row?.dependencia),
+      genero: clean(row?.genero),
+      celular: clean(row?.celular),
+      etnia: clean(row?.etnia),
+      municipio: clean(row?.municipio),
+      conflictoArmado: clean(row?.conflictoArmado),
+      discapacidad: clean(row?.discapacidad),
     };
   });
   const fieldLimits = [
@@ -6945,15 +7470,18 @@ function normalizarPayloadImportacion(body = {}) {
     ["wellbeing", 250],
     ["description", 5000],
     ["activityType", 150],
+    ["activityTypeOther", 1000],
     ["allianceEntity", 250],
     ["articulation", 250],
     ["dependency", 250],
+    ["dependencyOther", 250],
     ["modality", 100],
     ["component", 150],
     ["actionLine", 150],
     ["strategyWellbeing", 1000],
     ["strategyRetention", 1000],
     ["strategyInclusive", 1000],
+    ["digitadorResponsable", 250],
   ];
   if (
     activities.some((activity) =>
@@ -6968,7 +7496,22 @@ function normalizarPayloadImportacion(body = {}) {
   if (
     registrations.some(
       (row) =>
-        row.supportLabel.length > 250 || row.programaModalidad.length > 250,
+        row.supportLabel.length > 250 ||
+        row.supportOther.length > 250 ||
+        row.programaModalidad.length > 250 ||
+        row.tipoDocumento.length > 50 ||
+        row.nombres.length > 150 ||
+        row.apellidos.length > 150 ||
+        row.programaAcademico.length > 250 ||
+        row.programaPosgradoDependencia.length > 250 ||
+        row.jornada.length > 100 ||
+        row.dependencia.length > 250 ||
+        row.genero.length > 50 ||
+        row.celular.length > 50 ||
+        row.etnia.length > 150 ||
+        row.municipio.length > 150 ||
+        row.conflictoArmado.length > 500 ||
+        row.discapacidad.length > 500,
     )
   ) {
     return {
@@ -6998,7 +7541,7 @@ function normalizarPayloadImportacion(body = {}) {
   return {
     activities,
     registrations,
-    crearProgramas: body.crearProgramas === true,
+    crearProgramas: body.crearProgramas !== false,
     activarProgramas: body.activarProgramas !== false,
   };
 }
@@ -7047,6 +7590,121 @@ function definirPeriodoHistorico(start, end) {
   };
 }
 
+async function crearPeriodosHistoricos(client, activities) {
+  const { rows: periods } = await client.query(
+    `SELECT nombre, fecha_inicio::date AS "fechaInicio",
+            fecha_fin::date AS "fechaFin"
+     FROM sat.periodos_academicos`,
+  );
+  const periodKeys = new Set(
+    periods.map((period) => normalizarClaveImportacion(period.nombre)),
+  );
+  const flexiblePeriodKeys = new Set(
+    periods.map((period) => normalizarPeriodoImportacion(period.nombre)),
+  );
+
+  for (const activity of activities) {
+    const periodKey = normalizarPeriodoImportacion(activity.period);
+    const existsByName =
+      periodKeys.has(normalizarClaveImportacion(activity.period)) ||
+      flexiblePeriodKeys.has(periodKey);
+    const existsByDates = periods.some((period) => {
+      if (!activity.start || !activity.end || !period.fechaInicio || !period.fechaFin) {
+        return false;
+      }
+      return (
+        activity.start >= String(period.fechaInicio).slice(0, 10) &&
+        activity.end <= String(period.fechaFin).slice(0, 10)
+      );
+    });
+    if (existsByName || existsByDates) continue;
+
+    const period = definirPeriodoHistorico(activity.start, activity.end);
+    if (!period) continue;
+    const { rows: createdRows } = await client.query(
+      `INSERT INTO sat.periodos_academicos
+         (nombre, fecha_inicio, fecha_fin, activo)
+       VALUES ($1, $2::date, $3::date, true)
+       ON CONFLICT (nombre) DO UPDATE SET
+         fecha_inicio = COALESCE(sat.periodos_academicos.fecha_inicio, EXCLUDED.fecha_inicio),
+         fecha_fin = COALESCE(sat.periodos_academicos.fecha_fin, EXCLUDED.fecha_fin),
+         activo = true
+       RETURNING id_periodos_academicos AS id, nombre,
+                 fecha_inicio::date AS "fechaInicio",
+                 fecha_fin::date AS "fechaFin"`,
+      [period.name, period.start, period.end],
+    );
+    const created = createdRows[0];
+    if (!created) continue;
+    periods.push(created);
+    periodKeys.add(normalizarClaveImportacion(created.nombre));
+    flexiblePeriodKeys.add(normalizarPeriodoImportacion(created.nombre));
+  }
+}
+
+async function crearProgramasHistoricos(client, input, activityIndexes) {
+  for (const [index, source] of input.activities.entries()) {
+    if (!activityIndexes.has(index)) continue;
+    if (!source.wellbeing) continue;
+    const supportNumber = input.registrations.find(
+      (row) => row.activityIndex === index && row.supportNumber,
+    )?.supportNumber || null;
+    await client.query(
+      `WITH linea AS (
+         INSERT INTO sat.lineas_accion (nombre)
+         VALUES ($1)
+         ON CONFLICT (nombre) DO UPDATE SET activo = true
+         RETURNING id_lineas_accion
+       ), componente AS (
+         INSERT INTO sat.componentes_bienestar (nombre, id_lineas_accion)
+         SELECT $2, id_lineas_accion FROM linea
+         ON CONFLICT (nombre) DO UPDATE SET activo = true
+         RETURNING id_componentes_bienestar
+       )
+       INSERT INTO sat.programas_bienestar (nombre, id_componentes_bienestar)
+       SELECT $3, id_componentes_bienestar FROM componente
+       ON CONFLICT (nombre) DO UPDATE SET activo = true`,
+      [
+        source.actionLine || "Actividades realizadas",
+        source.component || "Programas importados de actividades realizadas",
+        source.wellbeing,
+      ],
+    );
+    await client.query(
+      `INSERT INTO sat.catalogo_bienestar_actividades
+         (programa, componente, linea_accion, numero_tipo_apoyo,
+          tipo_apoyo_excel, orden_excel)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (programa) DO UPDATE SET
+         componente = COALESCE(NULLIF(sat.catalogo_bienestar_actividades.componente, ''), EXCLUDED.componente),
+         linea_accion = COALESCE(NULLIF(sat.catalogo_bienestar_actividades.linea_accion, ''), EXCLUDED.linea_accion),
+         numero_tipo_apoyo = COALESCE(sat.catalogo_bienestar_actividades.numero_tipo_apoyo, EXCLUDED.numero_tipo_apoyo),
+         tipo_apoyo_excel = COALESCE(sat.catalogo_bienestar_actividades.tipo_apoyo_excel, EXCLUDED.tipo_apoyo_excel)`,
+      [
+        source.wellbeing,
+        source.component || "Programas importados de actividades realizadas",
+        source.actionLine || "Actividades realizadas",
+        supportNumber,
+        supportNumber ? `Apoyo ${supportNumber}` : null,
+        index + 1,
+      ],
+    );
+  }
+}
+
+async function activarProgramasHistoricos(client, activities) {
+  const programNames = [
+    ...new Set(activities.map((source) => source.wellbeing).filter(Boolean)),
+  ];
+  if (!programNames.length) return;
+  await client.query(
+    `UPDATE sat.programas_bienestar
+        SET activo = true
+      WHERE nombre = ANY($1::text[])`,
+    [programNames],
+  );
+}
+
 function similitudTextoImportacion(left, right) {
   const a = normalizarClaveImportacion(left);
   const b = normalizarClaveImportacion(right);
@@ -7066,6 +7724,36 @@ function normalizarProgramaImportacion(value) {
   );
 }
 
+function completarProyectosImportacion(activities) {
+  for (const activity of activities) {
+    if (activity.project) continue;
+    const candidates = new Map();
+    for (const candidate of activities) {
+      if (
+        candidate === activity ||
+        !candidate.project ||
+        normalizarPeriodoImportacion(candidate.period) !==
+          normalizarPeriodoImportacion(activity.period) ||
+        normalizarClaveImportacion(candidate.activity) !==
+          normalizarClaveImportacion(activity.activity) ||
+        candidate.start !== activity.start ||
+        candidate.end !== activity.end ||
+        normalizarProgramaImportacion(candidate.wellbeing) !==
+          normalizarProgramaImportacion(activity.wellbeing)
+      ) {
+        continue;
+      }
+      candidates.set(
+        normalizarClaveImportacion(candidate.project),
+        candidate.project,
+      );
+    }
+    if (candidates.size === 1) {
+      activity.project = candidates.values().next().value;
+    }
+  }
+}
+
 function esFechaISOValida(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value || "")) return false;
   const date = new Date(`${value}T00:00:00.000Z`);
@@ -7075,13 +7763,12 @@ function esFechaISOValida(value) {
 }
 
 async function prepararImportacionActividades(client, input) {
+  completarProyectosImportacion(input.activities);
   const [
     periodRows,
     supportRows,
     dependencyRows,
     profileRows,
-    studentRows,
-    administrativeRows,
     wellbeingRows,
   ] =
     await Promise.all([
@@ -7131,83 +7818,6 @@ async function prepararImportacionActividades(client, input) {
         ],
       ),
       client.query(
-        `SELECT e.id_estudiantes AS "idEstudiante",
-                e.id_personas AS "idPersona",
-                COALESCE(p.numero_identificacion, e.numero_documento) AS identifier,
-                COALESCE(m.codigo_externo, e.codigo_externo) AS codigo,
-                LOWER(COALESCE(e.correo_institucional, e.correo_personal,
-                  p.correo_institucional, p.correo_electronico, '')) AS correo,
-                COALESCE(p.primer_nombre, e.nombres) AS nombres,
-                COALESCE(
-                  CONCAT_WS(' ', p.primer_apellido, p.segundo_apellido),
-                  e.apellidos
-                ) AS apellidos,
-                e.tipo_documento AS "tipoDocumento",
-                COALESCE(m.semestre, e.semestre_actual) AS semestre,
-                m.jornada AS jornada,
-                pv.id_participantes_vec AS "idParticipante"
-         FROM sat.estudiantes e
-         LEFT JOIN sat.personas p
-           ON p.id = e.id_personas OR p.numero_identificacion = e.numero_documento
-         LEFT JOIN LATERAL (
-           SELECT m.codigo_externo, m.semestre, m.jornada
-           FROM sat.matriculas m
-           WHERE m.id_estudiantes = e.id_estudiantes
-           ORDER BY m.id_matriculas DESC NULLS LAST
-           LIMIT 1
-         ) m ON true
-         LEFT JOIN sat.participantes_vec pv
-           ON pv.id_personas = COALESCE(e.id_personas, p.id)
-          AND pv.tipo_participante = 'ESTUDIANTE'
-         WHERE e.numero_documento = ANY($1::text[])
-            OR e.codigo_externo = ANY($2::text[])
-            OR m.codigo_externo = ANY($2::text[])
-            OR LOWER(COALESCE(e.correo_institucional, e.correo_personal,
-              p.correo_institucional, p.correo_electronico, '')) = ANY($3::text[])`,
-        [
-          [...new Set(input.registrations.map((row) => row.identifier).filter(Boolean))],
-          [...new Set(input.registrations.map((row) => row.codigo).filter(Boolean))],
-          [...new Set(input.registrations.map((row) => row.correo).filter(Boolean))],
-        ],
-      ),
-      client.query(
-        `SELECT pv.id_participantes_vec AS id,
-                COALESCE(u.id_personas, p.id) AS "idPersona",
-                'ADMINISTRATIVO'::text AS role,
-                COALESCE(p.numero_identificacion, u.numero_documento) AS identifier,
-                NULL::text AS codigo,
-                LOWER(COALESCE(p.correo_institucional, p.correo_electronico,
-                  u.correo_institucional, '')) AS correo,
-                COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre)), ''),
-                  u.nombres, '') AS nombres,
-                COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', p.primer_apellido, p.segundo_apellido)), ''),
-                  u.apellidos, '') AS apellidos,
-                COALESCE(p.cargo, pv.cargo) AS cargo
-         FROM sat.usuarios u
-         JOIN sat.usuarios_roles ur ON ur.id_usuarios = u.id_usuarios
-         JOIN sat.roles r ON r.id_roles = ur.id_roles
-         LEFT JOIN sat.personas p
-           ON p.id = u.id_personas OR p.numero_identificacion = u.numero_documento
-         LEFT JOIN sat.participantes_vec pv
-           ON pv.id_personas = COALESCE(u.id_personas, p.id)
-          AND pv.tipo_participante = 'ADMINISTRATIVO'
-         WHERE u.activo = true AND u.eliminado_en IS NULL
-           AND r.activo = true
-           AND UPPER(BTRIM(r.nombre)) IN (
-             'ADMIN', 'ADMINISTRADOR', 'ADMINISTRADORA',
-             'ADMINISTRATIVO', 'ADMINISTRATIVA'
-           )
-           AND (
-             COALESCE(p.numero_identificacion, u.numero_documento) = ANY($1::text[])
-             OR LOWER(COALESCE(p.correo_institucional, p.correo_electronico,
-               u.correo_institucional, '')) = ANY($2::text[])
-           )`,
-        [
-          [...new Set(input.registrations.map((row) => row.identifier).filter(Boolean))],
-          [...new Set(input.registrations.map((row) => row.correo).filter(Boolean))],
-        ],
-      ),
-      client.query(
         `SELECT nombre
        FROM sat.programas_bienestar`,
       ),
@@ -7225,112 +7835,13 @@ async function prepararImportacionActividades(client, input) {
     if (!periodsByFlexibleKey.has(key)) periodsByFlexibleKey.set(key, []);
     periodsByFlexibleKey.get(key).push(period);
   }
-  for (const source of input.activities) {
-    const periodKey = normalizarPeriodoImportacion(source.period);
-    const hasPeriodByName =
-      periodsByKey.has(normalizarClaveImportacion(source.period)) ||
-      periodsByFlexibleKey.has(periodKey);
-    const hasPeriodByDates = periodRows.rows.some((period) => {
-      if (!source.start || !source.end || !period.fechaInicio || !period.fechaFin) {
-        return false;
-      }
-      return (
-        source.start >= String(period.fechaInicio).slice(0, 10) &&
-        source.end <= String(period.fechaFin).slice(0, 10)
-      );
-    });
-    if (hasPeriodByName || hasPeriodByDates) continue;
-
-    const period = definirPeriodoHistorico(source.start, source.end);
-    if (!period) continue;
-    const { rows } = await client.query(
-      `INSERT INTO sat.periodos_academicos
-         (nombre, fecha_inicio, fecha_fin, activo)
-       VALUES ($1, $2::date, $3::date, true)
-       ON CONFLICT (nombre) DO UPDATE SET
-         fecha_inicio = COALESCE(sat.periodos_academicos.fecha_inicio, EXCLUDED.fecha_inicio),
-         fecha_fin = COALESCE(sat.periodos_academicos.fecha_fin, EXCLUDED.fecha_fin),
-         activo = true
-       RETURNING id_periodos_academicos AS id, nombre,
-                 fecha_inicio::date AS "fechaInicio",
-                 fecha_fin::date AS "fechaFin"`,
-      [period.name, period.start, period.end],
-    );
-    const created = rows[0];
-    if (!created) continue;
-    periodRows.rows.push(created);
-    const exactKey = normalizarClaveImportacion(created.nombre);
-    if (!periodsByKey.has(exactKey)) periodsByKey.set(exactKey, []);
-    periodsByKey.get(exactKey).push(created);
-    const flexibleKey = normalizarPeriodoImportacion(created.nombre);
-    if (!periodsByFlexibleKey.has(flexibleKey)) {
-      periodsByFlexibleKey.set(flexibleKey, []);
-    }
-    periodsByFlexibleKey.get(flexibleKey).push(created);
-  }
-  if (input.crearProgramas) {
-    for (const [index, source] of input.activities.entries()) {
-      if (!source.wellbeing) continue;
-      const supportNumber = input.registrations.find(
-        (row) => row.activityIndex === index && row.supportNumber,
-      )?.supportNumber || null;
-      await client.query(
-        `WITH linea AS (
-           INSERT INTO sat.lineas_accion (nombre)
-           VALUES ($1)
-           ON CONFLICT (nombre) DO UPDATE SET activo = true
-           RETURNING id_lineas_accion
-         ), componente AS (
-           INSERT INTO sat.componentes_bienestar (nombre, id_lineas_accion)
-           SELECT $2, id_lineas_accion FROM linea
-           ON CONFLICT (nombre) DO UPDATE SET activo = true
-           RETURNING id_componentes_bienestar
-         )
-         INSERT INTO sat.programas_bienestar (nombre, id_componentes_bienestar)
-         SELECT $3, id_componentes_bienestar FROM componente
-         ON CONFLICT (nombre) DO UPDATE SET activo = true`,
-        [
-          source.actionLine || "Actividades realizadas",
-          source.component || "Programas importados de actividades realizadas",
-          source.wellbeing,
-        ],
-      );
-      await client.query(
-        `INSERT INTO sat.catalogo_bienestar_actividades
-           (programa, componente, linea_accion, numero_tipo_apoyo,
-            tipo_apoyo_excel, orden_excel)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (programa) DO UPDATE SET
-           componente = COALESCE(NULLIF(sat.catalogo_bienestar_actividades.componente, ''), EXCLUDED.componente),
-           linea_accion = COALESCE(NULLIF(sat.catalogo_bienestar_actividades.linea_accion, ''), EXCLUDED.linea_accion),
-           numero_tipo_apoyo = COALESCE(sat.catalogo_bienestar_actividades.numero_tipo_apoyo, EXCLUDED.numero_tipo_apoyo),
-           tipo_apoyo_excel = COALESCE(sat.catalogo_bienestar_actividades.tipo_apoyo_excel, EXCLUDED.tipo_apoyo_excel)`,
-        [
-          source.wellbeing,
-          source.component || "Programas importados de actividades realizadas",
-          source.actionLine || "Actividades realizadas",
-          supportNumber,
-          supportNumber ? `Apoyo ${supportNumber}` : null,
-          index + 1,
-        ],
-      );
-    }
-  }
-  if (input.activarProgramas) {
-    const programNames = [
-      ...new Set(input.activities.map((source) => source.wellbeing).filter(Boolean)),
-    ];
-    if (programNames.length) {
-      await client.query(
-        `UPDATE sat.programas_bienestar
-            SET activo = true
-          WHERE nombre = ANY($1::text[])`,
-        [programNames],
-      );
-    }
-  }
   const supportsByNumber = new Map(
     supportRows.rows.map((row) => [Number(row.numero), row]),
+  );
+  const supportNameKey = (value) =>
+    normalizarClaveImportacion(value).replace(/^APOYO\d*/, "");
+  const supportsByName = new Map(
+    supportRows.rows.map((row) => [supportNameKey(row.nombre), row]),
   );
   const dependenciesByKey = new Map(
     dependencyRows.rows.map((row) => [
@@ -7344,39 +7855,40 @@ async function prepararImportacionActividades(client, input) {
       row.nombre,
     ]),
   );
-  const profilesByKey = new Map(
-    profileRows.rows.flatMap((row) => [
-      row.identifier ? [`${normalizarClaveImportacion(row.identifier)}\u001f${row.role}`, row] : null,
-      row.codigo ? [`${normalizarClaveImportacion(row.codigo)}\u001f${row.role}`, row] : null,
-      row.correo ? [`${normalizarClaveImportacion(row.correo)}\u001f${row.role}`, row] : null,
-    ].filter(Boolean)),
+  const wellbeingNamesByProgramKey = new Map(
+    wellbeingRows.rows.map((row) => [
+      normalizarProgramaImportacion(row.nombre),
+      row.nombre,
+    ]),
   );
-  const administrativeByKey = new Map();
-  for (const row of administrativeRows.rows) {
-    for (const value of [row.identifier, row.correo]) {
-      if (value) {
-        administrativeByKey.set(
-          `${normalizarClaveImportacion(value)}\u001fADMINISTRATIVO`,
-          row,
-        );
+  const profilesByIdentity = new Map();
+  for (const profile of profileRows.rows) {
+    const normalizedProfile = {
+      ...profile,
+      role: normalizarTipoParticipante(profile.role),
+    };
+    for (const value of [
+      profile.identifier,
+      profile.codigo,
+      profile.correo,
+    ].filter(Boolean)) {
+      const key = normalizarClaveImportacion(value);
+      const matches = profilesByIdentity.get(key) || [];
+      if (!matches.some((match) => match.id === profile.id)) {
+        matches.push(normalizedProfile);
+        profilesByIdentity.set(key, matches);
       }
-    }
-  }
-  const studentsByKey = new Map();
-  for (const row of studentRows.rows) {
-    for (const value of [row.identifier, row.codigo, row.correo]) {
-      if (value) studentsByKey.set(
-        `${normalizarClaveImportacion(value)}\u001fESTUDIANTE`,
-        row,
-      );
     }
   }
   const programOptions = listarProgramasBienestar();
   const groups = input.activities.map((source, index) => {
     const messages = [];
+    const warnings = [...source.warnings];
+    const impliedPeriod = definirPeriodoHistorico(source.start, source.end);
+    const periodLabel = source.period || impliedPeriod?.name || "";
     if (source.conflicts.length)
       messages.push("Hay valores contradictorios entre filas del mismo grupo.");
-    if (!source.period) messages.push("Falta el periodo académico.");
+    if (!periodLabel) messages.push("Falta el periodo académico.");
     if (!source.activity) messages.push("Falta el nombre de la actividad.");
     if (!source.project) messages.push("Falta el proyecto.");
     if (!source.wellbeing) messages.push("Falta el programa de Bienestar.");
@@ -7387,8 +7899,8 @@ async function prepararImportacionActividades(client, input) {
     }
 
     const periodsByName =
-      periodsByKey.get(normalizarClaveImportacion(source.period)) ||
-      periodsByFlexibleKey.get(normalizarPeriodoImportacion(source.period)) ||
+      periodsByKey.get(normalizarClaveImportacion(periodLabel)) ||
+      periodsByFlexibleKey.get(normalizarPeriodoImportacion(periodLabel)) ||
       [];
     const matchingPeriodsByDates = periodRows.rows.filter((period) => {
       if (!source.start || !source.end || !period.fechaInicio || !period.fechaFin) {
@@ -7401,7 +7913,9 @@ async function prepararImportacionActividades(client, input) {
     const matchingPeriods = periodsByName.length
       ? periodsByName
       : matchingPeriodsByDates;
-    if (source.period && matchingPeriods.length !== 1) {
+    const plannedPeriod =
+      matchingPeriods.length === 0 && Boolean(impliedPeriod);
+    if (periodLabel && matchingPeriods.length !== 1 && !plannedPeriod) {
       messages.push(
         matchingPeriods.length
           ? "El periodo coincide con más de un registro del catálogo."
@@ -7414,19 +7928,22 @@ async function prepararImportacionActividades(client, input) {
         normalizarProgramaImportacion(option.programa) === programKey ||
         normalizarProgramaImportacion(option.programaCompleto) === programKey,
     );
-    let canonicalPrograms = [
+    const isProgramPlanned =
+      input.crearProgramas &&
+      !wellbeingNamesByProgramKey.has(programKey);
+    let canonicalPrograms = isProgramPlanned
+      ? [source.wellbeing]
+      : [
       ...new Map(
         matchingPrograms.map((option) => [
           normalizarClaveImportacion(option.programa),
           option.programa,
         ]),
       ).values(),
-    ];
-    if (!canonicalPrograms.length && source.wellbeing && input.crearProgramas) {
-      const createdProgram = wellbeingNamesByKey.get(
-        normalizarClaveImportacion(source.wellbeing),
-      );
-      if (createdProgram) canonicalPrograms = [createdProgram];
+      ];
+    if (!canonicalPrograms.length) {
+      const databaseProgram = wellbeingNamesByProgramKey.get(programKey);
+      if (databaseProgram) canonicalPrograms = [databaseProgram];
     }
     if (!canonicalPrograms.length && source.wellbeing) {
       const closest = programOptions
@@ -7444,10 +7961,14 @@ async function prepararImportacionActividades(client, input) {
           : "El programa de Bienestar no coincide con el catálogo.",
       );
     }
-    const matchedProgram =
-      canonicalPrograms.length === 1
+    const matchedProgram = isProgramPlanned
+      ? source.wellbeing
+      : canonicalPrograms.length === 1
         ? wellbeingNamesByKey.get(
             normalizarClaveImportacion(canonicalPrograms[0]),
+          ) ||
+          wellbeingNamesByProgramKey.get(
+            normalizarProgramaImportacion(canonicalPrograms[0]),
           )
         : null;
     if (canonicalPrograms.length === 1 && !matchedProgram) {
@@ -7458,12 +7979,13 @@ async function prepararImportacionActividades(client, input) {
     const programaBienestar = matchedProgram || canonicalPrograms[0] || "";
     const groupProgramOptions = programOptions.filter(
       (option) =>
-        normalizarClaveImportacion(option.programa) ===
-        normalizarClaveImportacion(programaBienestar),
+        normalizarProgramaImportacion(option.programa) ===
+        normalizarProgramaImportacion(programaBienestar),
     );
     const period = matchingPeriods.length === 1 ? matchingPeriods[0] : null;
-    const dependency = source.dependency
-      ? dependenciesByKey.get(normalizarClaveImportacion(source.dependency))
+    const dependencyName = source.dependencyOther || source.dependency;
+    const dependency = dependencyName
+      ? dependenciesByKey.get(normalizarClaveImportacion(dependencyName))
       : null;
     const activity = {
       idPeriodo: period?.id || null,
@@ -7473,11 +7995,12 @@ async function prepararImportacionActividades(client, input) {
       subdivisionProgramas: [],
       descripcion: source.description || null,
       tipoActividad: source.activityType || null,
+      tipoOtra: source.activityTypeOther || null,
       alianza: source.alliance,
       entidadAlianza: source.allianceEntity || null,
       articulacion: source.articulation || null,
       idDependencia: dependency?.id || null,
-      dependencia: dependency ? null : source.dependency || null,
+      dependencia: dependency ? null : dependencyName || null,
       modalidad: source.modality || null,
       fechaInicio: source.start,
       fechaFinalizacion: source.end,
@@ -7486,12 +8009,16 @@ async function prepararImportacionActividades(client, input) {
       estrategiaInclusiva: source.strategyInclusive || null,
       componente: source.component || null,
       lineaAccion: source.actionLine || null,
+      digitadorResponsable: source.digitadorResponsable || null,
     };
     return {
       index,
       source,
       activity,
+      warnings,
       programOptions: groupProgramOptions,
+      isProgramPlanned,
+      plannedPeriod,
       messages,
       existing: null,
       status: "REVISAR",
@@ -7564,6 +8091,7 @@ async function prepararImportacionActividades(client, input) {
     idParticipante: null,
   }));
   const firstRowByKey = new Set();
+  const firstMatchedRowByKey = new Set();
   const participantStatuses = registrations.map((row) => {
     const group = groups[row.activityIndex];
     const status = (value, message) => ({
@@ -7580,77 +8108,116 @@ async function prepararImportacionActividades(client, input) {
         "La identificación supera el límite permitido.",
       );
     }
-    const duplicateKey = `${row.activityIndex}\u001f${row.role}\u001f${lookupValues
+    const duplicateKey = `${row.activityIndex}\u001f${lookupValues
       .map(normalizarClaveImportacion)
       .join("|")}`;
     if (firstRowByKey.has(duplicateKey)) {
       return status(
         "DUPLICADO",
-        "La persona aparece más de una vez en la misma actividad y rol.",
+        "La persona aparece más de una vez en la misma actividad.",
       );
     }
     firstRowByKey.add(duplicateKey);
     if (group.messages.length)
       return status("ACTIVIDAD_INVALIDA", group.messages.join(" "));
-    const lookupKey = lookupValues
-      .map((value) => `${normalizarClaveImportacion(value)}\u001f${row.role}`)
-      .find(
-        (key) =>
-          profilesByKey.has(key) ||
-          studentsByKey.has(key) ||
-          administrativeByKey.has(key),
+    const supportFromLabel = row.supportLabel
+      ? supportsByName.get(supportNameKey(row.supportLabel))
+      : null;
+    if (
+      supportFromLabel &&
+      (row.supportNumberInvalid ||
+        row.supportNumber == null ||
+        !supportsByNumber.has(row.supportNumber))
+    ) {
+      row.supportNumber = Number(supportFromLabel.numero);
+      row.supportNumberInvalid = false;
+    }
+    const matchingProfiles =
+      lookupValues
+        .map((value) =>
+          profilesByIdentity.get(normalizarClaveImportacion(value)),
+        )
+        .find((matches) => matches?.length) || [];
+    const profileWithRequestedRole = matchingProfiles.find(
+      (match) => match.role === row.role,
+    );
+    if (!profileWithRequestedRole) {
+      const existingRoles = priorizarRoles(
+        matchingProfiles.map((candidate) => candidate.role),
+      )
+        .map((role) => DETALLE_ROL_PARTICIPANTE[role] || role)
+        .join(", ");
+      return status(
+        "SIN_PERFIL",
+        existingRoles
+          ? `La persona ya tiene perfil(es) VEC con rol: ${existingRoles}, pero no con el rol ${DETALLE_ROL_PARTICIPANTE[row.role] || row.role}. Esta importación no crea perfiles ni asigna roles; registra primero el rol correcto en su sección.`
+          : `No existe un perfil VEC con el rol ${DETALLE_ROL_PARTICIPANTE[row.role] || row.role}. Esta importación no crea personas, perfiles ni roles; regístralo primero en su sección.`,
       );
-    const profile = lookupKey
-      ? profilesByKey.get(lookupKey) || administrativeByKey.get(lookupKey)
-      : null;
-    const student = row.role === "ESTUDIANTE" && lookupKey
-      ? studentsByKey.get(lookupKey)
-      : null;
-    if (!profile && !student)
-      return status("SIN_PERFIL", "No se encontró la persona por identificación, código o correo institucional.");
+    }
+    const profile = profileWithRequestedRole;
+    const participantKey = profile.id;
+    const matchedDuplicateKey =
+      `${row.activityIndex}\u001f${participantKey}`;
+    if (firstMatchedRowByKey.has(matchedDuplicateKey)) {
+      return status(
+        "DUPLICADO",
+        "La persona aparece más de una vez en la misma actividad.",
+      );
+    }
     const modalidades = group.programOptions.filter(
       (option) =>
         option.subdivision &&
         supportsByNumber.has(Number(option.numeroTipoApoyo)),
     );
-    const programaFila = normalizarClaveImportacion(row.programaModalidad);
-    const programaGeneral = normalizarClaveImportacion(
+    const programaFila = normalizarProgramaImportacion(row.programaModalidad);
+    const programaGeneral = normalizarProgramaImportacion(
       group.activity.programaBienestar,
     );
+    const programHasNoOptions =
+      group.isProgramPlanned && !group.programOptions.length;
     const modalidadSolicitada =
       programaFila && programaFila !== programaGeneral
         ? modalidades.find(
             (option) =>
-              normalizarClaveImportacion(option.programaCompleto) ===
+              normalizarProgramaImportacion(option.programaCompleto) ===
                 programaFila ||
-              normalizarClaveImportacion(option.subdivision) === programaFila,
+              normalizarProgramaImportacion(option.subdivision) === programaFila,
           )
         : null;
 
     if (
       programaFila &&
       programaFila !== programaGeneral &&
-      !modalidadSolicitada
+      !modalidadSolicitada &&
+      !programHasNoOptions
     ) {
       return status(
         "MODALIDAD_INVALIDA",
         "El programa de la fila no coincide con una modalidad del programa de Bienestar.",
       );
     }
-    if (row.supportNumberInvalid && !modalidadSolicitada) {
+    const tipoApoyoNoEncontrado =
+      row.supportNumberInvalid ||
+      (row.supportLabel && row.supportNumber == null) ||
+      (row.supportNumber != null &&
+        !supportsByNumber.has(row.supportNumber));
+    if (tipoApoyoNoEncontrado && !row.supportOther) {
       return status(
-        "APOYO_INVALIDO",
-        "No se pudo reconocer el número del tipo de apoyo.",
+        "APOYO_OTRO_REQUERIDO",
+        "El tipo de apoyo no está en el catálogo. Especifica el apoyo en “Otro”.",
       );
     }
-    if (row.supportNumber != null && !supportsByNumber.has(row.supportNumber)) {
-      return status(
-        "APOYO_INVALIDO",
-        "El tipo de apoyo no existe o está inactivo.",
-      );
-    }
+    if (row.supportOther) row.supportNumber = null;
 
-    let modalidad = modalidadSolicitada || null;
+    const apoyoProgramaBase =
+      modalidades.length && row.supportNumber != null
+        ? group.programOptions.find(
+            (option) =>
+              !option.subdivision &&
+              Number(option.numeroTipoApoyo) === row.supportNumber,
+          )
+        : null;
+    let modalidad = modalidadSolicitada || apoyoProgramaBase || null;
     if (modalidades.length && !modalidad) {
       let candidatas = modalidades;
       if (row.supportNumber != null) {
@@ -7674,10 +8241,10 @@ async function prepararImportacionActividades(client, input) {
       modalidad = candidatas[0] || null;
       if (!modalidad) {
         return status(
-          "APOYO_INVALIDO",
+          "APOYO_OTRO_REQUERIDO",
           row.supportNumber == null
-            ? "Falta el tipo de apoyo requerido por este programa."
-            : "El tipo de apoyo no corresponde a ninguna modalidad de este programa.",
+            ? "Falta el tipo de apoyo requerido por este programa. Especifica el apoyo en “Otro”."
+            : "El tipo de apoyo no corresponde a ninguna modalidad de este programa. Especifica el apoyo correcto en “Otro”.",
         );
       }
     } else if (
@@ -7685,11 +8252,13 @@ async function prepararImportacionActividades(client, input) {
       row.supportNumber != null &&
       !group.programOptions.some(
         (option) => Number(option.numeroTipoApoyo) === row.supportNumber,
-      )
+      ) &&
+      !programHasNoOptions &&
+      !row.supportOther
     ) {
       return status(
-        "APOYO_INVALIDO",
-        "El tipo de apoyo no corresponde al programa de Bienestar seleccionado.",
+        "APOYO_OTRO_REQUERIDO",
+        "El tipo de apoyo no corresponde al programa seleccionado. Especifica el apoyo correcto en “Otro”.",
       );
     }
 
@@ -7699,11 +8268,11 @@ async function prepararImportacionActividades(client, input) {
       Number(modalidad.numeroTipoApoyo) !== row.supportNumber
     ) {
       return status(
-        "APOYO_INVALIDO",
-        "El tipo de apoyo no corresponde a la modalidad indicada para esta persona.",
+        "APOYO_OTRO_REQUERIDO",
+        "El tipo de apoyo no corresponde a la modalidad indicada. Especifica el apoyo correcto en “Otro”.",
       );
     }
-    if (modalidad && row.supportNumber == null) {
+    if (modalidad && row.supportNumber == null && !row.supportOther) {
       row.supportNumber = Number(modalidad.numeroTipoApoyo);
     }
     if (modalidad) {
@@ -7715,15 +8284,13 @@ async function prepararImportacionActividades(client, input) {
         ]),
       ];
     }
+    firstMatchedRowByKey.add(matchedDuplicateKey);
     row.idTipoApoyo =
       row.supportNumber == null
         ? null
         : supportsByNumber.get(row.supportNumber)?.id || null;
-    row.idParticipante = profile?.id || student?.idParticipante || null;
-    row.idPersona = profile?.idPersona || student?.idPersona || null;
-    row.studentSource = student || null;
-    row.administrativeSource =
-      row.role === "ADMINISTRATIVO" ? profile || null : null;
+    row.idParticipante = profile.id;
+    row.idPersona = profile.idPersona;
     return status("LISTO", "");
   });
 
@@ -7754,14 +8321,27 @@ async function prepararImportacionActividades(client, input) {
       rowStatus.status = "YA_INSCRITO";
       rowStatus.message = "Ya estaba inscrito en esta actividad.";
     }
-    if (rowStatus.status === "LISTO" || rowStatus.status === "YA_INSCRITO") {
+    if (
+      ["LISTO", "YA_INSCRITO"].includes(rowStatus.status)
+    ) {
       group.participantsReady += 1;
     }
   }
 
   for (const group of groups) {
-    if (!group.messages.length && group.participantsReady > 0)
-      group.status = "LISTA";
+    if (group.messages.length || !(group.activity.idPeriodo || group.plannedPeriod))
+      continue;
+    const requiereModalidad =
+      !group.existing &&
+      group.programOptions.some((option) => option.subdivision) &&
+      group.activity.subdivisionProgramas.length === 0;
+    if (requiereModalidad) {
+      group.messages.push(
+        "El programa requiere una modalidad para crear la actividad. Selecciona la modalidad en las filas pendientes y vuelve a validar.",
+      );
+      continue;
+    }
+    group.status = "LISTA";
   }
 
   const preview = {
@@ -7769,10 +8349,12 @@ async function prepararImportacionActividades(client, input) {
       activityIndex: group.index,
       status: group.status,
       existing: Boolean(group.existing),
+      programaNuevo: group.isProgramPlanned,
       modalidades: group.activity.subdivisionProgramas,
       participantsReady: group.participantsReady,
       participantsTotal: group.participantsTotal,
       messages: group.messages,
+      warnings: group.warnings,
     })),
     participantStatuses,
     summary: {
@@ -7780,8 +8362,8 @@ async function prepararImportacionActividades(client, input) {
       validActivities: groups.filter((group) => group.status === "LISTA")
         .length,
       totalParticipants: registrations.length,
-      participantsReady: participantStatuses.filter(
-        (row) => row.status === "LISTO" || row.status === "YA_INSCRITO",
+      participantsReady: participantStatuses.filter((row) =>
+        ["LISTO", "YA_INSCRITO"].includes(row.status),
       ).length,
       participantsNotFound: participantStatuses.filter(
         (row) => row.status === "SIN_PERFIL",
@@ -7827,6 +8409,16 @@ async function buscarActividadImportada(client, activity, forUpdate = false) {
 function normalizarActividad(body = {}) {
   const clean = (value) =>
     value == null ? null : String(value).trim() || null;
+  const ubicaciones = Array.isArray(body.ubicacion)
+    ? [...new Set(body.ubicacion.map(clean).filter(Boolean))]
+    : [
+        ...new Set(
+          String(body.ubicacion || "")
+            .split(/\s*(?:·|,|\|)\s*/)
+            .map((ubicacion) => clean(ubicacion))
+            .filter(Boolean),
+        ),
+      ];
   const subdivisionProgramas = Array.isArray(body.subdivisionProgramas)
     ? [...new Set(body.subdivisionProgramas.map(clean).filter(Boolean))]
     : clean(body.subdivisionPrograma)
@@ -7855,7 +8447,8 @@ function normalizarActividad(body = {}) {
     idDependencia: clean(body.idDependencia),
     dependenciaOtra: clean(body.dependenciaOtra),
     modalidad: clean(body.modalidad),
-    ubicacion: clean(body.ubicacion),
+    ubicaciones,
+    ubicacion: ubicaciones.join(" · ") || null,
     fechaInicio: clean(body.fechaInicio),
     fechaFinalizacion: clean(body.fechaFinalizacion),
     idTipoApoyo: clean(body.idTipoApoyo),
@@ -7883,8 +8476,14 @@ function validarActividad(actividad, { requiereNombre = false } = {}) {
     if (!actividad.nombreActividad) return "Ingresa el nombre de la actividad.";
     if (actividad.nombreActividad.length > 250)
       return "El nombre de la actividad no puede superar 250 caracteres.";
-    if (!UBICACIONES_ACTIVIDAD.has(actividad.ubicacion))
-      return "Selecciona uno de los campus disponibles.";
+    if (
+      !actividad.ubicaciones.length ||
+      actividad.ubicaciones.some(
+        (ubicacion) => !UBICACIONES_ACTIVIDAD.has(ubicacion),
+      )
+    ) {
+      return "Selecciona uno o más campus disponibles.";
+    }
     if (actividad.programaBienestar?.length > 250)
       return "El nombre del programa de Bienestar supera el límite permitido.";
     if (actividad.subdivisionProgramas.some((nombre) => nombre.length > 250))
@@ -7929,6 +8528,7 @@ function fechaActualLocalISO() {
 }
 
 function validarEntrada(payload) {
+  payload.tipo = normalizarTipoParticipante(payload.tipo);
   if (!TIPOS.has(payload.tipo))
     return "Selecciona un tipo de participante válido.";
   if (
@@ -8080,6 +8680,12 @@ function slugArchivo(value) {
 }
 
 function enviarErrorBaseDatos(err, res, next) {
+  if (err.code === "23514" && /rol EXTERNO/i.test(err.message)) {
+    return res.status(409).json({
+      error:
+        "El rol Externo es exclusivo y no se puede combinar con otros roles. Revisa los roles registrados para esta persona.",
+    });
+  }
   if (err.code === "42P01") {
     return res.status(503).json({
       error:

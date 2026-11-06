@@ -1,19 +1,22 @@
 import { useMemo, useState } from "react";
 import * as XLSX from "@e965/xlsx";
-import { registrarPerfilesMasivo, validarPerfilesMasivo } from "./participantesApi.js";
+import {
+  registrarPerfilesMasivo,
+  sincronizarPerfilesInstitucionales,
+  validarPerfilesMasivo,
+} from "./participantesApi.js";
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_ROWS = 500;
 const ROLES = [
-  { value: "COLABORADOR", label: "Colaboradores", singular: "Colaborador", icon: "fa-user-tie" },
   { value: "ADMINISTRATIVO", label: "Administrativos", singular: "Administrativo", icon: "fa-user-gear" },
-  { value: "EGRESADO", label: "Egresados", singular: "Egresado", icon: "fa-user-graduate" },
   { value: "EXTERNO", label: "Externos", singular: "Externo", icon: "fa-user-group" },
 ];
 const ROLE_LABELS = {
   ESTUDIANTE: "Estudiante",
+  DOCENTE: "Docente",
   EGRESADO: "Egresado",
-  COLABORADOR: "Colaborador",
+  COLABORADOR: "Docente",
   ADMINISTRATIVO: "Administrativo",
   EXTERNO: "Externo",
 };
@@ -169,7 +172,7 @@ function readRows(file) {
 }
 
 function ProfileBulkImport({ onSaved }) {
-  const [role, setRole] = useState("EGRESADO");
+  const [role, setRole] = useState("ADMINISTRATIVO");
   const [sheets, setSheets] = useState([]);
   const [sheetName, setSheetName] = useState("");
   const [headerRow, setHeaderRow] = useState(1);
@@ -181,8 +184,16 @@ function ProfileBulkImport({ onSaved }) {
   const [selectedRows, setSelectedRows] = useState(() => new Set());
   const [confirmRows, setConfirmRows] = useState(() => new Set());
   const [busy, setBusy] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [syncError, setSyncError] = useState("");
+  const [syncMessage, setSyncMessage] = useState("");
+  const [manualAdmin, setManualAdmin] = useState({
+    identificacion: "",
+    nombres: "",
+    correo: "",
+  });
   const [cargaOpen, setCargaOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
 
@@ -198,12 +209,12 @@ function ProfileBulkImport({ onSaved }) {
     && (result.status !== "requires-confirmation" || confirmRows.has(result.fila))
   )).length;
   const previewRows = useMemo(() => {
-    if (!activeSheet || !results.length) return [];
+    if (!results.length) return [];
     return results.map((result) => {
       const source = rows.find((row) => row.fila === result.fila) || {};
       return { ...source, ...result };
     });
-  }, [activeSheet, rows, results]);
+  }, [rows, results]);
   const visiblePreviewRows = useMemo(() => {
     if (resultsFilter === "roles-previos") {
       return previewRows.filter((row) => row.roles?.length > 0);
@@ -347,6 +358,54 @@ function ProfileBulkImport({ onSaved }) {
     }
   }
 
+  async function validateManualAdmin(event) {
+    event.preventDefault();
+    const fila =
+      Math.max(0, ...rows.map((row) => row.fila), ...results.map((row) => row.fila)) +
+      1;
+    const participant = {
+      ...manualAdmin,
+      tipoDocumento: "CC",
+      fila,
+    };
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await validarPerfilesMasivo({
+        rol: "ADMINISTRATIVO",
+        participantes: [participant],
+      });
+      const validatedResults = response.resultados || [];
+      if (validatedResults.length !== 1) {
+        throw new Error("No se pudo validar el administrativo ingresado.");
+      }
+      const [validated] = validatedResults;
+      setRows((current) => [...current.filter((row) => row.fila !== fila), participant]);
+      setResults((current) => [
+        ...current.filter((result) => result.fila !== fila),
+        validated,
+      ]);
+      setResultsFilter("todos");
+      if (validated.status === "ready") {
+        setSelectedRows((current) => new Set(current).add(fila));
+        setMessage("Administrativo validado y agregado a la lista para guardar.");
+        setManualAdmin({ identificacion: "", nombres: "", correo: "" });
+      } else if (validated.status === "requires-confirmation") {
+        setMessage(
+          "La persona ya existe. Confirma la asignación del rol en la lista antes de guardar.",
+        );
+        setManualAdmin({ identificacion: "", nombres: "", correo: "" });
+      } else {
+        setMessage("Revisa el resultado de validación antes de continuar.");
+      }
+    } catch (validationError) {
+      setError(validationError.message || "No se pudo validar el administrativo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function toggleRow(rowNumber, checked) {
     if (!checked) {
       setConfirmRows((confirmed) => {
@@ -419,6 +478,21 @@ function ProfileBulkImport({ onSaved }) {
     }
   }
 
+  async function synchronizeInstitutionalProfiles() {
+    setSyncing(true);
+    setSyncError("");
+    setSyncMessage("");
+    try {
+      const response = await sincronizarPerfilesInstitucionales();
+      setSyncMessage(response.mensaje || "La sincronización institucional finalizó correctamente.");
+      onSaved?.();
+    } catch (syncRequestError) {
+      setSyncError(syncRequestError.message || "No se pudo completar la sincronización institucional.");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   const roleLabel = ROLES.find((item) => item.value === role)?.singular || role;
 
   function selectRole(nextRole) {
@@ -440,18 +514,45 @@ function ProfileBulkImport({ onSaved }) {
   return (
     <section className="card vec-profile-import" aria-labelledby="vec-profile-import-title">
       <div className="vec-profile-import__heading">
-        <span className="vec-profile-import__icon" aria-hidden="true"><i className="fas fa-file-excel"></i></span>
+        <span className="vec-profile-import__icon" aria-hidden="true"><i className="fas fa-users-gear"></i></span>
         <div>
           <span className="vec-profile-import__eyebrow">GESTIÓN DE PERFILES</span>
-          <h2 id="vec-profile-import-title">Carga masiva de roles</h2>
-          <p>Selecciona el rol, carga su listado y revisa los registros antes de crearlos en sus perfiles VEC, sin inscribirlos en actividades.</p>
+          <h2 id="vec-profile-import-title">Perfiles de participantes</h2>
+          <p>Sincroniza los docentes institucionales y carga los perfiles de administrativos o externos que no vienen de esa fuente.</p>
         </div>
       </div>
 
       {!cargaOpen && error && <div className="auth-error" role="alert">{error}</div>}
       {!cargaOpen && message && <p className="vec-profile-import__message" role="status">{message}</p>}
 
-      <div className="vec-profile-import__role-shortcuts" role="group" aria-label="Seleccionar rol para importar">
+      <section className="vec-profile-import__sync-panel" aria-labelledby="vec-profile-sync-title">
+        <div className="vec-profile-import__sync-copy">
+          <span className="vec-profile-import__sync-icon" aria-hidden="true"><i className="fas fa-arrows-rotate"></i></span>
+          <div>
+            <h3 id="vec-profile-sync-title">Docentes institucionales</h3>
+            <p>Actualiza docentes desde la base institucional. Esta acción también sincroniza estudiantes, matrículas, facultades, notas y apoyos.</p>
+          </div>
+        </div>
+        <button
+          className="btn btn-primary vec-profile-import__sync-button"
+          type="button"
+          onClick={synchronizeInstitutionalProfiles}
+          disabled={syncing || busy}
+        >
+          <i className={`fas ${syncing ? "fa-spinner fa-spin" : "fa-arrows-rotate"}`} aria-hidden="true"></i>
+          {syncing ? "Sincronizando..." : "Sincronizar datos institucionales"}
+        </button>
+        {syncError && <p className="vec-profile-import__sync-error" role="alert">{syncError}</p>}
+        {syncMessage && <p className="vec-profile-import__sync-message" role="status">{syncMessage}</p>}
+      </section>
+
+      <div className="vec-profile-import__sync-note" role="note">
+        <i className="fas fa-circle-info" aria-hidden="true"></i>
+        <span><strong>Egresados:</strong> la sincronización institucional actual no incluye una fuente de egresados. No se cargan desde Excel para evitar registros desactualizados; se requiere configurar la vista institucional correspondiente.</span>
+      </div>
+
+      <h3 className="vec-profile-import__load-title">Carga manual disponible</h3>
+      <div className="vec-profile-import__role-shortcuts vec-profile-import__role-shortcuts--limited" role="group" aria-label="Seleccionar rol para importar">
         {ROLES.map((item) => (
           <button
             className={`vec-profile-import__role-shortcut is-role-${item.value.toLowerCase()}${role === item.value ? " is-active" : ""}`}
@@ -459,7 +560,7 @@ function ProfileBulkImport({ onSaved }) {
             key={item.value}
             aria-pressed={role === item.value}
             onClick={() => openImporter(item.value)}
-            disabled={busy}
+            disabled={busy || syncing}
           >
             <i className={`fas ${item.icon}`} aria-hidden="true"></i>
             <span>Cargar {item.label.toLowerCase()}</span>
@@ -578,6 +679,79 @@ function ProfileBulkImport({ onSaved }) {
           </span>
         </label>
       </div>
+
+      {role === "ADMINISTRATIVO" && (
+        <form
+          className="vec-profile-import__manual-entry"
+          onSubmit={validateManualAdmin}
+        >
+          <div className="vec-profile-import__manual-entry-heading">
+            <div>
+              <strong>¿Solo necesitas agregar un administrativo?</strong>
+              <span>Ingresa sus datos aquí, sin preparar un archivo.</span>
+            </div>
+            <i className="fas fa-user-plus" aria-hidden="true"></i>
+          </div>
+          <div className="vec-profile-import__manual-entry-fields">
+            <label>
+              <span>Documento de identidad *</span>
+              <input
+                className="form-control"
+                value={manualAdmin.identificacion}
+                onChange={(event) =>
+                  setManualAdmin((current) => ({
+                    ...current,
+                    identificacion: event.target.value,
+                  }))
+                }
+                maxLength={64}
+                required
+                disabled={busy}
+              />
+            </label>
+            <label>
+              <span>Nombre completo *</span>
+              <input
+                className="form-control"
+                value={manualAdmin.nombres}
+                onChange={(event) =>
+                  setManualAdmin((current) => ({
+                    ...current,
+                    nombres: event.target.value,
+                  }))
+                }
+                maxLength={240}
+                required
+                disabled={busy}
+              />
+            </label>
+            <label>
+              <span>Correo electrónico *</span>
+              <input
+                className="form-control"
+                type="email"
+                value={manualAdmin.correo}
+                onChange={(event) =>
+                  setManualAdmin((current) => ({
+                    ...current,
+                    correo: event.target.value,
+                  }))
+                }
+                maxLength={254}
+                required
+                disabled={busy}
+              />
+            </label>
+          </div>
+          <button className="btn btn-outline" type="submit" disabled={busy}>
+            <i
+              className={`fas ${busy ? "fa-spinner fa-spin" : "fa-user-plus"}`}
+              aria-hidden="true"
+            ></i>
+            {busy ? "Validando..." : "Agregar a la lista"}
+          </button>
+        </form>
+      )}
 
       {activeSheet && (
         <>

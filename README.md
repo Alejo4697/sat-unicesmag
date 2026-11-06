@@ -159,11 +159,16 @@ por-dispositivo, como el borrador de intervenciones):
   presenta como elegir actividad, subir el archivo y revisar la lista antes de
   guardar.
   En el registro individual se puede seleccionar estudiante, egresado,
-  colaborador o externo; si la identificación ya corresponde a una persona con
-  otros roles compatibles, se solicita confirmar el rol adicional antes de
+  colaborador, administrativo o externo. Los docentes activos de las fuentes
+  institucionales se reconocen y se muestran como colaboradores, sin crear un
+  tipo de participante adicional ni perder los demás roles. Si la identificación
+  ya corresponde a una persona con otros roles compatibles, se solicita confirmar
+  el rol adicional antes de
   guardar. El rol Externo permanece exclusivo y se valida también en el servidor.
   El servidor valida la modalidad y su apoyo asociado antes de guardar cada
-  inscripción. La carga masiva admite estudiantes, egresados, colaboradores y externos. En el archivo se
+  inscripción. La carga masiva admite estudiantes, egresados, colaboradores y
+  externos; los valores Docente/Profesor del archivo se interpretan como
+  Colaborador. En el archivo se
   debe indicar el rol de cada fila en una columna «Rol de participante»
   (también se reconocen encabezados equivalentes); si no se incluye, se mantiene
   la compatibilidad y se interpreta como estudiante. Las filas con rol
@@ -206,12 +211,16 @@ por-dispositivo, como el borrador de intervenciones):
   `sat.actividades_vec` y crea su auditoría; se aplica con
   `npm --prefix server run db:actividades`. Los perfiles de colaboradores,
   egresados y externos se mantienen en tablas separadas vinculadas a
-  `sat.participantes_vec`; se sincronizan con sus roles y la base impide que
-  un externo tenga otros roles. Se aplican con
+  `sat.participantes_vec`; los docentes se reconocen desde `sat.docentes` y los
+  roles institucionales activos, y `db:actividades` los registra como perfiles
+  de Colaborador sin reemplazar los roles existentes. Las nuevas
+  sincronizaciones académicas también crean el perfil de Colaborador. Los roles
+  se sincronizan con sus perfiles y
+  la base impide que un externo tenga otros roles. Se aplican con
   `npm --prefix server run db:roles-participantes`. Desde Resumen, los perfiles
-  de Egresado, Colaborador o Externo también se pueden importar por Excel/CSV,
-  con accesos directos que abren una ventana de carga para cada rol. La ventana
-  explica las columnas obligatorias y opcionales en lenguaje sencillo,
+  de Administrativo y Externo se pueden importar por Excel/CSV, con accesos
+  directos que abren una ventana de carga para cada rol. La ventana explica las
+  columnas obligatorias y opcionales en lenguaje sencillo,
   relaciona encabezados flexibles sin exigir una plantilla fija y permite
   asignar manualmente las columnas si el sistema no reconoce sus nombres.
   Se usa un único rol para todo el archivo.
@@ -219,7 +228,11 @@ por-dispositivo, como el borrador de intervenciones):
   carga crea o vincula perfiles VEC en sus tablas de rol sin inscribir personas
   en actividades; antes de agregar un rol a una persona ya registrada solicita
   confirmación explícita. Los roles repetidos y los conflictos de exclusividad
-  de Externo se omiten. El mismo Resumen ofrece una lista consultable por rol
+  de Externo se omiten. Los docentes se actualizan con la sincronización
+  institucional existente, que también actualiza estudiantes, matrículas,
+  facultades, notas y apoyos. Los egresados no se importan desde Excel ni se
+  sincronizan hasta configurar una vista institucional de origen. El mismo
+  Resumen ofrece una lista consultable por rol
   (Egresado, Colaborador o Externo), con búsqueda por nombre, documento o
   correo y acciones para editar o eliminar perfiles. La ficha permite actualizar
   los datos VEC; si la persona también es estudiante o funcionario institucional,
@@ -290,10 +303,13 @@ por-dispositivo, como el borrador de intervenciones):
   Agrupa por periodo, actividad, proyecto, fechas y programa de Bienestar, y
   presenta una vista previa de catálogos, perfiles existentes, duplicados y
   datos pendientes antes de guardar. Al confirmar, crea o reutiliza las
-  actividades como `FINALIZADA`, inscribe solo perfiles VEC que ya existen y
-  deja sin crear las personas o roles no encontrados. La importación no cambia
-  datos de asistencia; las filas con catálogos o datos obligatorios sin resolver
-  quedan pendientes para corregir el Excel y volver a cargarlo.
+  actividades como `FINALIZADA`. Solo inscribe perfiles VEC existentes cuyo rol
+  coincida con el rol de la hoja de Excel. No crea personas ni perfiles VEC, y
+  no agrega ni sustituye roles; las personas sin perfil coincidente quedan
+  pendientes para registrarlas primero desde la sección de perfiles. La
+  importación no cambia datos de asistencia; las filas con catálogos o datos
+  obligatorios sin resolver también quedan pendientes para corregir el Excel y
+  volver a cargarlo.
   «Consultar apoyos» consulta los beneficiarios registrados en las tablas
   institucionales y conserva el catálogo de tipos de apoyo.
   En «Registrar participante», el formulario permite escoger una jornada futura

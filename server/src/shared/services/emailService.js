@@ -155,3 +155,78 @@ export async function enviarCorreoOtp({ correo, nombre, codigoOtp, expiraMinutos
     error: resultadoEnvio.error || null
   };
 }
+
+/**
+ * Envía el código de recuperación de contraseña al correo institucional del usuario.
+ * @param {Object} params
+ * @param {string} params.correo - Correo institucional del usuario
+ * @param {string} params.nombre - Nombre del funcionario / docente
+ * @param {string} params.codigoRecuperacion - Código de 6 dígitos
+ * @param {number} params.expiraMinutos - Minutos de vigencia (default 15)
+ */
+export async function enviarCorreoRecuperacionPassword({ correo, nombre, codigoRecuperacion, expiraMinutos = 15 }) {
+  const asunto = `Recuperación de contraseña SAT-UNICESMAG: ${codigoRecuperacion}`;
+
+  const cuerpoHtml = `
+    <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 580px; margin: 0 auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+      <div style="background: linear-gradient(135deg, #002855 0%, #001f3f 100%); padding: 24px; text-align: center; color: #ffffff;">
+        <h1 style="margin: 0; font-size: 20px; font-weight: 700; letter-spacing: 0.5px;">UNIVERSIDAD CESMAG</h1>
+        <p style="margin: 4px 0 0; font-size: 13px; color: #93c5fd;">Sistema de Alertas Tempranas y Permanencia (SAT)</p>
+      </div>
+
+      <div style="padding: 32px 24px; color: #1e293b;">
+        <p style="font-size: 16px; margin: 0 0 16px;">Estimado(a) <strong>${nombre || "Funcionario(a) / Docente"}</strong>,</p>
+        <p style="font-size: 14px; line-height: 1.6; color: #475569; margin: 0 0 24px;">
+          Hemos recibido una solicitud para restablecer la contraseña de acceso institucional al sistema <strong>SAT-UNICESMAG</strong> asociada a tu cuenta. Utiliza el siguiente código de seguridad para definir tu nueva contraseña:
+        </p>
+
+        <div style="background: #f8fafc; border: 2px dashed #0284c7; border-radius: 8px; padding: 20px; text-align: center; margin: 24px 0;">
+          <div style="font-size: 36px; font-weight: 800; letter-spacing: 8px; color: #002855; font-family: monospace;">
+            ${codigoRecuperacion}
+          </div>
+          <p style="margin: 8px 0 0; font-size: 12px; color: #64748b;">
+            Código de recuperación válido por <strong>${expiraMinutos} minutos</strong>.
+          </p>
+        </div>
+
+        <div style="background: #eff6ff; border-left: 4px solid #3b82f6; padding: 12px 16px; border-radius: 0 6px 6px 0; margin-bottom: 24px;">
+          <p style="margin: 0; font-size: 12px; color: #1e40af; line-height: 1.5;">
+            <strong>Seguridad Institucional:</strong> Si tú no solicitaste este cambio, no compartas este código con nadie. Tu contraseña actual permanecerá sin modificaciones.
+          </p>
+        </div>
+
+        <p style="font-size: 13px; color: #64748b; margin: 0;">
+          Atentamente,<br>
+          <strong>Vicerrectoría de Evangelización de las Culturas</strong><br>
+          Coordinación de Acompañamiento Integral y Permanencia
+        </p>
+      </div>
+
+      <div style="background: #f1f5f9; padding: 16px; text-align: center; font-size: 11px; color: #94a3b8; border-top: 1px solid #e2e8f0;">
+        Universidad CESMAG • Pasto, Nariño, Colombia • Mensaje de seguridad generado automáticamente
+      </div>
+    </div>
+  `;
+
+  console.log("=================================================================");
+  console.log(`[RECUPERACIÓN PASSWORD] Código para: ${correo}`);
+  console.log(`Usuario: ${nombre}`);
+  console.log(`CÓDIGO DE RECUPERACIÓN: [ ${codigoRecuperacion} ] (Válido por ${expiraMinutos} min)`);
+  console.log("=================================================================");
+
+  const resultadoEnvio = await enviarConFallback({
+    to: correo,
+    subject: asunto,
+    html: cuerpoHtml
+  });
+
+  return {
+    ok: true,
+    correo,
+    codigoRecuperacion,
+    asunto,
+    expiraMinutos,
+    envioRealizado: resultadoEnvio.ok,
+    error: resultadoEnvio.error || null
+  };
+}

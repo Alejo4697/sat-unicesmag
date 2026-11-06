@@ -26,6 +26,7 @@ import { Router } from "express";
 import { MOCK_DATA } from "../../shared/data/mockData.js";
 import { identifyUser, requireModule } from "../../shared/middleware/requireRole.js";
 import { query } from "../../shared/db/pool.js";
+import { esUsuarioRestringidoAPrograma, coincidePrograma } from "../../shared/security/alcanceDirectivo.js";
 
 const router = Router();
 
@@ -41,9 +42,11 @@ router.get("/buscar-estudiante", async (req, res, next) => {
     return res.json([]);
   }
 
+  const esRestringido = esUsuarioRestringidoAPrograma(req.user);
+  const progUser = req.user?.programa;
+
   try {
-    const { rows } = await query(
-      `SELECT DISTINCT
+    let sql = `SELECT DISTINCT
          e.id_estudiantes AS id,
          COALESCE(m.codigo_externo, e.codigo_externo) AS codigo,
          COALESCE(per.numero_identificacion, e.numero_documento) AS documento,
@@ -69,18 +72,24 @@ router.get("/buscar-estudiante", async (req, res, next) => {
          LIMIT 1
        ) cr ON true
        LEFT JOIN sat.rangos_riesgo rr ON rr.id_rangos_riesgo = cr.id_rangos_riesgo
-       WHERE e.codigo_externo = $1
+       WHERE (e.codigo_externo = $1
           OR m.codigo_externo = $1
           OR e.codigo_externo ILIKE $2
           OR m.codigo_externo ILIKE $2
           OR per.numero_identificacion = $1
           OR e.numero_documento = $1
           OR per.numero_identificacion ILIKE $2
-          OR e.numero_documento ILIKE $2
-       ORDER BY "nombreCompleto" ASC
-       LIMIT 20`,
-      [q, `%${q}%`]
-    );
+          OR e.numero_documento ILIKE $2)`;
+
+    const params = [q, `%${q}%`];
+    if (esRestringido && progUser) {
+      sql += ` AND (LOWER(COALESCE(p.nombre, '')) ILIKE '%' || LOWER($3) || '%')`;
+      params.push(progUser);
+    }
+
+    sql += ` ORDER BY "nombreCompleto" ASC LIMIT 20`;
+
+    const { rows } = await query(sql, params);
     res.json(rows);
   } catch (err) {
     next(err);
@@ -103,6 +112,9 @@ router.get("/", async (req, res, next) => {
                 ) AS "nombreEstudiante",
                 p.nombre AS "programaEstudiante",
                 CONCAT(ur.nombres, ' ', ur.apellidos) AS "remitidoPor",
+                r.id_usuarios_remitente AS "idUsuarioRemitente",
+                r.id_usuarios_profesional AS "idUsuarioProfesional",
+                r.id_dependencias AS "idDependencia",
                 d.nombre AS "areaDestino",
                 CASE
                   WHEN r.id_usuarios_profesional IS NOT NULL AND r.id_usuarios_profesional <> r.id_usuarios_remitente
@@ -139,10 +151,37 @@ router.get("/", async (req, res, next) => {
     const idsDb = new Set(rows.map((r) => r.id));
     const mocksRestantes = MOCK_DATA.remisiones.filter((m) => !idsDb.has(m.id));
 
-    res.json([...enriquecidas, ...mocksRestantes]);
+    let resultado = [...enriquecidas, ...mocksRestantes];
+    if (esUsuarioRestringidoAPrograma(req.user)) {
+      const progUser = req.user.programa;
+      const userId = req.user.id;
+      const userNombre = (req.user.nombre || "").toLowerCase();
+      resultado = resultado.filter((r) => {
+        const coincideProg = coincidePrograma(r.programaEstudiante, progUser);
+        const esMio = (r.idUsuarioRemitente && r.idUsuarioRemitente === userId) ||
+                      (r.remitidoPor && userNombre && r.remitidoPor.toLowerCase().includes(userNombre)) ||
+                      (r.idUsuarioProfesional && r.idUsuarioProfesional === userId) ||
+                      (r.profesionalAsignado && userNombre && r.profesionalAsignado.toLowerCase().includes(userNombre));
+        return coincideProg || esMio;
+      });
+    }
+
+    res.json(resultado);
   } catch (err) {
     console.warn("Fallo al consultar remisiones en PostgreSQL:", err.message);
-    res.json(MOCK_DATA.remisiones);
+    let lista = MOCK_DATA.remisiones;
+    if (esUsuarioRestringidoAPrograma(req.user)) {
+      const progUser = req.user.programa;
+      const userId = req.user.id;
+      const userNombre = (req.user.nombre || "").toLowerCase();
+      lista = lista.filter((r) => {
+        const coincideProg = coincidePrograma(r.programaEstudiante, progUser);
+        const esMio = (r.idUsuarioRemitente && r.idUsuarioRemitente === userId) ||
+                      (r.remitidoPor && userNombre && r.remitidoPor.toLowerCase().includes(userNombre));
+        return coincideProg || esMio;
+      });
+    }
+    res.json(lista);
   }
 });
 
@@ -318,6 +357,14 @@ router.post("/", async (req, res, next) => {
       nombreEstudianteFinal = `${estRows[0].nombres} ${estRows[0].apellidos}`.trim();
       programaEstudianteFinal = estRows[0].programa;
 
+      if (esUsuarioRestringidoAPrograma(req.user) && programaEstudianteFinal) {
+        if (!coincidePrograma(programaEstudianteFinal, req.user.programa)) {
+          return res.status(403).json({
+            error: `Seguridad SAT: Su perfil solo tiene autorización para remitir estudiantes pertenecientes a su programa académico (${req.user.programa}).`
+          });
+        }
+      }
+
       // 2. Obtener o crear caso
       const { rows: casos } = await query(
         `SELECT id_casos FROM sat.casos WHERE id_estudiantes = $1 ORDER BY creado_en DESC LIMIT 1`,
@@ -366,6 +413,23 @@ router.post("/", async (req, res, next) => {
         idProfesionalDestino = profRows[0]?.id_usuarios || null;
       }
 
+      if (!idProfesionalDestino) {
+        // Asignar un profesional distinto al remitente para que quien remite no quede asignado a sí mismo
+        const { rows: altProf } = await query(
+          `SELECT u.id_usuarios
+           FROM sat.usuarios u
+           LEFT JOIN sat.usuarios_roles ur ON u.id_usuarios = ur.id_usuarios
+           LEFT JOIN sat.roles r ON ur.id_roles = r.id_roles
+           WHERE u.activo = true
+             AND u.id_usuarios <> $1
+             AND (LOWER(COALESCE(r.nombre, '')) IN ('profesional', 'admin', 'administrador') OR u.cargo ILIKE '%psic%' OR u.cargo ILIKE '%salud%' OR u.cargo ILIKE '%trabajo%')
+           ORDER BY CASE WHEN LOWER(COALESCE(r.nombre, '')) = 'profesional' THEN 1 ELSE 2 END
+           LIMIT 1`,
+          [idUser]
+        );
+        idProfesionalDestino = altProf[0]?.id_usuarios || null;
+      }
+
       const { rows: insertRem } = await query(
         `INSERT INTO sat.remisiones
           (id_casos, id_dependencias, id_usuarios_profesional, id_usuarios_remitente, id_estados_remision, motivo, generada_en, escalada, actualizado_en)
@@ -394,6 +458,9 @@ router.post("/", async (req, res, next) => {
     nombreEstudiante: nombreEstudianteFinal,
     programaEstudiante: programaEstudianteFinal,
     remitidoPor: `${req.user?.nombre || "Personal Institucional"} (${req.user?.cargo || "Docente"})`,
+    idUsuarioRemitente: req.user?.id || null,
+    idUsuarioProfesional: idProfesionalDestino || null,
+    idDependencia: idDependencia || null,
     ...destino,
     nivelRiesgo: nivelRiesgo || "Medio",
     motivoRemision,
@@ -407,10 +474,80 @@ router.post("/", async (req, res, next) => {
   res.status(201).json(nueva);
 });
 
-// Actualizar estado de remisión
+// Actualizar estado de remisión (Solo permitido para receptor o administrador)
 router.patch("/:id", async (req, res, next) => {
   const { id } = req.params;
   const { estado, recomendacionesAula } = req.body;
+
+  const userId = req.user?.id;
+  const userRol = req.user?.rol;
+  const userNombre = (req.user?.nombre || "").toLowerCase().trim();
+  const userCargo = (req.user?.cargo || "").toLowerCase().trim();
+  const userDep = (req.user?.dependencia || "").toLowerCase().trim();
+
+  // Control de seguridad institucional:
+  // Quien realiza la remisión NO puede cambiar su estado.
+  // Solo quien la recibe (o un administrador) puede cambiar el estado y actualizarla.
+  if (userRol !== "admin") {
+    // 1. Verificación en base de datos PostgreSQL
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+      try {
+        const { rows: dbRem } = await query(
+          `SELECT r.id_remisiones, r.id_usuarios_remitente, r.id_usuarios_profesional, 
+                  r.id_dependencias, d.nombre AS dependencia_nombre,
+                  ur.nombres AS remitente_nombres, ur.apellidos AS remitente_apellidos,
+                  up.nombres AS profesional_nombres, up.apellidos AS profesional_apellidos
+           FROM sat.remisiones r
+           LEFT JOIN sat.dependencias d ON r.id_dependencias = d.id_dependencias
+           LEFT JOIN sat.usuarios ur ON r.id_usuarios_remitente = ur.id_usuarios
+           LEFT JOIN sat.usuarios up ON r.id_usuarios_profesional = up.id_usuarios
+           WHERE r.id_remisiones = $1`,
+          [id]
+        );
+
+        if (dbRem.length > 0) {
+          const rem = dbRem[0];
+          const esRemitente = Boolean(
+            (userId && rem.id_usuarios_remitente === userId) ||
+            (userNombre && `${rem.remitente_nombres} ${rem.remitente_apellidos}`.toLowerCase().includes(userNombre))
+          );
+
+          const esReceptor = Boolean(
+            (userId && rem.id_usuarios_profesional === userId && rem.id_usuarios_profesional !== rem.id_usuarios_remitente) ||
+            (userNombre && `${rem.profesional_nombres} ${rem.profesional_apellidos}`.toLowerCase().includes(userNombre)) ||
+            (userDep && rem.dependencia_nombre && rem.dependencia_nombre.toLowerCase().includes(userDep))
+          );
+
+          if (esRemitente && !esReceptor) {
+            return res.status(403).json({
+              error: "Control de seguridad SAT: Quien realiza la remisión no puede cambiar su estado. El estado permanece como 'Generada' hasta que el profesional o área receptora la atienda y actualice."
+            });
+          }
+        }
+      } catch (checkErr) {
+        console.warn("Fallo en verificación de seguridad de remisiones:", checkErr.message);
+      }
+    }
+
+    // 2. Verificación en MOCK_DATA
+    const remMock = MOCK_DATA.remisiones.find((r) => r.id === id);
+    if (remMock) {
+      const remitidoPor = String(remMock.remitidoPor || "").toLowerCase();
+      const profAsignado = String(remMock.profesionalAsignado || "").toLowerCase();
+      const areaDestino = String(remMock.areaDestino || "").toLowerCase();
+
+      const esRemitenteMock = userNombre && remitidoPor.includes(userNombre);
+      const esReceptorMock =
+        (userNombre && profAsignado.includes(userNombre)) ||
+        (userDep && areaDestino.includes(userDep));
+
+      if (esRemitenteMock && !esReceptorMock) {
+        return res.status(403).json({
+          error: "Control de seguridad SAT: Quien realiza la remisión no puede cambiar su estado. El estado permanece como 'Generada' hasta que el profesional o área receptora la atienda y actualice."
+        });
+      }
+    }
+  }
 
   try {
     if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {

@@ -7,6 +7,7 @@ const TEMPLATE_PATH = fileURLToPath(
   new URL("./plantilla-registro-actividades.xlsm", import.meta.url),
 );
 const SUPPORTED_PARTICIPANT_TYPES = new Set([
+  "DOCENTE",
   "ESTUDIANTE",
   "COLABORADOR",
   "ADMINISTRATIVO",
@@ -58,6 +59,7 @@ const COLUMNS = [
   "rolEstudiante",
   "rolColaborador",
   "rolAdministrativo",
+  "rolExterno",
   "nombres",
 ];
 const DATE_COLUMNS = new Set([30, 31]);
@@ -67,28 +69,80 @@ const ROLE_COLUMNS = {
   rolEstudiante: "ESTUDIANTE",
   rolColaborador: "COLABORADOR",
   rolAdministrativo: "ADMINISTRATIVO",
+  rolExterno: "EXTERNO",
 };
 const ROLE_LABELS = {
+  DOCENTE: "Docente",
   ESTUDIANTE: "Estudiante",
-  COLABORADOR: "Colaborador",
+  COLABORADOR: "Docente",
   ADMINISTRATIVO: "Administrativo",
   EGRESADO: "Egresado",
   EXTERNO: "Externo",
 };
-const ROLE_ORDER = ["ESTUDIANTE", "COLABORADOR", "ADMINISTRATIVO", "EGRESADO", "EXTERNO"];
-const ROLE_HIGHLIGHTS = {
-  "ESTUDIANTE+COLABORADOR": "FFFCE4D6",
-  "ESTUDIANTE+ADMINISTRATIVO": "FFE8E1F7",
-  "ESTUDIANTE+EGRESADO": "FFDDEBF7",
-  "ESTUDIANTE+EXTERNO": "FFFCE4ED",
-  "COLABORADOR+EGRESADO": "FFE2F0D9",
-  "COLABORADOR+ADMINISTRATIVO": "FFF2E5E8",
-  "COLABORADOR+EXTERNO": "FFFCEBF0",
-  "ADMINISTRATIVO+EGRESADO": "FFECEBF5",
-  "ADMINISTRATIVO+EXTERNO": "FFF6E8F0",
-  "EGRESADO+EXTERNO": "FFEAF5EF",
-  "ESTUDIANTE+EGRESADO+COLABORADOR": "FFE4DFEC",
-};
+const ROLE_ORDER = [
+  "ESTUDIANTE",
+  "ADMINISTRATIVO",
+  "COLABORADOR",
+  "EGRESADO",
+  "EXTERNO",
+];
+const ROLE_COMBINATION_KEYS = (() => {
+  const combinations = [];
+  function addCombinations(start, roles) {
+    if (roles.length > 1) combinations.push(roles.join("|"));
+    for (let index = start; index < ROLE_ORDER.length; index += 1) {
+      addCombinations(index + 1, [...roles, ROLE_ORDER[index]]);
+    }
+  }
+  addCombinations(0, []);
+  return combinations;
+})();
+
+function pastelRoleCombinationColor(key) {
+  const index = ROLE_COMBINATION_KEYS.indexOf(key);
+  if (index < 0) {
+    throw new Error("No se pudo determinar la combinación de roles del asistente.");
+  }
+  const hue = (index * 137.508) % 360;
+  const saturation = 0.72;
+  const lightness = 0.91;
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
+  const hueSector = hue / 60;
+  const secondary = chroma * (1 - Math.abs((hueSector % 2) - 1));
+  const [red, green, blue] =
+    hueSector < 1
+      ? [chroma, secondary, 0]
+      : hueSector < 2
+        ? [secondary, chroma, 0]
+        : hueSector < 3
+          ? [0, chroma, secondary]
+          : hueSector < 4
+            ? [0, secondary, chroma]
+            : hueSector < 5
+              ? [secondary, 0, chroma]
+              : [chroma, 0, secondary];
+  const offset = lightness - chroma / 2;
+  const channel = (value) =>
+    Math.round((value + offset) * 255)
+      .toString(16)
+      .padStart(2, "0")
+      .toUpperCase();
+  return `FF${channel(red)}${channel(green)}${channel(blue)}`;
+}
+
+function roleCombinationKey(roles) {
+  return [...roles]
+    .sort(
+      (first, second) =>
+        ROLE_ORDER.indexOf(first) - ROLE_ORDER.indexOf(second),
+    )
+    .join("|");
+}
+
+function normalizarRol(role) {
+  const normalized = String(role).trim().toUpperCase();
+  return normalized === "DOCENTE" ? "COLABORADOR" : normalized;
+}
 
 function periodoAcademicoVisible(value) {
   const text = String(value || "").trim();
@@ -105,7 +159,7 @@ function rolesAsistente(asistente) {
         asistente.rolParticipacion,
       ]
         .filter(Boolean)
-        .map((role) => String(role).trim().toUpperCase()),
+        .map(normalizarRol),
     ),
   ].sort((left, right) => {
     const leftOrder = ROLE_ORDER.indexOf(left);
@@ -139,29 +193,17 @@ function asistentesUnicosPorPersona(asistentes) {
   return [...porPersona.values()];
 }
 
-function combinacionRoles(asistente) {
-  const roles = new Set(rolesAsistente(asistente));
-  const combination = ROLE_ORDER.filter((role) => roles.has(role)).join("+");
-  if (
-    combination ===
-    "ESTUDIANTE+COLABORADOR+EGRESADO"
-  ) {
-    return "ESTUDIANTE+EGRESADO+COLABORADOR";
-  }
-  return ROLE_HIGHLIGHTS[combination] ? combination : null;
-}
-
 function detalleRolesAsistente(asistente) {
   const roles = rolesAsistente(asistente);
-  const rolPrincipal = String(
+  const rolPrincipal = normalizarRol(
     asistente.rolParticipacion || asistente.tipoParticipante || "",
-  )
-    .trim()
-    .toUpperCase();
+  );
   const detallePrincipal =
-    asistente.detalleTipoParticipante ||
-    ROLE_LABELS[rolPrincipal] ||
-    rolPrincipal;
+    rolPrincipal === "COLABORADOR"
+      ? ROLE_LABELS[rolPrincipal]
+      : asistente.detalleTipoParticipante ||
+        ROLE_LABELS[rolPrincipal] ||
+        rolPrincipal;
   const otrosRoles = roles.filter((role) => role !== rolPrincipal);
   if (!otrosRoles.length) return detallePrincipal;
   return `${detallePrincipal} · También: ${otrosRoles
@@ -182,116 +224,6 @@ function replaceWorksheetData(xml, transformRows) {
     /<sheetData\b[^>]*>[\s\S]*?<\/sheetData>/,
     `${match[1]}${transformRows(rows.map((row) => row[0]))}${match[3]}`,
   );
-}
-
-function appendStyleDefinition(xml, collection, item) {
-  const pattern = new RegExp(
-    `(<${collection}\\b([^>]*)>)([\\s\\S]*?)(<\\/${collection}>)`,
-  );
-  const match = xml.match(pattern);
-  if (!match)
-    throw new Error(
-      `La plantilla no contiene la sección ${collection} de estilos.`,
-    );
-  const count = Number(match[2].match(/\bcount="(\d+)"/)?.[1]);
-  if (!Number.isInteger(count))
-    throw new Error(`La sección ${collection} tiene un conteo inválido.`);
-  const openingTag = match[1].replace(/\bcount="\d+"/, `count="${count + 1}"`);
-  const updated = xml.replace(
-    pattern,
-    `${openingTag}${match[3]}${item}${match[4]}`,
-  );
-  return { xml: updated, index: count };
-}
-
-function setXmlAttribute(tag, name, value) {
-  const attribute = new RegExp(`\\b${name}="[^"]*"`);
-  if (attribute.test(tag)) return tag.replace(attribute, `${name}="${value}"`);
-  return tag.replace(/\/?>$/, (ending) => ` ${name}="${value}"${ending}`);
-}
-
-async function addRoleHighlightStyles(zip, outputSheetPaths) {
-  const styleFile = zip.file("xl/styles.xml");
-  if (!styleFile)
-    throw new Error("La plantilla Excel no contiene sus estilos.");
-  let stylesXml = await styleFile.async("string");
-  const fillIds = new Map();
-  for (const [combination, color] of Object.entries(ROLE_HIGHLIGHTS)) {
-    const result = appendStyleDefinition(
-      stylesXml,
-      "fills",
-      `<fill><patternFill patternType="solid"><fgColor rgb="${color}"/><bgColor indexed="64"/></patternFill></fill>`,
-    );
-    stylesXml = result.xml;
-    fillIds.set(combination, result.index);
-  }
-
-  const usedStyleIds = new Set();
-  for (const path of outputSheetPaths.values()) {
-    const sheet = zip.file(path);
-    if (!sheet) throw new Error(`No se encontró la hoja de plantilla ${path}.`);
-    const xml = await sheet.async("string");
-    const templateRow = xml.match(
-      /<row\b[^>]*\br="9"[^>]*>[\s\S]*?<\/row>/,
-    )?.[0];
-    if (!templateRow)
-      throw new Error(
-        `La hoja ${path} no contiene el formato de fila de datos.`,
-      );
-    for (const cell of templateRow.matchAll(/<c\b([^>]*)/g)) {
-      const styleId = cell[1].match(/\bs="(\d+)"/)?.[1];
-      if (styleId) usedStyleIds.add(Number(styleId));
-    }
-  }
-
-  const cellXfsMatch = stylesXml.match(
-    /(<cellXfs\b([^>]*)>)([\s\S]*?)(<\/cellXfs>)/,
-  );
-  if (!cellXfsMatch)
-    throw new Error("La plantilla no contiene la sección cellXfs de estilos.");
-  const styleCount = Number(cellXfsMatch[2].match(/\bcount="(\d+)"/)?.[1]);
-  if (!Number.isInteger(styleCount))
-    throw new Error("La sección cellXfs tiene un conteo inválido.");
-  const baseStyles = [
-    ...cellXfsMatch[3].matchAll(/<xf\b[^>]*\/>|<xf\b[^>]*>[\s\S]*?<\/xf>/g),
-  ].map((match) => match[0]);
-  const styleIdsByCombination = new Map();
-  const newStyles = [];
-  let nextStyleId = styleCount;
-
-  for (const [combination, fillId] of fillIds) {
-    const styleIds = new Map();
-    for (const styleId of usedStyleIds) {
-      const baseStyle = baseStyles[styleId];
-      if (!baseStyle)
-        throw new Error(
-          `La plantilla referencia un estilo inexistente: ${styleId}.`,
-        );
-      const highlightedStyle = baseStyle.replace(
-        /^<xf\b[^>]*\/?>/,
-        (openingTag) =>
-          setXmlAttribute(
-            setXmlAttribute(openingTag, "fillId", fillId),
-            "applyFill",
-            "1",
-          ),
-      );
-      styleIds.set(styleId, String(nextStyleId++));
-      newStyles.push(highlightedStyle);
-    }
-    styleIdsByCombination.set(combination, styleIds);
-  }
-
-  const openingTag = cellXfsMatch[1].replace(
-    /\bcount="\d+"/,
-    `count="${nextStyleId}"`,
-  );
-  stylesXml = stylesXml.replace(
-    /<cellXfs\b[^>]*>[\s\S]*?<\/cellXfs>/,
-    `${openingTag}${cellXfsMatch[3]}${newStyles.join("")}${cellXfsMatch[4]}`,
-  );
-  zip.file("xl/styles.xml", stylesXml);
-  return styleIdsByCombination;
 }
 
 function getRowNumber(xml) {
@@ -458,10 +390,6 @@ export async function generarExcelAsistentes(asistentes, periodo) {
   const asistentesUnicos = asistentesUnicosPorPersona(asistentes);
   const zip = await JSZip.loadAsync(await readFile(TEMPLATE_PATH));
   const outputSheetPaths = await conservarHojasDeControl(zip);
-  const roleHighlightStyles = await addRoleHighlightStyles(
-    zip,
-    outputSheetPaths,
-  );
   for (const assistant of asistentesUnicos) {
     if (!SUPPORTED_PARTICIPANT_TYPES.has(assistant.tipoParticipante)) {
       throw new Error(
@@ -480,20 +408,56 @@ export async function generarExcelAsistentes(asistentes, periodo) {
       { sensitivity: "base", numeric: true },
     ),
   );
+  const templateRow = [...xml.matchAll(/<row\b[^>]*\br="9"[^>]*>[\s\S]*?<\/row>/g)]
+    .map((match) => match[0])[0];
+  if (!templateRow) {
+    throw new Error(
+      "La hoja de participantes no contiene el formato de fila de datos.",
+    );
+  }
+  const templateStyles = new Map(
+    [...templateRow.matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)]
+      .map((cell) => {
+        const reference = cell[1].match(/\br="([A-Z]+)\d+"/)?.[1];
+        const styleId = cell[1].match(/\bs="(\d+)"/)?.[1];
+        return reference && styleId ? [reference, Number(styleId)] : null;
+      })
+      .filter(Boolean),
+  );
+  const fallbackStyle = templateStyles.get("AL") ?? 0;
+  const stylesForRow = new Set(
+    COLUMNS.map((_, index) =>
+      templateStyles.get(columnName(index + 1)) ?? fallbackStyle,
+    ),
+  );
+  const roleCombinationKeys = [
+    ...new Set(
+      sortedAssistants
+        .map((assistant) => rolesAsistente(assistant))
+        .filter((roles) => roles.length > 1)
+        .map(roleCombinationKey),
+    ),
+  ];
+  const multipleRoleStyles = await appendMultipleRoleCellStyles(
+    zip,
+    [...stylesForRow],
+    roleCombinationKeys,
+  );
   const updated = replaceWorksheetData(xml, (existingRows) => {
-    const templateRow = existingRows.find((row) => getRowNumber(row) === 9);
-    if (!templateRow)
-      throw new Error(
-        "La hoja de participantes no contiene el formato de fila de datos.",
-      );
+    const dataTemplateRow = existingRows.find((row) => getRowNumber(row) === 9);
     const headerAndTemplate = existingRows.filter(
       (row) => getRowNumber(row) < 9,
     );
     const generatedRows = sortedAssistants.map((assistant, index) =>
-      createDataRow(templateRow, assistant, 9 + index, roleHighlightStyles),
+      createDataRow(
+        dataTemplateRow,
+        assistant,
+        9 + index,
+        multipleRoleStyles,
+      ),
     );
     if (generatedRows.length === 0)
-      generatedRows.push(clearRowValues(templateRow));
+      generatedRows.push(clearRowValues(dataTemplateRow));
     return [...headerAndTemplate, ...generatedRows].join("");
   })
     .replace(/<dataValidations\b[^>]*>[\s\S]*?<\/dataValidations>/g, "")
@@ -704,7 +668,7 @@ function resizeWorksheetRanges(xml, lastRow) {
   return xml.replace(
     /<(dimension|autoFilter)\b([^>]*\bref=")([A-Z]+\d+):[A-Z]+\d+("[^>]*)\/>/g,
     (_match, tag, prefix, start, suffix) =>
-      `<${tag}${prefix}${start}:AQ${lastRow}${suffix}/>`,
+      `<${tag}${prefix}${start}:AR${lastRow}${suffix}/>`,
   );
 }
 
@@ -724,15 +688,15 @@ function addRolesHeaderAndColumns(xml) {
       const style = finalHeaderCell[0].match(/\bs="([^"]+)"/)?.[1];
       const styleAttribute = style ? ` s="${style}"` : "";
       const headers =
-        ["EGRESADO", "ESTUDIANTE", "COLABORADOR", "ADMINISTRATIVO"]
+        ["EGRESADO", "ESTUDIANTE", "DOCENTE", "ADMINISTRATIVO", "EXTERNO"]
           .map(
             (header, index) =>
               `<c r="${columnName(39 + index)}8"${styleAttribute} t="inlineStr"><is><t>${header}</t></is></c>`,
           )
           .join("") +
-        `<c r="AQ8"${styleAttribute} t="inlineStr"><is><t>NOMBRES</t></is></c>`;
+        `<c r="AR8"${styleAttribute} t="inlineStr"><is><t>NOMBRES</t></is></c>`;
       hasHeader = true;
-      return `<row${attributes.replace(/\bspans="1:38"/, 'spans="1:43"')}>${content}${headers}</row>`;
+      return `<row${attributes.replace(/\bspans="1:38"/, 'spans="1:44"')}>${content}${headers}</row>`;
     },
   );
   if (!hasHeader)
@@ -754,25 +718,165 @@ function addRolesHeaderAndColumns(xml) {
         (column) => {
           splitDefaultColumns = true;
           const remainder = column
-            .replace(/\bmin="39"/, 'min="43"')
+            .replace(/\bmin="39"/, 'min="45"')
             .replace(/\bwidth="[^"]*"/, 'width="11.42578125"')
             .replace(/\bmax="16384"/, 'max="16384"');
-          return `<col min="39" max="42" width="16" customWidth="1"/>${remainder}`;
+          return `<col min="39" max="43" width="16" customWidth="1"/><col min="44" max="44" width="24" customWidth="1"/>${remainder}`;
         },
       );
       const roleColumnWidths = splitDefaultColumns
-        ? remainingColumns.replace(
-            /<col\b([^>]*\bmin="43"[^>]*)\/>/,
-            '<col min="43" max="43" width="24" customWidth="1"/><col min="44" max="16384" width="11.42578125"/>',
-          )
-        : `${remainingColumns}<col min="39" max="42" width="16" customWidth="1"/><col min="43" max="43" width="24" customWidth="1"/>`;
+        ? remainingColumns
+        : `${remainingColumns}<col min="39" max="43" width="16" customWidth="1"/><col min="44" max="44" width="24" customWidth="1"/><col min="45" max="16384" width="11.42578125"/>`;
       return `<cols${attributes}>${roleColumnWidths}</cols>`;
     },
   );
-  return updated.replace(/spans="1:38"/g, 'spans="1:43"');
+  return updated.replace(/spans="1:38"/g, 'spans="1:44"');
 }
 
-function createDataRow(templateRow, assistant, rowNumber, roleHighlightStyles) {
+async function appendMultipleRoleCellStyles(
+  zip,
+  baseStyleIds,
+  roleCombinationKeys,
+) {
+  const stylesFile = zip.file("xl/styles.xml");
+  if (!stylesFile) {
+    throw new Error("La plantilla no contiene los estilos de Excel.");
+  }
+  let stylesXml = await stylesFile.async("string");
+  const fontsMatch = stylesXml.match(
+    /<fonts\b([^>]*)>([\s\S]*?)<\/fonts>/,
+  );
+  const fillsMatch = stylesXml.match(
+    /<fills\b([^>]*)>([\s\S]*?)<\/fills>/,
+  );
+  const xfsMatch = stylesXml.match(
+    /<cellXfs\b([^>]*)>([\s\S]*?)<\/cellXfs>/,
+  );
+  if (!fontsMatch || !fillsMatch || !xfsMatch) {
+    throw new Error("No se pudieron leer los estilos de la plantilla Excel.");
+  }
+  const fonts = [...fontsMatch[2].matchAll(/<font\b[^>]*>[\s\S]*?<\/font>/g)]
+    .map((match) => match[0]);
+  const fills = [...fillsMatch[2].matchAll(/<fill\b[^>]*>[\s\S]*?<\/fill>/g)]
+    .map((match) => match[0]);
+  const xfs = [...xfsMatch[2].matchAll(/<xf\b[^>]*\/>|<xf\b[^>]*>[\s\S]*?<\/xf>/g)]
+    .map((match) => match[0]);
+  const fontIds = new Set(
+    baseStyleIds.map((styleId) => {
+      const baseXf = xfs[styleId];
+      if (!baseXf) {
+        throw new Error("Un formato de celda de la plantilla Excel no es válido.");
+      }
+      return Number(baseXf.match(/\bfontId="(\d+)"/)?.[1] || 0);
+    }),
+  );
+  const underlinedFontIds = new Map();
+  let updatedFonts = stylesXml;
+  for (const fontId of fontIds) {
+    const baseFont = fonts[fontId];
+    if (!baseFont) {
+      throw new Error("Un formato de texto de la plantilla Excel no es válido.");
+    }
+    const underlinedFont = baseFont
+      .replace(/<u\b[^>]*(?:\/>|>[\s\S]*?<\/u>)/g, "")
+      .replace(/<\/font>$/, "<u val=\"single\"/></font>");
+    const nextFontId = fonts.length + underlinedFontIds.size;
+    underlinedFontIds.set(fontId, nextFontId);
+    const count = Number(fontsMatch[1].match(/\bcount="(\d+)"/)?.[1]) || fonts.length;
+    updatedFonts = updatedFonts.replace(
+      /<fonts\b([^>]*)>([\s\S]*?)<\/fonts>/,
+      (_match, attributes, content) => {
+        const updatedAttributes = attributes.replace(
+          /\bcount="\d+"/,
+          `count="${count + underlinedFontIds.size}"`,
+        );
+        return `<fonts${updatedAttributes}>${content}${underlinedFont}</fonts>`;
+      },
+    );
+  }
+
+  const combinationFillIds = new Map(
+    roleCombinationKeys.map((key, index) => [key, fills.length + index]),
+  );
+  const pastelFills = roleCombinationKeys
+    .map((key) => {
+      const color = pastelRoleCombinationColor(key);
+      return `<fill><patternFill patternType="solid"><fgColor rgb="${color}"/><bgColor rgb="${color}"/></patternFill></fill>`;
+    })
+    .join("");
+  const updatedFills = updatedFonts.replace(
+    /<fills\b([^>]*)>([\s\S]*?)<\/fills>/,
+    (_match, attributes, content) => {
+      const count = Number(fillsMatch[1].match(/\bcount="(\d+)"/)?.[1]) || fills.length;
+      const updatedAttributes = attributes.replace(
+        /\bcount="\d+"/,
+        `count="${count + roleCombinationKeys.length}"`,
+      );
+      return `<fills${updatedAttributes}>${content}${pastelFills}</fills>`;
+    },
+  );
+  const stylesByRoleCombination = new Map();
+  let updatedXfs = updatedFills.replace(
+    /<cellXfs\b([^>]*)>([\s\S]*?)<\/cellXfs>/,
+    (_match, attributes, content) => {
+      const xfCount =
+        Number(attributes.match(/\bcount="(\d+)"/)?.[1]) || xfs.length;
+      let nextXfId = xfCount;
+      const newStyles = roleCombinationKeys.flatMap((key) => {
+        const baseStyleToPastelStyle = new Map();
+        stylesByRoleCombination.set(key, baseStyleToPastelStyle);
+        const fillId = combinationFillIds.get(key);
+        return baseStyleIds.map((baseStyleId) => {
+          const baseXf = xfs[baseStyleId];
+          const baseOpeningTag = baseXf.match(/^<xf\b[^>]*>/)?.[0];
+          if (!baseOpeningTag) {
+            throw new Error("El formato de celda de la plantilla Excel no es válido.");
+          }
+          let openingTag = baseOpeningTag.replace(
+            /\bfontId="\d+"/,
+            `fontId="${underlinedFontIds.get(
+              Number(baseXf.match(/\bfontId="(\d+)"/)?.[1] || 0),
+            )}"`,
+          );
+          if (!/\bfontId="\d+"/.test(baseOpeningTag)) {
+            openingTag = openingTag.replace(/\/?>$/, (close) =>
+              ` fontId="${underlinedFontIds.get(0)}"${close}`,
+            );
+          }
+          openingTag = openingTag.replace(/\bfillId="\d+"/, `fillId="${fillId}"`);
+          if (!/\bfillId="\d+"/.test(baseOpeningTag)) {
+            openingTag = openingTag.replace(/\/?>$/, (close) =>
+              ` fillId="${fillId}"${close}`,
+            );
+          }
+          openingTag = openingTag.replace(/\bapplyFont="[^"]+"/, 'applyFont="1"');
+          if (!/\bapplyFont="[^"]+"/.test(baseOpeningTag)) {
+            openingTag = openingTag.replace(/\/?>$/, (close) =>
+              ` applyFont="1"${close}`,
+            );
+          }
+          openingTag = openingTag.replace(/\bapplyFill="[^"]+"/, 'applyFill="1"');
+          if (!/\bapplyFill="[^"]+"/.test(baseOpeningTag)) {
+            openingTag = openingTag.replace(/\/?>$/, (close) =>
+              ` applyFill="1"${close}`,
+            );
+          }
+          baseStyleToPastelStyle.set(baseStyleId, nextXfId++);
+          return baseXf.replace(baseOpeningTag, openingTag);
+        });
+      });
+      const updatedAttributes = attributes.replace(
+        /\bcount="\d+"/,
+        `count="${nextXfId}"`,
+      );
+      return `<cellXfs${updatedAttributes}>${content}${newStyles.join("")}</cellXfs>`;
+    },
+  );
+  zip.file("xl/styles.xml", updatedXfs);
+  return stylesByRoleCombination;
+}
+
+function createDataRow(templateRow, assistant, rowNumber, multipleRoleStyles) {
   const rowAttributes = templateRow.match(/<row\b([^>]*)>/)?.[1] || "";
   const styles = new Map();
   for (const cell of templateRow.matchAll(
@@ -784,9 +888,9 @@ function createDataRow(templateRow, assistant, rowNumber, roleHighlightStyles) {
   }
 
   const roles = new Set(rolesAsistente(assistant));
-  const roleCombination = combinacionRoles(assistant);
-  const highlightedStyles = roleCombination
-    ? roleHighlightStyles.get(roleCombination)
+  const multipleRoles = roles.size > 1;
+  const roleStyles = multipleRoles
+    ? multipleRoleStyles.get(roleCombinationKey([...roles]))
     : null;
   const values = COLUMNS.map((column) => {
     const role = ROLE_COLUMNS[column];
@@ -800,10 +904,12 @@ function createDataRow(templateRow, assistant, rowNumber, roleHighlightStyles) {
   const cells = values
     .map((value, index) => {
       const columnNumber = index + 1;
-      const reference = `${columnName(columnNumber)}${rowNumber}`;
-      const baseStyle =
-        styles.get(columnName(columnNumber)) || styles.get("AL");
-      const style = highlightedStyles?.get(Number(baseStyle)) || baseStyle;
+      const column = columnName(columnNumber);
+      const reference = `${column}${rowNumber}`;
+      const baseStyle = styles.get(column) || styles.get("AL");
+      const style = multipleRoles
+        ? roleStyles?.get(Number(baseStyle)) ?? baseStyle
+        : baseStyle;
       const styleAttribute = style ? ` s="${style}"` : "";
       if (value === "")
         return styleAttribute ? `<c r="${reference}"${styleAttribute}/>` : "";
@@ -831,7 +937,7 @@ function createDataRow(templateRow, assistant, rowNumber, roleHighlightStyles) {
 
   const attributes = rowAttributes
     .replace(/\br="9"/, `r="${rowNumber}"`)
-    .replace(/\bspans="1:38"/, 'spans="1:43"');
+    .replace(/\bspans="1:38"/, 'spans="1:44"');
   return `<row${attributes}>${cells}</row>`;
 }
 

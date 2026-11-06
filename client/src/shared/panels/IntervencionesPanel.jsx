@@ -20,10 +20,11 @@
      - nombreEstudiante  -> nombre a mostrar cuando el estudiante está fijado.
    ========================================================================== */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import { apiFetch } from "../api/client.js";
 import { formatDateTime, formatTime } from "../utils/formatDateTime.js";
+import { useAuth } from "../context/AuthContext.jsx";
 
 const listIntervenciones = () => apiFetch("/intervenciones");
 const crearIntervencion = (data) => apiFetch("/intervenciones", { method: "POST", body: data });
@@ -46,7 +47,16 @@ function leerBorrador() {
 }
 
 export default function IntervencionesPanel({ codigoEstudiante = null, nombreEstudiante = null }) {
+  const { user } = useAuth();
   const fijo = codigoEstudiante != null;
+  const progUser = (user?.programa || "").trim().toLowerCase();
+  const tieneProgFijo = Boolean(progUser) &&
+    progUser !== "todos" &&
+    progUser !== "no asignado" &&
+    progUser !== "programa institucional";
+  const esRestringidoAPrograma = (user?.rol === "directivo" || String(user?.cargo || "").toLowerCase().includes("docente")) &&
+    user?.rol !== "admin" &&
+    tieneProgFijo;
   const [searchParams] = useSearchParams();
   const [intervenciones, setIntervenciones] = useState([]);
   const [estudiantes, setEstudiantes] = useState([]);
@@ -164,9 +174,30 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
     }
   }
 
-  const intervencionesVisibles = fijo
-    ? intervenciones.filter((i) => i.codigoEstudiante === codigoEstudiante)
-    : intervenciones;
+  const estudiantesFiltrados = useMemo(() => {
+    if (!esRestringidoAPrograma || !tieneProgFijo) return estudiantes;
+    return estudiantes.filter((e) => {
+      const p = String(e.programa || "").toLowerCase();
+      return p.includes(progUser) || progUser.includes(p);
+    });
+  }, [estudiantes, esRestringidoAPrograma, tieneProgFijo, progUser]);
+
+  const intervencionesVisibles = useMemo(() => {
+    let lista = fijo
+      ? intervenciones.filter((i) => i.codigoEstudiante === codigoEstudiante)
+      : intervenciones;
+    if (esRestringidoAPrograma && tieneProgFijo) {
+      const uNom = (user?.nombre || "").toLowerCase();
+      lista = lista.filter((i) => {
+        const progEst = String(i.programaEstudiante || "").toLowerCase();
+        const coincide = progEst.includes(progUser) || progUser.includes(progEst);
+        const esMio = (i.idUsuarioAtendio && i.idUsuarioAtendio === user.id) ||
+                      (i.atendidoPor && uNom && i.atendidoPor.toLowerCase().includes(uNom));
+        return coincide || esMio;
+      });
+    }
+    return lista;
+  }, [fijo, intervenciones, codigoEstudiante, esRestringidoAPrograma, tieneProgFijo, progUser, user]);
 
   function abrirModal(intervencion) {
     setModalIntervencion(intervencion);
@@ -250,7 +281,7 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
                   onChange={(e) => setForm({ ...form, codigoEstudiante: e.target.value })}
                 >
                   <option value="">-- Seleccione estudiante --</option>
-                  {estudiantes.map((e) => (
+                  {estudiantesFiltrados.map((e) => (
                     <option key={e.codigo} value={e.codigo}>
                       {e.nombres} {e.apellidos} (Cód: {e.codigo} - {e.programa})
                     </option>

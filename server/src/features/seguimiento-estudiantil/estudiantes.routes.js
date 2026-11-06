@@ -22,7 +22,7 @@ import { Router } from "express";
 import { MOCK_DATA } from "../../shared/data/mockData.js";
 import { identifyUser, requireModule } from "../../shared/middleware/requireRole.js";
 import { sanitizarIntervencion } from "../../shared/security/vbg.js";
-import { directivoPuedeVerEstudiante } from "../../shared/security/alcanceDirectivo.js";
+import { directivoPuedeVerEstudiante, esUsuarioRestringidoAPrograma, coincidePrograma } from "../../shared/security/alcanceDirectivo.js";
 import { query } from "../../shared/db/pool.js";
 
 const router = Router();
@@ -558,6 +558,11 @@ router.get("/", async (req, res, next) => {
       }
     });
 
+    if (esUsuarioRestringidoAPrograma(req.user)) {
+      resultados = resultados.filter((e) => coincidePrograma(e.programa, req.user.programa));
+    } else if (req.user.rol === "directivo") {
+      resultados = resultados.filter((e) => directivoPuedeVerEstudiante(req.user, e));
+    }
     res.json(resultados);
   } catch (err) {
     next(err);

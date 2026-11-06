@@ -31,6 +31,7 @@ export const MENU_CONFIG = [
         name: "Alertas Manuales",
         icon: "fa-bell",
         href: "alertas",
+        roles: ["admin", "profesional", "directivo", "reporte_actividades"],
       },
       {
         id: "remisiones",
@@ -61,7 +62,7 @@ export const MENU_CONFIG = [
   },
   {
     title: "Actividades VEC",
-    roles: ["admin", "reporte_actividades"],
+    roles: ["admin", "profesional", "reporte_actividades"],
     items: [
       {
         id: "actividades",
@@ -99,7 +100,7 @@ export const MENU_CONFIG = [
 
 export const MODULE_ROLES = Object.fromEntries(
   MENU_CONFIG.flatMap((section) =>
-    section.items.map((item) => [item.id, section.roles]),
+    section.items.map((item) => [item.id, item.roles || section.roles]),
   ),
 );
 

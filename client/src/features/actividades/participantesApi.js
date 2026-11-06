@@ -18,9 +18,16 @@ export function getResumenParticipantes() {
   return apiFetch("/actividades/participantes/resumen");
 }
 
-export function getParticipantes({ limite = 100 } = {}) {
+export function getParticipantes({ limite = 100, busqueda = "" } = {}) {
   const params = new URLSearchParams({ limite: String(limite) });
+  if (busqueda.trim()) params.set("busqueda", busqueda.trim());
   return apiFetch(`/actividades/participantes?${params.toString()}`);
+}
+
+export function sincronizarPerfilesInstitucionales() {
+  return apiFetch("/actividades/participantes/sincronizacion-institucional", {
+    method: "POST",
+  });
 }
 
 export function eliminarPersonaParticipanteDefinitivamente(
@@ -59,10 +66,11 @@ export function getEventosProximos({ signal } = {}) {
   return apiFetch("/actividades/participantes/eventos-proximos", { signal });
 }
 
-export function getActividades({ busqueda = "", estado = "" } = {}) {
+export function getActividades({ busqueda = "", estado = "", ids = [] } = {}) {
   const params = new URLSearchParams();
   if (busqueda) params.set("busqueda", busqueda);
   if (estado) params.set("estado", estado);
+  ids.forEach((id) => params.append("id", id));
   return apiFetch(`/actividades/participantes/eventos?${params.toString()}`);
 }
 
@@ -119,6 +127,13 @@ export function eliminarActividad(id) {
   );
 }
 
+export function eliminarActividades(ids) {
+  return apiFetch("/actividades/participantes/eventos/eliminar-lote", {
+    method: "POST",
+    body: { ids },
+  });
+}
+
 export function getParticipantesActividad(id) {
   return apiFetch(
     `/actividades/participantes/eventos/${encodeURIComponent(id)}/participantes`,
@@ -147,12 +162,6 @@ export function corregirTipoApoyoInscripcion(id, { idTipoApoyo, motivo }) {
       method: "PATCH",
       body: { idTipoApoyo, motivo },
     },
-  );
-}
-
-export function getAuditoriaInscripcion(id) {
-  return apiFetch(
-    `/actividades/participantes/inscripciones/${encodeURIComponent(id)}/auditoria`,
   );
 }
 

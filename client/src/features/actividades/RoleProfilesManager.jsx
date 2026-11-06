@@ -6,17 +6,22 @@ import {
   eliminarPerfilPorRol,
   getPerfilesPorRol,
 } from "./participantesApi.js";
+import {
+  claseRolInstitucional,
+  etiquetaRolInstitucional,
+} from "./rolePresentation.js";
 
 const ROLES = [
-  { value: "COLABORADOR", label: "Colaboradores", singular: "Colaborador", icon: "fa-user-tie" },
+  { value: "COLABORADOR", label: "Docentes", singular: "Docente", icon: "fa-user-tie" },
   { value: "ADMINISTRATIVO", label: "Administrativos", singular: "Administrativo", icon: "fa-user-gear" },
   { value: "EGRESADO", label: "Egresados", singular: "Egresado", icon: "fa-user-graduate" },
   { value: "EXTERNO", label: "Externos", singular: "Externo", icon: "fa-user-group" },
 ];
 const ROLE_LABELS = {
   ESTUDIANTE: "Estudiante",
+  DOCENTE: "Docente",
   EGRESADO: "Egresado",
-  COLABORADOR: "Colaborador",
+  COLABORADOR: "Docente",
   ADMINISTRATIVO: "Administrativo",
   EXTERNO: "Externo",
 };
@@ -71,6 +76,20 @@ const GENDERS = [
 
 function dateValue(value) {
   return value ? String(value).slice(0, 10) : "";
+}
+
+function normalizeRole(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  return normalized === "DOCENTE" ? "COLABORADOR" : normalized;
+}
+
+function otherRolesFor(person, selectedRole) {
+  const primaryRole = normalizeRole(person.rol || selectedRole);
+  return [...new Set(
+    (Array.isArray(person.roles) ? person.roles : [])
+      .map(normalizeRole)
+      .filter((item) => item && item !== primaryRole),
+  )];
 }
 
 function displayGender(value) {
@@ -192,7 +211,7 @@ export default function RoleProfilesManager({ refreshKey = 0, onChanged }) {
   }
 
   function availableRolesFor(person) {
-    const existingRoles = new Set((person.roles || []).map((item) => String(item).toUpperCase()));
+    const existingRoles = new Set((person.roles || []).map(normalizeRole));
     if (existingRoles.has("EXTERNO")) return [];
     return ROLES.filter((item) => (
       !existingRoles.has(item.value)
@@ -261,7 +280,7 @@ export default function RoleProfilesManager({ refreshKey = 0, onChanged }) {
 
   const selectedRole = ROLES.find((item) => item.value === role);
   const editingProtected = Boolean(editing?.datosPersonalesProtegidos);
-  const deletingProtected = Boolean(deleteTarget?.tieneRolEstudiante);
+  const deletingProtected = Boolean(deleteTarget?.quitarSoloRol || deleteTarget?.tieneRolEstudiante);
   const deleteEnrollmentCount = Number(
     deletingProtected ? deleteTarget?.totalInscripciones : deleteTarget?.totalInscripcionesPersona,
   ) || 0;
@@ -275,15 +294,15 @@ export default function RoleProfilesManager({ refreshKey = 0, onChanged }) {
         <div>
           <span className="vec-profile-import__eyebrow">CONSULTA Y MANTENIMIENTO</span>
           <h2 id="vec-role-profiles-title">Personas por rol</h2>
-          <p>Encuentra una persona, revisa sus roles y administra su ficha sin confundir los cambios que puedes hacer.</p>
+          <p>Busca perfiles, revisa sus roles y administra cada cambio con claridad.</p>
         </div>
       </header>
 
       <div className="vec-role-profiles__guide" role="note">
         <span className="vec-role-profiles__guide-icon" aria-hidden="true"><i className="fas fa-circle-info"></i></span>
         <div>
-          <strong>¿Qué puedes hacer aquí?</strong>
-          <p><b>Agregar rol</b> conserva los actuales; <b>Editar</b> actualiza la ficha; <b>Quitar rol</b> conserva a estudiantes, mientras que <b>Borrar definitivamente</b> elimina a quien no es estudiante.</p>
+          <strong>Acciones disponibles</strong>
+          <p><b>Agregar</b> suma un perfil; <b>Editar</b> modifica el perfil seleccionado; <b>Quitar rol</b> retira solo ese perfil y sus inscripciones; <b>Borrar persona</b> elimina todos sus perfiles, inscripciones y datos vinculados.</p>
         </div>
       </div>
 
@@ -346,37 +365,122 @@ export default function RoleProfilesManager({ refreshKey = 0, onChanged }) {
             <span className="vec-role-profiles__result-count">{profiles.length}{profiles.length === 500 ? "+" : ""} perfiles</span>
           </div>
           <div className="vec-role-profiles__table-wrap">
-            <table className="vec-role-profiles__table">
+            <table className={`vec-role-profiles__table${role === "COLABORADOR" ? " vec-role-profiles__table--collaborators" : ""}`}>
               <thead>
-                <tr><th>Persona</th><th>Perfil seleccionado</th><th>Otros roles</th><th>Actividades</th><th>¿Qué deseas hacer?</th></tr>
+                {role === "COLABORADOR" ? (
+                  <tr>
+                    <th>Persona / usuario</th>
+                    <th>Identificación / código</th>
+                    <th>Rol en el sistema</th>
+                    <th>Cargo / perfil</th>
+                    <th>Programa</th>
+                    <th>Actividades</th>
+                    <th>¿Qué deseas hacer?</th>
+                  </tr>
+                ) : (
+                  <tr><th>Persona</th><th>Perfil seleccionado</th><th>Otros roles</th><th>Actividades</th><th>¿Qué deseas hacer?</th></tr>
+                )}
               </thead>
               <tbody>
                 {profiles.map((person) => (
                   <tr key={person.id}>
-                    <td data-label="Persona">
+                    <td data-label={role === "COLABORADOR" ? "Persona / usuario" : "Persona"}>
                       <strong>{[person.nombres, person.apellidos].filter(Boolean).join(" ") || "Sin nombre"}</strong>
-                      <small><i className="fas fa-id-card" aria-hidden="true"></i> {person.identificacion || "Sin documento"}</small>
+                      {role !== "COLABORADOR" && (
+                        <small><i className="fas fa-id-card" aria-hidden="true"></i> {person.identificacion || "Sin documento"}</small>
+                      )}
                       <small><i className="fas fa-envelope" aria-hidden="true"></i> {person.correo || "Sin correo"}</small>
                     </td>
-                    <td data-label="Perfil seleccionado">
-                      <span className={`vec-role-badge vec-role-${String(person.rol).toLowerCase()}`}>
-                        {ROLE_LABELS[person.rol] || person.rol}
-                      </span>
-                      <span className="vec-role-profiles__role-data">{person.programaAcademico || person.programaPosgradoDependencia || person.dependencia || person.cargo || "Sin datos adicionales"}</span>
-                      {person.cargo && person.dependencia && <small>{person.cargo} · {person.dependencia}</small>}
-                    </td>
-                    <td data-label="Otros roles">
-                      {(person.roles || []).some((item) => item !== person.rol) ? (
-                        <div className="vec-role-profiles__badges">
-                          {person.roles.filter((item) => item !== person.rol).map((item) => (
-                            <span className={`vec-role-badge vec-role-${item.toLowerCase()}`} key={item}>{ROLE_LABELS[item] || item}</span>
-                          ))}
-                        </div>
-                      ) : <span className="vec-role-profiles__no-other-roles">Sin otros roles</span>}
-                      {person.datosPersonalesProtegidos && (
-                        <small className="vec-role-profiles__protected"><i className="fas fa-lock" aria-hidden="true"></i> Datos personales protegidos</small>
-                      )}
-                    </td>
+                    {role === "COLABORADOR" ? (
+                      <>
+                        <td data-label="Identificación / código">
+                          <strong>{person.identificacion || "Sin documento"}</strong>
+                          <small><i className="fas fa-hashtag" aria-hidden="true"></i> {person.codigoDocente || person.codigo || "Sin código"}</small>
+                        </td>
+                        <td data-label="Rol en el sistema">
+                          {person.docenteSincronizado ? (
+                            <span className="vec-role-badge vec-role-docente-sincronizado">Docente sincronizado</span>
+                          ) : (
+                            <span className="vec-role-badge vec-role-sin-registro">Sin registro docente</span>
+                          )}
+                          <span className={`vec-role-account-badge ${person.tieneCuenta ? "is-linked" : "is-unlinked"}`}>
+                            {person.tieneCuenta ? "Con cuenta" : "Sin cuenta"}
+                          </span>
+                          {person.rolesInstitucionales?.length > 0 && (
+                            <div className="vec-role-profiles__selected-institutional">
+                              <span className="vec-role-profiles__selected-institutional-label">Roles asignados</span>
+                              <div className="vec-role-profiles__badges">
+                                {person.rolesInstitucionales.map((institutionalRole) => (
+                                  <span
+                                    className={`vec-role-badge vec-role-${claseRolInstitucional(institutionalRole)}`}
+                                    key={institutionalRole}
+                                    title={institutionalRole}
+                                  >
+                                    {etiquetaRolInstitucional(institutionalRole)}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {otherRolesFor(person, selectedRole.value).length > 0 && (
+                            <div className="vec-role-profiles__selected-institutional">
+                              <span className="vec-role-profiles__selected-institutional-label">Otros perfiles</span>
+                              <div className="vec-role-profiles__badges">
+                                {otherRolesFor(person, selectedRole.value).map((item) => (
+                                  <span className={`vec-role-badge vec-role-${item.toLowerCase()}`} key={item}>{ROLE_LABELS[item] || item}</span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </td>
+                        <td data-label="Cargo / perfil">
+                          <strong>{person.cargoDocente || person.cargo || "Sin cargo registrado"}</strong>
+                        </td>
+                        <td data-label="Programa">
+                          {person.programaDocente || person.programaAcademico || person.programaPosgradoDependencia || person.dependencia || "No asignado"}
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td data-label="Perfil seleccionado">
+                          <span className={`vec-role-badge vec-role-${normalizeRole(person.rol || selectedRole.value).toLowerCase()}`}>
+                            {ROLE_LABELS[normalizeRole(person.rol || selectedRole.value)] || person.rol || selectedRole.singular}
+                          </span>
+                          {person.rolesInstitucionales?.length > 0 && (
+                            <div className="vec-role-profiles__selected-institutional">
+                              <span className="vec-role-profiles__selected-institutional-label">
+                                Roles institucionales
+                              </span>
+                              <div className="vec-role-profiles__badges">
+                                {person.rolesInstitucionales.map((institutionalRole) => (
+                                  <span
+                                    className={`vec-role-badge vec-role-${claseRolInstitucional(institutionalRole)}`}
+                                    key={institutionalRole}
+                                    title={institutionalRole}
+                                  >
+                                    {etiquetaRolInstitucional(institutionalRole)}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          <span className="vec-role-profiles__role-data">{person.programaAcademico || person.programaPosgradoDependencia || person.dependencia || person.cargo || "Sin datos adicionales"}</span>
+                          {person.cargo && person.dependencia && <small>{person.cargo} · {person.dependencia}</small>}
+                        </td>
+                        <td data-label="Otros roles">
+                          {otherRolesFor(person, selectedRole.value).length ? (
+                            <div className="vec-role-profiles__badges">
+                              {otherRolesFor(person, selectedRole.value).map((item) => (
+                                <span className={`vec-role-badge vec-role-${item.toLowerCase()}`} key={item}>{ROLE_LABELS[item] || item}</span>
+                              ))}
+                            </div>
+                          ) : <span className="vec-role-profiles__no-other-roles">Sin otros roles</span>}
+                          {person.datosPersonalesProtegidos && (
+                            <small className="vec-role-profiles__protected"><i className="fas fa-lock" aria-hidden="true"></i> Datos personales protegidos</small>
+                          )}
+                        </td>
+                      </>
+                    )}
                     <td data-label="Actividades">
                       <span className="vec-role-profiles__enrollments">{person.totalInscripciones}</span>
                       <small>{Number(person.totalInscripciones) === 1 ? "actividad" : "actividades"}</small>
@@ -385,37 +489,58 @@ export default function RoleProfilesManager({ refreshKey = 0, onChanged }) {
                       <div className="vec-role-profiles__actions">
                         {availableRolesFor(person).length > 0 && (
                           <button
-                            className="btn btn-outline btn-sm"
+                            className="btn btn-outline btn-sm vec-role-profiles__action--add"
                             type="button"
                             onClick={() => beginAddRole(person)}
                             aria-label={`Agregar otro rol a ${person.nombres} ${person.apellidos}`}
                             title="Agregar un rol sin quitar los que ya tiene"
                           >
                             <i className="fas fa-user-plus" aria-hidden="true"></i>
+                            <span>Agregar</span>
                           </button>
                         )}
-                        <button className="btn btn-outline btn-sm" type="button" onClick={() => beginEdit(person)} aria-label={`Editar perfil de ${person.nombres} ${person.apellidos}`} title="Editar los datos de este perfil">
+                        {!person.tieneRolEstudiante
+                          && otherRolesFor(person, selectedRole.value).length > 0 && (
+                          <button
+                            className="btn btn-outline btn-sm vec-role-profiles__action--remove"
+                            type="button"
+                            onClick={() => {
+                              setDeleteConfirmation("");
+                              setDeleteTarget({ ...person, quitarSoloRol: true });
+                            }}
+                            title={`Quitar solo el rol ${selectedRole.singular} y conservar los demás`}
+                            aria-label={`Quitar solo el rol ${selectedRole.singular} de ${person.nombres} ${person.apellidos}`}
+                          >
+                            <i className="fas fa-user-minus" aria-hidden="true"></i>
+                            <span>Quitar rol</span>
+                          </button>
+                        )}
+                        <button className="btn btn-outline btn-sm vec-role-profiles__action--edit" type="button" onClick={() => beginEdit(person)} aria-label={`Editar perfil de ${person.nombres} ${person.apellidos}`} title="Editar los datos de este perfil">
                           <i className="fas fa-pen" aria-hidden="true"></i>
+                          <span>Editar</span>
                         </button>
                         <button
-                          className="btn btn-danger btn-sm"
+                          className="btn btn-danger btn-sm vec-role-profiles__action--delete"
                           type="button"
                           onClick={() => {
                             setDeleteConfirmation("");
                             setDeleteTarget(person);
                           }}
-                          title={person.tieneRolEstudiante ? "Quitar solo este rol; conservar estudiante" : "Borrar definitivamente esta persona"}
-                          aria-label={`${person.tieneRolEstudiante ? "Quitar el rol" : "Borrar definitivamente"} ${selectedRole.singular} de ${person.nombres} ${person.apellidos}`}
+                          title={person.tieneRolEstudiante ? "Quitar solo este rol; conservar a la persona estudiante" : "Borrar definitivamente a la persona, sus perfiles y datos vinculados"}
+                          aria-label={`${person.tieneRolEstudiante ? "Quitar el rol" : "Borrar definitivamente a la persona"} ${selectedRole.singular} de ${person.nombres} ${person.apellidos}`}
                         >
                           <i className={`fas ${person.tieneRolEstudiante ? "fa-user-minus" : "fa-trash-can"}`} aria-hidden="true"></i>
+                          <span>{person.tieneRolEstudiante ? "Quitar rol" : "Borrar persona"}</span>
                         </button>
                       </div>
                       {Number(person.totalInscripciones) > 0 && (
                         <small className="vec-role-profiles__delete-hint">
                           <i className="fas fa-circle-info" aria-hidden="true"></i>
                           {person.tieneRolEstudiante
-                            ? ` Al quitar el rol, también saldrá de ${person.totalInscripciones} actividad(es).`
-                            : ` Al borrar, también se eliminará de ${person.totalInscripciones} actividad(es).`}
+                            ? ` Quitar el rol también elimina sus ${person.totalInscripciones} inscripción(es) de este perfil.`
+                            : otherRolesFor(person, selectedRole.value).length > 0
+                              ? ` Quitar rol: ${person.totalInscripciones} inscripción(es) de este perfil. Borrar persona: todos sus perfiles y ${Number(person.totalInscripcionesPersona) || 0} inscripción(es).`
+                              : ` Borrar persona: todos sus perfiles y ${Number(person.totalInscripcionesPersona) || 0} inscripción(es).`}
                         </small>
                       )}
                     </td>
@@ -551,16 +676,16 @@ export default function RoleProfilesManager({ refreshKey = 0, onChanged }) {
               <i className={`fas ${deletingProtected ? "fa-user-shield" : "fa-triangle-exclamation"}`}></i>
             </span>
             <h3 id="vec-role-profiles-delete-title">
-              {deletingProtected ? "¿Quitar solo el rol extra?" : "¿Borrar definitivamente a esta persona?"}
+              {deletingProtected ? "¿Quitar solo el rol seleccionado?" : "¿Borrar definitivamente a esta persona?"}
             </h3>
             {deletingProtected ? (
               <div className="vec-role-profiles__delete-warning is-protected" role="alert">
                 <strong>{[deleteTarget.nombres, deleteTarget.apellidos].filter(Boolean).join(" ")}</strong>
                 <span>
-                  Esta persona también es estudiante. Al confirmar, solo quitaremos su rol extra <strong>{deleteTarget.rol}</strong> de Actividades.
+                  Al confirmar, solo quitaremos su rol <strong>{deleteTarget.rol}</strong> de Actividades.
                 </span>
                 <span>
-                  <strong>El rol Estudiante, la persona y sus datos se conservarán.</strong>
+                  <strong>La persona, sus demás roles y sus datos se conservarán.</strong>
                   {deleteEnrollmentCount > 0 && ` También la quitaremos de ${deleteEnrollmentCount} actividad(es).`}
                 </span>
               </div>
@@ -568,9 +693,9 @@ export default function RoleProfilesManager({ refreshKey = 0, onChanged }) {
               <div className="vec-role-profiles__delete-warning" role="alert">
                 <strong>{[deleteTarget.nombres, deleteTarget.apellidos].filter(Boolean).join(" ")}</strong>
                 <span>
-                  Se borrarán todos sus perfiles, sus {deleteEnrollmentCount} inscripción(es), sus datos personales y sus registros vinculados.
+                  Se borrarán todos sus perfiles de Actividades, sus {deleteEnrollmentCount} inscripción(es), sus datos personales, sus cuentas asociadas y sus registros docentes vinculados.
                 </span>
-                <span>Este borrado es permanente y no se puede deshacer.</span>
+                <span><strong>Este borrado es permanente y no se puede deshacer.</strong> Si solo necesitas retirar el perfil seleccionado, cancela y usa “Quitar rol”.</span>
               </div>
             )}
             {!deletingProtected && (

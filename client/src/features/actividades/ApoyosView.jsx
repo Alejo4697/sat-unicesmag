@@ -3,7 +3,8 @@ import { getBeneficiariosApoyo, getCatalogosEstudiante } from "./participantesAp
 
 const ETIQUETAS_ROL = {
   ESTUDIANTE: "Estudiante",
-  COLABORADOR: "Colaborador",
+  DOCENTE: "Docente",
+  COLABORADOR: "Docente",
   ADMINISTRATIVO: "Administrativo",
   EGRESADO: "Egresado",
   EXTERNO: "Externo",
@@ -136,14 +137,31 @@ export default function ApoyosView() {
                 </thead>
                 <tbody>
                   {resultado.beneficiarios.map((persona) => (
-                    <tr key={persona.id}>
+                    <tr
+                      className={(persona.roles || []).length > 1 ? "vec-multiple-roles" : undefined}
+                      key={persona.id}
+                    >
                       <td>
                         <div className="vec-support-person">
                           <span className="vec-support-person__avatar" aria-hidden="true">
                             {(persona.nombres || persona.apellidos || "P").trim().charAt(0).toLocaleUpperCase("es")}
                           </span>
                           <span className="vec-support-person__details">
-                            <strong>{[persona.apellidos, persona.nombres].filter(Boolean).join(" ") || "Nombre no registrado"}</strong>
+                            <span className="vec-multiple-roles__person">
+                              <strong>{[persona.apellidos, persona.nombres].filter(Boolean).join(" ") || "Nombre no registrado"}</strong>
+                              {(persona.roles || []).length > 1 && (
+                                <span
+                                  className="vec-multiple-roles__badge"
+                                  aria-label={`${persona.roles.length} roles`}
+                                  title={persona.roles
+                                    .map((role) => ETIQUETAS_ROL[role] || role)
+                                    .join(" · ")}
+                                >
+                                  <i className="fas fa-layer-group" aria-hidden="true"></i>
+                                  {persona.roles.length} roles
+                                </span>
+                              )}
+                            </span>
                             <small><i className="far fa-id-card" aria-hidden="true"></i>{persona.identificacion || "Identificación no registrada"}</small>
                             {persona.codigo && <small><i className="fas fa-graduation-cap" aria-hidden="true"></i>Código {persona.codigo}</small>}
                           </span>

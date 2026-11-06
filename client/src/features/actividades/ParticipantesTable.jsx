@@ -4,10 +4,12 @@ import {
   eliminarPerfilPorRol,
   getParticipantes,
 } from "./participantesApi.js";
+import { etiquetaRolInstitucional } from "./rolePresentation.js";
 
 const ROLE_LABELS = {
   ESTUDIANTE: "Estudiante",
-  COLABORADOR: "Colaborador",
+  DOCENTE: "Docente",
+  COLABORADOR: "Docente",
   ADMINISTRATIVO: "Administrativo",
   EGRESADO: "Egresado",
   EXTERNO: "Externo",
@@ -16,6 +18,19 @@ const ROLE_LABELS = {
 function puedeEliminarParticipante(participante) {
   return participante.tipo !== "ESTUDIANTE"
     && ["EGRESADO", "COLABORADOR", "EXTERNO"].includes(participante.tipo);
+}
+
+function puedeQuitarRolParticipante(participante) {
+  return ["EGRESADO", "COLABORADOR", "EXTERNO", "ADMINISTRATIVO"].includes(participante.tipo)
+    && (participante.roles || []).length > 1;
+}
+
+function soloQuitarRol(participante) {
+  return Boolean(
+    participante.quitarSoloRol
+    || participante.tieneRolEstudiante
+    || puedeQuitarRolParticipante(participante),
+  );
 }
 
 export default function ParticipantesTable({
@@ -31,7 +46,7 @@ export default function ParticipantesTable({
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
   const [recarga, setRecarga] = useState(0);
-  const [consultado, setConsultado] = useState(false);
+  const [busqueda, setBusqueda] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [bulkDeleteTargets, setBulkDeleteTargets] = useState(null);
   const [selectedForBulk, setSelectedForBulk] = useState(new Map());
@@ -41,7 +56,11 @@ export default function ParticipantesTable({
   const [deleteError, setDeleteError] = useState("");
   const [notice, setNotice] = useState("");
   const selectedParticipants = [...selectedForBulk.values()];
-  const selectableParticipants = participantes.filter(puedeEliminarParticipante);
+  const selectableParticipants = participantes.filter((participante) => (
+    puedeEliminarParticipante(participante)
+    || participante.tieneRolEstudiante
+    || puedeQuitarRolParticipante(participante)
+  ));
   const selectablePersonIds = new Set(
     selectableParticipants.map((participante) => String(participante.idPersona)),
   );
@@ -60,18 +79,21 @@ export default function ParticipantesTable({
 
   function toggleSelectAll() {
     setSelectedForBulk((current) => {
-      if (allSelectableSelected) return new Map();
       const next = new Map(current);
-      selectableParticipants.forEach((participante) => {
-        const personId = String(participante.idPersona);
-        if (!next.has(personId)) next.set(personId, participante);
-      });
+      if (allSelectableSelected) {
+        selectablePersonIds.forEach((idPersona) => next.delete(idPersona));
+      } else {
+        selectableParticipants.forEach((participante) => {
+          const personId = String(participante.idPersona);
+          if (!next.has(personId)) next.set(personId, participante);
+        });
+      }
       return next;
     });
   }
 
   async function deleteParticipant(participante, confirmation = "") {
-    return participante.tieneRolEstudiante
+    return soloQuitarRol(participante)
       ? eliminarPerfilPorRol(participante.id, {
         confirmarInscripciones: Number(participante.totalInscripciones) > 0,
       })
@@ -92,7 +114,8 @@ export default function ParticipantesTable({
       const result = await deleteParticipant(deleteTarget, deleteConfirmation.trim());
       setParticipantes((current) => current.filter((item) => (
         item.id !== deleteTarget.id
-        && (deleteTarget.tieneRolEstudiante || item.idPersona !== deleteTarget.idPersona)
+        && (deleteTarget.quitarSoloRol || deleteTarget.tieneRolEstudiante
+          || item.idPersona !== deleteTarget.idPersona)
       )));
       setSelectedForBulk((current) => {
         const next = new Map(current);
@@ -134,7 +157,7 @@ export default function ParticipantesTable({
       const removedIds = new Set(removed.map((participante) => participante.id));
       const permanentlyRemovedPeople = new Set(
         removed
-          .filter((participante) => !participante.tieneRolEstudiante)
+          .filter((participante) => !soloQuitarRol(participante))
           .map((participante) => String(participante.idPersona)),
       );
       setParticipantes((current) => current.filter((participante) => (
@@ -165,30 +188,28 @@ export default function ParticipantesTable({
   }
 
   useEffect(() => {
-    setConsultado(false);
-  }, [refreshKey]);
-
-  useEffect(() => {
-    if (!expandido || consultado) return undefined;
+    if (!expandido) return undefined;
 
     let activa = true;
-    setCargando(true);
-    setError("");
-    getParticipantes({ limite })
-      .then((rows) => {
-        if (activa) setParticipantes(rows);
-      })
-      .catch((requestError) => {
-        if (activa) setError(requestError.message || "No se pudieron consultar los participantes.");
-      })
-      .finally(() => {
-        if (activa) {
-          setCargando(false);
-          setConsultado(true);
-        }
-      });
-    return () => { activa = false; };
-  }, [expandido, limite, recarga, consultado, refreshKey]);
+    const timeout = setTimeout(() => {
+      setCargando(true);
+      setError("");
+      getParticipantes({ limite, busqueda })
+        .then((rows) => {
+          if (activa) setParticipantes(rows);
+        })
+        .catch((requestError) => {
+          if (activa) setError(requestError.message || "No se pudieron consultar los participantes.");
+        })
+        .finally(() => {
+          if (activa) setCargando(false);
+        });
+    }, busqueda ? 250 : 0);
+    return () => {
+      activa = false;
+      clearTimeout(timeout);
+    };
+  }, [expandido, limite, busqueda, recarga, refreshKey]);
 
   return (
     <section className="card" aria-label={titulo}>
@@ -204,7 +225,6 @@ export default function ParticipantesTable({
               type="button"
               onClick={() => {
                 setSelectedForBulk(new Map());
-                setConsultado(false);
                 setRecarga((value) => value + 1);
               }}
               disabled={cargando}
@@ -221,7 +241,7 @@ export default function ParticipantesTable({
             aria-expanded={expandido}
           >
             <i className={`fas ${expandido ? "fa-chevron-up" : "fa-chevron-down"}`} aria-hidden="true"></i>
-            {expandido ? "Ocultar" : `Ver ${limite} recientes`}
+            {expandido ? "Ocultar" : "Ver lista"}
           </button>
         </div>
       </div>
@@ -258,10 +278,29 @@ export default function ParticipantesTable({
               </button>
             </div>
           )}
+          <label className="vec-participants-search">
+            <i className="fas fa-magnifying-glass" aria-hidden="true"></i>
+            <input
+              type="search"
+              value={busqueda}
+              onChange={(event) => setBusqueda(event.target.value.slice(0, 100))}
+              maxLength={100}
+              placeholder="Buscar por nombre, documento, código o correo"
+              aria-label="Buscar participantes para eliminar"
+              disabled={deleting || bulkDeleting}
+            />
+          </label>
+          {puedeEliminar && (
+            <p className="vec-participants-search__hint">
+              Busca una persona o selecciona varias; puedes acumular la selección entre búsquedas y revisar todo antes de borrar.
+            </p>
+          )}
           {cargando ? (
             <p className="text-muted" role="status">Cargando participantes...</p>
           ) : !error && participantes.length === 0 ? (
-            <p className="text-muted">Todavía no hay participantes registrados.</p>
+            <p className="text-muted">{busqueda.trim()
+              ? "No se encontraron participantes con esa búsqueda."
+              : "Todavía no hay participantes registrados."}</p>
           ) : !error ? (
             <div className="table-responsive">
               <table className="table">
@@ -274,12 +313,12 @@ export default function ParticipantesTable({
                           checked={allSelectableSelected}
                           onChange={toggleSelectAll}
                           disabled={cargando || selectablePersonIds.size === 0 || deleting || bulkDeleting}
-                          aria-label="Seleccionar todas las personas que se pueden eliminar"
+                          aria-label="Seleccionar todas las personas que se pueden eliminar o retirar"
                         />
                       </th>
                     )}
                     <th>Tipo</th>
-                    <th>Roles institucionales</th>
+                    <th>Perfiles de Actividades y roles SAT</th>
                     <th>Identificación</th>
                     <th>Nombre</th>
                     <th>Código</th>
@@ -292,7 +331,10 @@ export default function ParticipantesTable({
                   {participantes.map((participante) => {
                     const roles = participante.roles || [participante.tipo];
                     const personId = String(participante.idPersona);
-                    const seleccionable = puedeEliminarParticipante(participante);
+                    const seleccionable = puedeEliminarParticipante(participante)
+                      || participante.tieneRolEstudiante
+                      || puedeQuitarRolParticipante(participante);
+                    const puedeQuitarRol = puedeQuitarRolParticipante(participante);
                     const selectedPerson = selectedForBulk.get(personId);
                     return (
                     <tr className={roles.length > 1 ? "vec-multiple-roles" : undefined} key={participante.id}>
@@ -307,7 +349,7 @@ export default function ParticipantesTable({
                               aria-label={`Seleccionar ${[participante.nombres, participante.apellidos].filter(Boolean).join(" ") || participante.identificacion} para eliminación`}
                             />
                           ) : (
-                            <span className="vec-role-profiles__protected" aria-label="Estudiante protegido">
+                            <span className="vec-role-profiles__protected" aria-label={`${ROLE_LABELS[participante.tipo] || participante.tipo} protegido`}>
                               <i className="fas fa-lock" aria-hidden="true"></i>
                             </span>
                           )}
@@ -315,14 +357,63 @@ export default function ParticipantesTable({
                       )}
                       <td>{ROLE_LABELS[participante.tipo] || participante.tipo}</td>
                       <td>
-                        {roles.map((role) => (
-                          <span className={`vec-role-badge vec-role-${String(role).toLowerCase()}`} key={role}>
-                            {ROLE_LABELS[role] || role}
+                        <div className="vec-institutional-roles">
+                          <span className="vec-institutional-roles__label">
+                            Perfiles de Actividades
                           </span>
-                        ))}
+                          <div className="vec-institutional-roles__badges">
+                            {roles.map((role) => (
+                              <span className={`vec-role-badge vec-role-${String(role).toLowerCase()}`} key={role}>
+                                {ROLE_LABELS[role] || role}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        {participante.rolesInstitucionales?.length > 0 && (
+                          <div className="vec-institutional-roles">
+                            <span className="vec-institutional-roles__label">
+                              Roles institucionales en SAT
+                            </span>
+                            <div className="vec-institutional-roles__badges">
+                              {participante.rolesInstitucionales.map((role) => (
+                                <span
+                                  className="vec-institutional-role"
+                                  key={role}
+                                  title={role}
+                                >
+                                  {etiquetaRolInstitucional(role)}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </td>
                       <td>{participante.identificacion || "No registrado"}</td>
-                      <td>{[participante.nombres, participante.apellidos].filter(Boolean).join(" ") || "No registrado"}</td>
+                      <td>
+                        <span
+                          className={
+                            roles.length > 1
+                              ? "vec-multiple-roles__person"
+                              : undefined
+                          }
+                        >
+                          <span className={roles.length > 1 ? "vec-multiple-roles__name" : undefined}>
+                            {[participante.nombres, participante.apellidos]
+                              .filter(Boolean)
+                              .join(" ") || "No registrado"}
+                          </span>
+                          {roles.length > 1 && (
+                            <span
+                              className="vec-multiple-roles__badge"
+                              aria-label={`${roles.length} roles`}
+                              title={roles.map((role) => ROLE_LABELS[role] || role).join(" · ")}
+                            >
+                              <i className="fas fa-layer-group" aria-hidden="true"></i>
+                              {roles.length} roles
+                            </span>
+                          )}
+                        </span>
+                      </td>
                       <td>{participante.codigo || "No registrado"}</td>
                       <td>{participante.programa_academico || participante.dependencia || "No registrado"}</td>
                       <td>{participante.correo || participante.contacto || "No registrado"}</td>
@@ -336,16 +427,24 @@ export default function ParticipantesTable({
                                 setDeleteError("");
                                 setNotice("");
                                 setDeleteConfirmation("");
-                                setDeleteTarget(participante);
+                                setDeleteTarget({
+                                  ...participante,
+                                  quitarSoloRol: soloQuitarRol(participante),
+                                });
                               }}
-                              aria-label={`${participante.tieneRolEstudiante ? "Quitar el rol" : "Borrar definitivamente"} ${ROLE_LABELS[participante.tipo] || participante.tipo} de ${[participante.nombres, participante.apellidos].filter(Boolean).join(" ")}`}
+                              aria-label={`${puedeQuitarRol || participante.tieneRolEstudiante ? "Quitar el rol" : "Borrar definitivamente"} ${ROLE_LABELS[participante.tipo] || participante.tipo} de ${[participante.nombres, participante.apellidos].filter(Boolean).join(" ")}`}
+                              title={puedeQuitarRol || participante.tieneRolEstudiante
+                                ? "Quitar solo este rol y conservar la persona y sus otros roles"
+                                : "Borrar definitivamente a la persona, sus perfiles y datos vinculados"}
                             >
-                              <i className={`fas ${participante.tieneRolEstudiante ? "fa-user-minus" : "fa-trash-can"}`} aria-hidden="true"></i>
-                              <span>{participante.tieneRolEstudiante ? "Quitar rol" : "Borrar definitivamente"}</span>
+                              <i className={`fas ${puedeQuitarRol || participante.tieneRolEstudiante ? "fa-user-minus" : "fa-trash-can"}`} aria-hidden="true"></i>
+                              <span>{puedeQuitarRol || participante.tieneRolEstudiante
+                                ? `Quitar ${ROLE_LABELS[participante.tipo] || participante.tipo}`
+                                : "Borrar persona"}</span>
                             </button>
                           ) : (
                             <span className="vec-role-profiles__protected">
-                              <i className="fas fa-lock" aria-hidden="true"></i> El rol Estudiante se conserva
+                              <i className="fas fa-lock" aria-hidden="true"></i> El rol institucional se conserva
                             </span>
                           )}
                         </td>
@@ -371,23 +470,25 @@ export default function ParticipantesTable({
               <i className="fas fa-triangle-exclamation"></i>
             </span>
             <h3 id="vec-recent-participant-delete-title">
-              {deleteTarget.tieneRolEstudiante ? "¿Quitar solo el rol extra?" : "¿Borrar definitivamente a esta persona?"}
+              {deleteTarget.quitarSoloRol || deleteTarget.tieneRolEstudiante
+                ? "¿Quitar solo el rol seleccionado?"
+                : "¿Borrar definitivamente a esta persona?"}
             </h3>
             <div className="vec-role-profiles__delete-warning" role="alert">
               <strong>{[deleteTarget.nombres, deleteTarget.apellidos].filter(Boolean).join(" ") || "Persona sin nombre"}</strong>
-              {deleteTarget.tieneRolEstudiante ? (
+              {deleteTarget.quitarSoloRol || deleteTarget.tieneRolEstudiante ? (
                 <>
                   <span>Solo se quitará el rol <strong>{ROLE_LABELS[deleteTarget.tipo] || deleteTarget.tipo}</strong> y sus {Number(deleteTarget.totalInscripciones) || 0} inscripción(es) de Actividades.</span>
-                  <span>El rol Estudiante, la persona y todos sus datos institucionales se conservarán.</span>
+                  <span>La persona, sus demás roles y sus datos institucionales se conservarán.</span>
                 </>
               ) : (
                 <>
-                  <span>Se borrarán todos sus perfiles, sus {Number(deleteTarget.totalInscripcionesPersona) || 0} inscripción(es), sus datos personales y sus registros vinculados.</span>
+                  <span>Se borrarán todos sus perfiles, sus {Number(deleteTarget.totalInscripcionesPersona) || 0} inscripción(es), sus datos personales, sus cuentas asociadas y sus registros vinculados.</span>
                   <span><strong>Este borrado es permanente y no se puede deshacer.</strong></span>
                 </>
               )}
             </div>
-            {!deleteTarget.tieneRolEstudiante && (
+            {!deleteTarget.quitarSoloRol && !deleteTarget.tieneRolEstudiante && (
               <label className="vec-role-profiles__field">
                 <span>
                   Escribe para confirmar: <strong>{deleteTarget.identificacion
@@ -422,16 +523,18 @@ export default function ParticipantesTable({
                 className="btn btn-danger"
                 type="button"
                 onClick={confirmDeleteRole}
-                disabled={deleting || (!deleteTarget.tieneRolEstudiante
+                disabled={deleting || (!deleteTarget.quitarSoloRol && !deleteTarget.tieneRolEstudiante
                   && deleteConfirmation.trim() !== String(
                     deleteTarget.identificacion
                     || [deleteTarget.nombres, deleteTarget.apellidos].filter(Boolean).join(" "),
                   ))}
               >
-                <i className={`fas ${deleting ? "fa-spinner fa-spin" : deleteTarget.tieneRolEstudiante ? "fa-user-minus" : "fa-trash-can"}`} aria-hidden="true"></i>
+                <i className={`fas ${deleting ? "fa-spinner fa-spin" : deleteTarget.quitarSoloRol || deleteTarget.tieneRolEstudiante ? "fa-user-minus" : "fa-trash-can"}`} aria-hidden="true"></i>
                 {deleting
-                  ? deleteTarget.tieneRolEstudiante ? "Quitando rol..." : "Borrando..."
-                  : deleteTarget.tieneRolEstudiante ? "Sí, quitar solo el rol extra" : "Sí, borrar definitivamente"}
+                  ? deleteTarget.quitarSoloRol || deleteTarget.tieneRolEstudiante ? "Quitando rol..." : "Borrando..."
+                  : deleteTarget.quitarSoloRol || deleteTarget.tieneRolEstudiante
+                    ? "Sí, quitar solo este rol"
+                    : "Sí, borrar definitivamente"}
               </button>
             </footer>
           </section>
@@ -458,8 +561,8 @@ export default function ParticipantesTable({
                   <strong>{[participante.nombres, participante.apellidos].filter(Boolean).join(" ") || "Persona sin nombre"}</strong>
                   <span>{ROLE_LABELS[participante.tipo] || participante.tipo} · Documento: {participante.identificacion || "No registrado"}</span>
                   <span>
-                    {participante.tieneRolEstudiante
-                      ? `Solo se quitará el rol seleccionado y sus ${Number(participante.totalInscripciones) || 0} inscripción(es); se conservará su registro institucional de estudiante.`
+                    {soloQuitarRol(participante)
+                      ? `Solo se quitará el rol seleccionado y sus ${Number(participante.totalInscripciones) || 0} inscripción(es); se conservará la persona y sus demás registros.`
                       : `Borrado permanente: se quitarán sus perfiles, ${Number(participante.totalInscripcionesPersona) || 0} inscripción(es), datos personales y registros vinculados, incluidas sus cuentas institucionales si las tiene.`}
                   </span>
                 </li>

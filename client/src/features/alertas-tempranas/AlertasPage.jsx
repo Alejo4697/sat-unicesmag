@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import AppLayout from "../../shared/layout/AppLayout.jsx";
+import { useAuth } from "../../shared/context/AuthContext.jsx";
 import { riskBadgeClass } from "../../shared/utils/risk.js";
 import { formatDateTime } from "../../shared/utils/formatDateTime.js";
 import { listAlertas, crearAlerta, getEstudiante } from "./api.js";
@@ -21,10 +22,19 @@ const TIPOS = [
   "Académica / Asistencia",
 ];
 
+function obtenerFechaHoy() {
+  const hoy = new Date();
+  const year = hoy.getFullYear();
+  const month = String(hoy.getMonth() + 1).padStart(2, "0");
+  const day = String(hoy.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 const ESTADO_INICIAL = {
   codigoEstudiante: "",
   tipo: TIPOS[0],
   nivelRiesgo: "Alto",
+  fechaManual: obtenerFechaHoy(),
   descripcion: "",
 };
 
@@ -43,7 +53,16 @@ function riskIconClass(nivel) {
 const BADGE_RIESGO_LG = { fontSize: "0.85rem", padding: "0.35rem 0.85rem" };
 
 export default function AlertasPage() {
+  const { user } = useAuth();
   const [alertas, setAlertas] = useState([]);
+  const progUser = (user?.programa || "").trim().toLowerCase();
+  const tieneProgFijo = Boolean(progUser) &&
+    progUser !== "todos" &&
+    progUser !== "no asignado" &&
+    progUser !== "programa institucional";
+  const esRestringidoAPrograma = (user?.rol === "directivo" || String(user?.cargo || "").toLowerCase().includes("docente")) &&
+    user?.rol !== "admin" &&
+    tieneProgFijo;
   const [form, setForm] = useState(ESTADO_INICIAL);
 
   // Búsqueda de estudiante por código o cédula
@@ -80,6 +99,17 @@ export default function AlertasPage() {
     try {
       const est = await getEstudiante(q);
       if (est && est.codigo) {
+        if (esRestringidoAPrograma && tieneProgFijo && est.programa) {
+          const p = String(est.programa).toLowerCase();
+          if (!p.includes(progUser) && !progUser.includes(p)) {
+            setEstudianteSeleccionado(null);
+            setForm((prev) => ({ ...prev, codigoEstudiante: "" }));
+            setErrorEstudiante(
+              `Este estudiante pertenece al programa de "${est.programa}". Su perfil institucional solo tiene acceso al programa de ${user.programa}.`
+            );
+            return;
+          }
+        }
         setEstudianteSeleccionado(est);
         setForm((prev) => ({ ...prev, codigoEstudiante: est.codigo }));
         setErrorEstudiante("");
@@ -125,7 +155,7 @@ export default function AlertasPage() {
     try {
       const nueva = await crearAlerta(form);
       setAlertas((prev) => [nueva, ...prev]);
-      setForm(ESTADO_INICIAL);
+      setForm({ ...ESTADO_INICIAL, fechaManual: obtenerFechaHoy() });
       handleLimpiarEstudiante();
       setMensaje(
         `Alerta manual registrada exitosamente para ${nueva.nombreEstudiante} (Cód: ${nueva.codigoEstudiante}).`,
@@ -154,7 +184,7 @@ export default function AlertasPage() {
         (a.tipo && a.tipo.toLowerCase().includes(term)) ||
         (a.programa && a.programa.toLowerCase().includes(term)),
     );
-  }, [alertas, filtroTabla]);
+  }, [alertas, filtroTabla, esRestringidoAPrograma, tieneProgFijo, progUser, user]);
 
   return (
     <AppLayout
@@ -360,44 +390,71 @@ export default function AlertasPage() {
               </div>
             )}
 
-            {/* Tipología de la Alerta */}
-            <div className="form-group">
-              <label className="form-label" htmlFor="alerta-tipo">
-                Tipología de la Alerta
-              </label>
-              <select
-                id="alerta-tipo"
-                className="form-select"
-                required
-                value={form.tipo}
-                onChange={(e) => setForm({ ...form, tipo: e.target.value })}
-              >
-                {TIPOS.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {/* Fila de Campos: Tipología, Nivel de Riesgo y Fecha Manual */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gap: "1rem",
+                marginBottom: "1rem"
+              }}
+            >
+              {/* Tipología de la Alerta */}
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" htmlFor="alerta-tipo">
+                  Tipología de la Alerta
+                </label>
+                <select
+                  id="alerta-tipo"
+                  className="form-select"
+                  required
+                  value={form.tipo}
+                  onChange={(e) => setForm({ ...form, tipo: e.target.value })}
+                >
+                  {TIPOS.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-            {/* Nivel de Riesgo */}
-            <div className="form-group">
-              <label className="form-label" htmlFor="alerta-riesgo">
-                Nivel de Riesgo
-              </label>
-              <select
-                id="alerta-riesgo"
-                className="form-select"
-                required
-                value={form.nivelRiesgo}
-                onChange={(e) =>
-                  setForm({ ...form, nivelRiesgo: e.target.value })
-                }
-              >
-                <option value="Alto">Alto</option>
-                <option value="Medio">Medio</option>
-                <option value="Bajo">Bajo</option>
-              </select>
+              {/* Nivel de Riesgo */}
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" htmlFor="alerta-riesgo">
+                  Nivel de Riesgo
+                </label>
+                <select
+                  id="alerta-riesgo"
+                  className="form-select"
+                  required
+                  value={form.nivelRiesgo}
+                  onChange={(e) =>
+                    setForm({ ...form, nivelRiesgo: e.target.value })
+                  }
+                >
+                  <option value="Alto">Alto</option>
+                  <option value="Medio">Medio</option>
+                  <option value="Bajo">Bajo</option>
+                </select>
+              </div>
+
+              {/* Fecha Manual de la Alerta */}
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" htmlFor="alerta-fecha">
+                  Fecha de la Alerta (Manual)
+                </label>
+                <input
+                  type="date"
+                  id="alerta-fecha"
+                  className="form-control"
+                  required
+                  value={form.fechaManual}
+                  onChange={(e) =>
+                    setForm({ ...form, fechaManual: e.target.value })
+                  }
+                />
+              </div>
             </div>
 
             {/* Detalle de la Observación */}
@@ -536,9 +593,14 @@ export default function AlertasPage() {
                       <Link
                         to={`/intervenciones?estudiante=${a.codigoEstudiante}`}
                         className="btn btn-secondary btn-sm"
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "0.4rem",
+                          whiteSpace: "nowrap"
+                        }}
                       >
-                        <i className="fas fa-hand-holding-heart"></i> Iniciar
-                        Atención
+                        <i className="fas fa-clipboard-check"></i> Iniciar Intervención
                       </Link>
                     </td>
                   </tr>

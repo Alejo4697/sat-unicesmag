@@ -15,7 +15,7 @@ async function main() {
     INSERT INTO sat.roles_permisos (id_roles, id_permisos)
     SELECT r.id_roles, p.id_permisos
     FROM sat.roles r, sat.permisos p
-    WHERE r.nombre IN ('admin', 'reporte_actividades')
+    WHERE r.nombre IN ('admin', 'profesional', 'reporte_actividades')
       AND p.codigo = 'acceso:actividades'
     ON CONFLICT DO NOTHING;
   `);

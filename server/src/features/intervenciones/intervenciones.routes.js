@@ -18,6 +18,7 @@ import { MOCK_DATA } from "../../shared/data/mockData.js";
 import { identifyUser, requireModule } from "../../shared/middleware/requireRole.js";
 import { sanitizarIntervencion } from "../../shared/security/vbg.js";
 import { query } from "../../shared/db/pool.js";
+import { esUsuarioRestringidoAPrograma, coincidePrograma } from "../../shared/security/alcanceDirectivo.js";
 
 const router = Router();
 
@@ -47,6 +48,7 @@ router.get("/", async (req, res, next) => {
     let sql = `
       SELECT i.id_intervenciones AS id,
              e.codigo_externo AS "codigoEstudiante",
+             p.nombre AS "programaEstudiante",
              CONCAT(u.nombres, ' ', u.apellidos) AS "atendidoPor",
              'Docente / Profesional' AS "cargoAtendio",
              i.id_usuarios AS "idUsuarioAtendio",
@@ -83,7 +85,18 @@ router.get("/", async (req, res, next) => {
     const idsDb = new Set(rows.map((r) => r.id));
     const mocksRestantes = mockFiltrado.filter((m) => !idsDb.has(m.id));
 
-    const total = [...rows, ...mocksRestantes];
+    let total = [...rows, ...mocksRestantes];
+    if (esUsuarioRestringidoAPrograma(req.user)) {
+      const progUser = req.user.programa;
+      const userId = req.user.id;
+      const userNombre = (req.user.nombre || "").toLowerCase();
+      total = total.filter((i) => {
+        const coincideProg = coincidePrograma(i.programaEstudiante, progUser);
+        const esMio = (i.idUsuarioAtendio && i.idUsuarioAtendio === userId) ||
+                      (i.atendidoPor && userNombre && i.atendidoPor.toLowerCase().includes(userNombre));
+        return coincideProg || esMio;
+      });
+    }
     res.json(total.map((i) => sanitizarIntervencion(i, req.user)));
   } catch (err) {
     console.warn("Fallo al consultar intervenciones en PostgreSQL:", err.message);
@@ -131,11 +144,18 @@ router.post("/", async (req, res, next) => {
     let estudianteDb = null;
     try {
       const { rows: estRows } = await query(
-        `SELECT id_estudiantes, codigo_externo, numero_documento FROM sat.estudiantes WHERE codigo_externo = $1 OR numero_documento = $1 OR id_estudiantes::text = $1 LIMIT 1`,
+        `SELECT e.id_estudiantes, e.codigo_externo, e.numero_documento, p.nombre AS programa FROM sat.estudiantes e LEFT JOIN sat.matriculas m ON m.id_estudiantes = e.id_estudiantes LEFT JOIN sat.programas_academicos p ON p.id_programas_academicos = COALESCE(m.id_programas_academicos, e.id_programas_academicos) WHERE e.codigo_externo = $1 OR e.numero_documento = $1 OR e.id_estudiantes::text = $1 LIMIT 1`,
         [codigoEstudiante]
       );
       if (estRows.length > 0) {
         estudianteDb = estRows[0];
+        if (esUsuarioRestringidoAPrograma(req.user) && estudianteDb.programa) {
+          if (!coincidePrograma(estudianteDb.programa, req.user.programa)) {
+            return res.status(403).json({
+              error: `Seguridad SAT: Su perfil solo tiene autorización para registrar intervenciones de estudiantes pertenecientes a su programa académico (${req.user.programa}).`
+            });
+          }
+        }
       }
     } catch {
       // Fallback

@@ -754,6 +754,17 @@ export async function ejecutarSincronizacion() {
             correo_institucional = COALESCE(EXCLUDED.correo_institucional, sat.docentes.correo_institucional);
         `, [numDoc, nomCompleto, apeCompleto, tipoVinc, idProgDoc, activoDoc, idPersona, correoInst]);
 
+        if (activoDoc) {
+          await localClient.query(
+            `INSERT INTO sat.participantes_vec (
+               id_personas, tipo_participante, detalle_tipo_participante
+             )
+             VALUES ($1, 'COLABORADOR', 'Colaborador')
+             ON CONFLICT (id_personas, tipo_participante) DO NOTHING`,
+            [idPersona],
+          );
+        }
+
         docentesSincronizados++;
       }
       console.log(`[OK] ${docentesSincronizados} docentes sincronizados en sat.docentes y sat.personas.`);

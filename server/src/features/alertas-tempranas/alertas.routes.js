@@ -8,7 +8,7 @@ import { Router } from "express";
 import { MOCK_DATA } from "../../shared/data/mockData.js";
 import { identifyUser, requireModule } from "../../shared/middleware/requireRole.js";
 import { sanitizarAlerta } from "../../shared/security/vbg.js";
-import { directivoPuedeVerEstudiante } from "../../shared/security/alcanceDirectivo.js";
+import { directivoPuedeVerEstudiante, esUsuarioRestringidoAPrograma, coincidePrograma } from "../../shared/security/alcanceDirectivo.js";
 import { query } from "../../shared/db/pool.js";
 
 const router = Router();
@@ -24,10 +24,12 @@ router.use(identifyUser, requireModule("alertas"));
 router.get("/", async (req, res, next) => {
   try {
     const alertas = [];
+    const esRestringido = esUsuarioRestringidoAPrograma(req.user);
+    const progUser = req.user?.programa;
 
     // 1. Alertas automáticas de la base de datos (Inasistencias altas en sat.matriculas_asignaturas)
     try {
-      const { rows } = await query(`
+      let sql = `
         SELECT e.id_estudiantes,
                e.codigo_externo AS codigo,
                COALESCE(per.numero_identificacion, e.numero_documento) AS documento,
@@ -44,10 +46,14 @@ router.get("/", async (req, res, next) => {
         LEFT JOIN sat.programas_academicos prog ON prog.id_programas_academicos = m.id_programas_academicos
         LEFT JOIN sat.grupos_asignatura ga ON ga.id_grupos_asignatura = ma.id_grupos_asignatura
         LEFT JOIN sat.asignaturas asig ON asig.id_asignaturas = ga.id_asignaturas
-        WHERE (COALESCE(ma.inasistencias_corte_1, 0) + COALESCE(ma.inasistencias_corte_2, 0) + COALESCE(ma.inasistencias_corte_3, 0)) >= 8
-        ORDER BY fallas DESC
-        LIMIT 20
-      `);
+        WHERE (COALESCE(ma.inasistencias_corte_1, 0) + COALESCE(ma.inasistencias_corte_2, 0) + COALESCE(ma.inasistencias_corte_3, 0)) >= 8`;
+      const params = [];
+      if (esRestringido && progUser) {
+        sql += ` AND (LOWER(COALESCE(prog.nombre, '')) ILIKE '%' || LOWER($1) || '%')`;
+        params.push(progUser);
+      }
+      sql += ` ORDER BY fallas DESC LIMIT 20`;
+      const { rows } = await query(sql, params);
 
       rows.forEach((r, idx) => {
         alertas.push({
@@ -70,9 +76,15 @@ router.get("/", async (req, res, next) => {
       console.warn("Error cargando alertas automáticas de BD:", dbErr.message);
     }
 
-    // 2. Complementar con alertas manuales en memoria (MOCK_DATA)
+    // 2. Complementar con alertas manuales en memoria (MOCK_DATA) filtradas por programa si aplica
     MOCK_DATA.alertas.forEach((m) => {
-      alertas.push(m);
+      if (
+        !esRestringido ||
+        coincidePrograma(m.programa, progUser) ||
+        (m.creador && req.user?.nombre && m.creador.toLowerCase().includes(req.user.nombre.toLowerCase()))
+      ) {
+        alertas.push(m);
+      }
     });
 
     res.json(alertas.map((a) => sanitizarAlerta(a, req.user)));
@@ -84,7 +96,7 @@ router.get("/", async (req, res, next) => {
 // Espeja crearAlertaManual(): registra alerta y la asocia al estudiante real
 router.post("/", async (req, res, next) => {
   try {
-    const { codigoEstudiante, tipo, nivelRiesgo, descripcion } = req.body;
+    const { codigoEstudiante, tipo, nivelRiesgo, descripcion, fechaManual, fechaCreacion } = req.body;
 
     if (!codigoEstudiante || !tipo || !nivelRiesgo || !descripcion) {
       return res.status(400).json({ error: "Complete todos los campos requeridos." });
@@ -124,7 +136,13 @@ router.post("/", async (req, res, next) => {
       );
     }
 
-    if (req.user.rol === "directivo" && (!estudiante || !directivoPuedeVerEstudiante(req.user, estudiante))) {
+    if (esUsuarioRestringidoAPrograma(req.user)) {
+      if (!estudiante || !coincidePrograma(estudiante.programa, req.user.programa)) {
+        return res.status(403).json({
+          error: `Seguridad SAT: Su perfil solo tiene acceso para registrar alertas de estudiantes de su programa académico (${req.user.programa}).`
+        });
+      }
+    } else if (req.user.rol === "directivo" && (!estudiante || !directivoPuedeVerEstudiante(req.user, estudiante))) {
       return res.status(403).json({ error: "No tiene acceso a la información de este estudiante." });
     }
 
@@ -142,7 +160,20 @@ router.post("/", async (req, res, next) => {
       categoria: "Manual",
       nivelRiesgo,
       descripcion,
-      fechaCreacion: new Date().toISOString(),
+      fechaCreacion: (() => {
+        const fechaRef = fechaManual || fechaCreacion;
+        if (fechaRef) {
+          if (typeof fechaRef === "string" && /^\d{4}-\d{2}-\d{2}$/.test(fechaRef)) {
+            const [y, m, d] = fechaRef.split("-").map(Number);
+            const now = new Date();
+            const fechaObj = new Date(y, m - 1, d, now.getHours(), now.getMinutes(), now.getSeconds());
+            return fechaObj.toISOString();
+          }
+          const parsed = new Date(fechaRef);
+          if (!isNaN(parsed.getTime())) return parsed.toISOString();
+        }
+        return new Date().toISOString();
+      })(),
       creador: `${req.user.nombre} (${req.user.cargo})`,
       estado: "Abierta",
       esVBG: tipo.includes("VBG") || tipo.includes("Género")

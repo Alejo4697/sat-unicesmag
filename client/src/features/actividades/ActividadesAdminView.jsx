@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   actualizarActividad,
   cambiarEstadoActividad,
@@ -6,22 +7,21 @@ import {
   corregirTipoApoyoInscripcion,
   crearActividad,
   eliminarActividad,
+  eliminarActividades,
   exportarParticipantesActividad,
   eliminarInscripcion,
-  getAuditoriaInscripcion,
   getActividades,
   getCatalogosEstudiante,
   getHistorialParticipacion,
   getParticipantesActividad,
 } from "./participantesApi.js";
-
 const EMPTY_FORM = {
   idPeriodo: "",
   actividad: "",
   programaBienestar: "",
   subdivisionProgramas: [],
   descripcion: "",
-  ubicacion: "",
+  ubicacion: [],
   fechaInicio: "",
   fechaFinalizacion: "",
   modalidad: "",
@@ -42,6 +42,79 @@ const ETIQUETAS_ESTADO = {
   FINALIZADA: "Finalizadas",
   CANCELADA: "Canceladas",
 };
+const CAMPUS_ACTIVIDAD = [
+  "Campus Centro",
+  "Campus San Damián",
+  "Campus Santiago",
+];
+const ESTRATEGIA_FIELDS = [
+  "estrategiaPoliticaBienestar",
+  "estrategiaPoliticaPermanencia",
+  "estrategiaPoliticaEducacionInclusiva",
+];
+
+function normalizarCampus(value) {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map((campus) => String(campus).trim()).filter(Boolean))];
+  }
+  return [
+    ...new Set(
+      String(value || "")
+        .split(/\s*(?:·|,|\|)\s*/)
+        .map((campus) => campus.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+function opcionesEstrategia(programas, field, valorActual) {
+  const opciones = new Map();
+  for (const programa of programas) {
+    const value = String(programa[field] || "").replace(/\s+/g, " ").trim();
+    if (!value) continue;
+    const key = value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLocaleLowerCase("es");
+    if (!opciones.has(key)) opciones.set(key, value);
+  }
+  const currentValue = String(valorActual || "").replace(/\s+/g, " ").trim();
+  if (currentValue) {
+    const key = currentValue
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLocaleLowerCase("es");
+    if (!opciones.has(key)) opciones.set(key, currentValue);
+  }
+  return [...opciones.values()].sort((a, b) => a.localeCompare(b, "es"));
+}
+
+function estrategiasAutocompletadas(programas, programa, subdivisiones) {
+  const filasPrograma = programas.filter((item) => item.programa === programa);
+  const filasSeleccionadas = subdivisiones.length
+    ? filasPrograma.filter((item) =>
+        subdivisiones.includes(item.programaCompleto),
+      )
+    : filasPrograma.filter((item) => !item.subdivision);
+  const filasParaCompletar = filasSeleccionadas.length
+    ? filasSeleccionadas
+    : subdivisiones.length
+      ? []
+      : filasPrograma;
+  return Object.fromEntries(
+    ESTRATEGIA_FIELDS.map((field) => {
+      const valores = [
+        ...new Map(
+          filasParaCompletar
+            .map((item) => String(item[field] || "").replace(/\s+/g, " ").trim())
+            .filter(Boolean)
+            .map((value) => [value.toLocaleLowerCase("es"), value]),
+        ).values(),
+      ];
+      return [field, valores.length === 1 ? valores[0] : ""];
+    }),
+  );
+}
 
 function formatoFecha(value) {
   const fecha = String(value || "").slice(0, 10);
@@ -56,6 +129,27 @@ function formatoFecha(value) {
 function claseEstado(estado) {
   return `activity-status activity-status--${String(estado || "").toLowerCase()}`;
 }
+
+function normalizarRolParticipante(rol) {
+  const normalizado = String(rol || "").trim().toUpperCase();
+  return normalizado === "DOCENTE" ? "COLABORADOR" : normalizado;
+}
+
+const ETIQUETAS_ROL_PARTICIPANTE = {
+  ESTUDIANTE: "Estudiante",
+  COLABORADOR: "Docente",
+  ADMINISTRATIVO: "Administrativo",
+  EGRESADO: "Egresado",
+  EXTERNO: "Externo",
+};
+
+const ICONOS_ROL_PARTICIPANTE = {
+  ESTUDIANTE: "fa-user-graduate",
+  COLABORADOR: "fa-chalkboard-user",
+  ADMINISTRATIVO: "fa-user-gear",
+  EGRESADO: "fa-user-check",
+  EXTERNO: "fa-user-group",
+};
 
 function nombreArchivoAsistencia(activity) {
   const slug = (value) =>
@@ -140,7 +234,7 @@ function toForm(activity, programasBienestar) {
           ? [programa.programaCompleto]
           : [],
     descripcion: activity.descripcion || "",
-    ubicacion: activity.ubicacion || "",
+    ubicacion: normalizarCampus(activity.ubicacion),
     fechaInicio: String(activity.fechaInicio || "").slice(0, 10),
     fechaFinalizacion: String(activity.fechaFinalizacion || "").slice(0, 10),
     modalidad: activity.modalidad || "",
@@ -161,11 +255,18 @@ function toForm(activity, programasBienestar) {
 }
 
 export default function ActividadesAdminView() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const importacionRealizadas = location.state?.importacionRealizadas;
+  const actividadesImportadasKey = [
+    ...new Set(importacionRealizadas?.actividadesImportadas || []),
+  ].join(",");
   const [actividades, setActividades] = useState([]);
   const [periodos, setPeriodos] = useState([]);
   const [programasBienestar, setProgramasBienestar] = useState([]);
   const [tiposApoyo, setTiposApoyo] = useState([]);
   const [busqueda, setBusqueda] = useState("");
+  const [filtroEstado, setFiltroEstado] = useState("");
   const [form, setForm] = useState(null);
   const [participantes, setParticipantes] = useState(null);
   const [historial, setHistorial] = useState(null);
@@ -176,9 +277,16 @@ export default function ActividadesAdminView() {
   const [personaTerm, setPersonaTerm] = useState("");
   const [personas, setPersonas] = useState([]);
   const [edicionApoyo, setEdicionApoyo] = useState(null);
-  const [auditoriaApoyo, setAuditoriaApoyo] = useState(null);
   const [guardandoApoyo, setGuardandoApoyo] = useState(false);
   const [eliminandoActividadId, setEliminandoActividadId] = useState("");
+  const [modoSeleccionMultiple, setModoSeleccionMultiple] = useState(false);
+  const [actividadesSeleccionadas, setActividadesSeleccionadas] = useState(
+    () => new Set(),
+  );
+  const [confirmacionEliminacionMasiva, setConfirmacionEliminacionMasiva] =
+    useState(false);
+  const [eliminandoActividades, setEliminandoActividades] = useState(false);
+  const [errorEliminacionMasiva, setErrorEliminacionMasiva] = useState("");
   const [exportandoActividadId, setExportandoActividadId] = useState("");
   const [eliminandoInscripcionId, setEliminandoInscripcionId] = useState("");
   const [errorEliminacionInscripcion, setErrorEliminacionInscripcion] =
@@ -218,8 +326,24 @@ export default function ActividadesAdminView() {
     let active = true;
     setCargando(true);
     const timeout = setTimeout(() => {
-      getActividades({ busqueda })
-        .then((rows) => active && setActividades(rows))
+      const importedIds = busqueda
+        ? []
+        : actividadesImportadasKey.split(",").filter(Boolean);
+      Promise.all([
+        getActividades({ busqueda }),
+        importedIds.length ? getActividades({ ids: importedIds }) : [],
+      ])
+        .then(([rows, importedRows]) => {
+          if (!active) return;
+          setActividades([
+            ...new Map(
+              [...rows, ...importedRows].map((activity) => [
+                activity.id,
+                activity,
+              ]),
+            ).values(),
+          ]);
+        })
         .catch(
           (requestError) =>
             active &&
@@ -233,7 +357,7 @@ export default function ActividadesAdminView() {
       active = false;
       clearTimeout(timeout);
     };
-  }, [busqueda]);
+  }, [busqueda, actividadesImportadasKey]);
 
   useEffect(() => {
     if (personaTerm.trim().length < 2) {
@@ -254,6 +378,18 @@ export default function ActividadesAdminView() {
 
   function update(name, value) {
     setForm((current) => ({ ...current, [name]: value }));
+  }
+
+  function updateModalidades(value) {
+    setForm((current) => ({
+      ...current,
+      subdivisionProgramas: value,
+      ...estrategiasAutocompletadas(
+        programasBienestar,
+        current.programaBienestar,
+        value,
+      ),
+    }));
   }
 
   const programasDelGrupo = programasBienestar.filter(
@@ -303,11 +439,71 @@ export default function ActividadesAdminView() {
       valoresCatalogoSeleccionados("estrategiaPoliticaEducacionInclusiva"),
     ],
   ].filter(([, values]) => values.length);
+  const opcionesEstrategias = [
+    [
+      "estrategiaPoliticaBienestar",
+      opcionesEstrategia(
+        programasBienestar,
+        "estrategiaPoliticaBienestar",
+        form?.estrategiaPoliticaBienestar,
+      ),
+    ],
+    [
+      "estrategiaPoliticaPermanencia",
+      opcionesEstrategia(
+        programasBienestar,
+        "estrategiaPoliticaPermanencia",
+        form?.estrategiaPoliticaPermanencia,
+      ),
+    ],
+    [
+      "estrategiaPoliticaEducacionInclusiva",
+      opcionesEstrategia(
+        programasBienestar,
+        "estrategiaPoliticaEducacionInclusiva",
+        form?.estrategiaPoliticaEducacionInclusiva,
+      ),
+    ],
+  ];
   const actividadesPorEstado = ESTADOS.map((estado) => ({
     estado,
     etiqueta: ETIQUETAS_ESTADO[estado],
-    actividades: actividades.filter((activity) => activity.estado === estado),
+    total: actividades.filter((activity) => activity.estado === estado).length,
+    actividades: actividades.filter(
+      (activity) =>
+        activity.estado === estado &&
+        (!filtroEstado || activity.estado === filtroEstado),
+    ),
   }));
+  const actividadesVisibles = actividadesPorEstado.flatMap(
+    (grupo) => grupo.actividades,
+  );
+  const actividadesSeleccionadasVisibles = actividadesVisibles.filter((activity) =>
+    actividadesSeleccionadas.has(activity.id),
+  );
+  const todasLasVisiblesSeleccionadas =
+    actividadesVisibles.length > 0 &&
+    actividadesVisibles.every((activity) =>
+      actividadesSeleccionadas.has(activity.id),
+    );
+  const participantesSeleccionados = actividadesSeleccionadasVisibles.reduce(
+    (total, activity) => total + Number(activity.totalParticipantes || 0),
+    0,
+  );
+  const razonesImportacionPendiente = [
+    ...(importacionRealizadas?.actividadesPendientesPorMotivo || []).map(
+      ({ motivo, cantidad }) => ({
+        key: `activity-${motivo}`,
+        text: `${cantidad} actividad(es): ${motivo}`,
+      }),
+    ),
+    ...(importacionRealizadas?.participantesPendientesPorMotivo || []).map(
+      ({ motivo, cantidad }) => ({
+        key: `participant-${motivo}`,
+        text: `${cantidad} participante(s): ${motivo}`,
+      }),
+    ),
+  ];
 
   async function save(event) {
     event.preventDefault();
@@ -318,7 +514,7 @@ export default function ActividadesAdminView() {
       !form.actividad?.trim() ||
       !form.fechaInicio ||
       !form.fechaFinalizacion ||
-      !form.ubicacion
+      !form.ubicacion?.length
     ) {
       setError(
         "Ingresa el periodo, el nombre de la actividad, la ubicación y ambas fechas.",
@@ -391,30 +587,14 @@ export default function ActividadesAdminView() {
     }
   }
 
-  async function archiveActivity(activity) {
-    const confirmed = window.confirm(
-      `¿Archivar "${activity.actividad}"? Se marcará como cancelada y se conservarán sus participantes e historial.`,
-    );
-    if (!confirmed) return;
-    setError("");
-    try {
-      await cambiarEstadoActividad(activity.id, "CANCELADA");
-      await cargarActividades();
-      setMensaje(
-        "Actividad archivada. Se conservaron sus participantes e historial.",
-      );
-    } catch (requestError) {
-      setError(requestError.message || "No se pudo archivar la actividad.");
-    }
-  }
-
   async function deleteActivity(activity) {
     const participantCount = Number(activity.totalParticipantes || 0);
+    const estado = ETIQUETAS_ESTADO[activity.estado] || activity.estado;
     const impact = participantCount
-      ? ` También se eliminarán sus ${participantCount} inscripciones, las modalidades y la auditoría asociadas. Los perfiles de estudiantes no se eliminan.`
-      : " También se eliminarán las modalidades y la auditoría asociadas.";
+      ? ` También se eliminarán sus ${participantCount} inscripciones y las modalidades asociadas. Los perfiles de estudiantes no se eliminan.`
+      : " También se eliminarán las modalidades asociadas.";
     const confirmed = window.confirm(
-      `¿Eliminar permanentemente "${activity.actividad}"? Esta acción no se puede deshacer.${impact}`,
+      `¿Eliminar permanentemente la actividad "${activity.actividad}" (${estado})? Esta acción no se puede deshacer.${impact}`,
     );
     if (!confirmed) return;
 
@@ -426,6 +606,11 @@ export default function ActividadesAdminView() {
       setActividades((current) =>
         current.filter((item) => item.id !== activity.id),
       );
+      setActividadesSeleccionadas((current) => {
+        const next = new Set(current);
+        next.delete(activity.id);
+        return next;
+      });
       setParticipantes((current) =>
         current?.actividadId === activity.id ? null : current,
       );
@@ -440,6 +625,66 @@ export default function ActividadesAdminView() {
       setError(requestError.message || "No se pudo eliminar la actividad.");
     } finally {
       setEliminandoActividadId("");
+    }
+  }
+
+  function toggleSeleccionActividad(id) {
+    setActividadesSeleccionadas((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleModoSeleccionMultiple() {
+    if (modoSeleccionMultiple) {
+      setActividadesSeleccionadas(new Set());
+      setConfirmacionEliminacionMasiva(false);
+      setErrorEliminacionMasiva("");
+    }
+    setModoSeleccionMultiple(!modoSeleccionMultiple);
+  }
+
+  function toggleSeleccionVisibles() {
+    setActividadesSeleccionadas((current) => {
+      const next = new Set(current);
+      if (todasLasVisiblesSeleccionadas) {
+        actividadesVisibles.forEach((activity) => next.delete(activity.id));
+      } else {
+        actividadesVisibles.forEach((activity) => next.add(activity.id));
+      }
+      return next;
+    });
+  }
+
+  async function deleteSelectedActivities() {
+    const ids = actividadesSeleccionadasVisibles.map((activity) => activity.id);
+    if (!ids.length) return;
+    setEliminandoActividades(true);
+    setErrorEliminacionMasiva("");
+    try {
+      const result = await eliminarActividades(ids);
+      const deletedIds = new Set(ids);
+      setActividades((current) =>
+        current.filter((activity) => !deletedIds.has(activity.id)),
+      );
+      setParticipantes((current) =>
+        current && deletedIds.has(current.actividadId) ? null : current,
+      );
+      setForm((current) =>
+        current && deletedIds.has(current.idEventoExistente) ? null : current,
+      );
+      setActividadesSeleccionadas(new Set());
+      setConfirmacionEliminacionMasiva(false);
+      setMensaje(result.mensaje || `Se eliminaron ${ids.length} actividades.`);
+    } catch (requestError) {
+      setErrorEliminacionMasiva(
+        requestError.message ||
+          "No se pudieron eliminar las actividades seleccionadas.",
+      );
+    } finally {
+      setEliminandoActividades(false);
     }
   }
 
@@ -550,9 +795,11 @@ export default function ActividadesAdminView() {
       row.identificacion,
       row.correo,
       row.rolParticipacion,
+      ...(row.rolesInstitucionales || []),
       row.programaBienestar,
       row.programaModalidad,
       row.tipoApoyo,
+      row.tipoApoyoObservacion,
     ].some((value) =>
       String(value || "")
         .toLocaleLowerCase("es")
@@ -587,7 +834,7 @@ export default function ActividadesAdminView() {
       setParticipantes((current) =>
         current ? { ...current, filas } : current,
       );
-      setMensaje("Corrección de apoyo guardada con motivo y auditoría.");
+      setMensaje("Corrección de apoyo guardada con el motivo indicado.");
       setEdicionApoyo(null);
     } catch (requestError) {
       setError(
@@ -596,18 +843,6 @@ export default function ActividadesAdminView() {
       );
     } finally {
       setGuardandoApoyo(false);
-    }
-  }
-
-  async function showSupportAudit(row) {
-    setError("");
-    try {
-      const rows = await getAuditoriaInscripcion(row.id);
-      setAuditoriaApoyo({ persona: row.apellidosNombres, rows });
-    } catch (requestError) {
-      setError(
-        requestError.message || "No se pudo consultar la auditoría del apoyo.",
-      );
     }
   }
 
@@ -643,30 +878,187 @@ export default function ActividadesAdminView() {
               <input
                 className="form-control"
                 id="activity-search"
-                placeholder="Nombre, programa, proyecto o periodo"
+                placeholder="Nombre, proyecto, apoyo, sede, fecha o periodo"
                 value={busqueda}
-                onChange={(event) => setBusqueda(event.target.value)}
+                onChange={(event) => {
+                  setBusqueda(event.target.value);
+                  setActividadesSeleccionadas(new Set());
+                }}
               />
             </div>
           </div>
+          <div className="activity-toolbar__status">
+            <label className="form-label" htmlFor="activity-status-filter">
+              Estado
+            </label>
+            <select
+              className="form-select"
+              id="activity-status-filter"
+              value={filtroEstado}
+              onChange={(event) => {
+                setFiltroEstado(event.target.value);
+                setActividadesSeleccionadas(new Set());
+              }}
+            >
+              <option value="">Todos los estados</option>
+              {ESTADOS.map((estado) => (
+                <option key={estado} value={estado}>
+                  {ETIQUETAS_ESTADO[estado]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="activity-toolbar__actions">
+            <p className="activity-toolbar__result-count" role="status">
+              {actividadesVisibles.length}{" "}
+              {actividadesVisibles.length === 1
+                ? "actividad encontrada"
+                : "actividades encontradas"}
+            </p>
+            <button
+              className={`btn btn-sm activity-multiple-select${modoSeleccionMultiple ? " activity-multiple-select--active" : ""}`}
+              type="button"
+              onClick={toggleModoSeleccionMultiple}
+              aria-pressed={modoSeleccionMultiple}
+              disabled={eliminandoActividades}
+            >
+              <i
+                className={`fas ${modoSeleccionMultiple ? "fa-xmark" : "fa-list-check"}`}
+                aria-hidden="true"
+              ></i>
+              {modoSeleccionMultiple
+                ? "Salir de selección"
+                : "Selección múltiple"}
+            </button>
+          </div>
         </div>
+        {modoSeleccionMultiple &&
+          !cargando &&
+          actividadesVisibles.length > 0 && (
+            <div className="activity-bulk-toolbar">
+              <label className="activity-bulk-toolbar__select-all">
+                <input
+                  type="checkbox"
+                  checked={todasLasVisiblesSeleccionadas}
+                  onChange={toggleSeleccionVisibles}
+                  aria-label="Seleccionar todas las actividades filtradas"
+                />
+                <span>
+                  {todasLasVisiblesSeleccionadas
+                    ? "Quitar selección"
+                    : "Seleccionar actividades filtradas"}
+                </span>
+              </label>
+              <span className="activity-bulk-toolbar__summary" role="status">
+                {actividadesSeleccionadasVisibles.length} seleccionadas
+              </span>
+              <button
+                className="btn btn-danger btn-sm activity-bulk-toolbar__delete"
+                type="button"
+                onClick={() => {
+                  setErrorEliminacionMasiva("");
+                  setConfirmacionEliminacionMasiva(true);
+                }}
+                disabled={
+                  actividadesSeleccionadasVisibles.length === 0 ||
+                  eliminandoActividades
+                }
+              >
+                <i className="fas fa-trash-can" aria-hidden="true"></i>
+                Eliminar seleccionadas
+              </button>
+            </div>
+        )}
+        {importacionRealizadas && (
+          <section
+            className="activity-import-result"
+            aria-labelledby="activity-import-result-title"
+            role="status"
+          >
+            <button
+              className="activity-import-result__close"
+              type="button"
+              aria-label="Cerrar resumen de importación"
+              onClick={() =>
+                navigate(`${location.pathname}${location.search}`, {
+                  replace: true,
+                  state: null,
+                })
+              }
+            >
+              <i className="fas fa-times" aria-hidden="true"></i>
+            </button>
+            <h3 id="activity-import-result-title">
+              Importación guardada: las actividades válidas están en esta lista
+            </h3>
+            <p>
+              {Number(importacionRealizadas.actividadesCreadas || 0)} actividades
+              creadas y{" "}
+              {Number(importacionRealizadas.actividadesReutilizadas || 0)}{" "}
+              reutilizadas;{" "}
+              {Number(importacionRealizadas.participantesInscritos || 0)}{" "}
+              participantes inscritos. Las actividades se guardaron como
+              finalizadas y aparecen agrupadas abajo.{" "}
+              {Number(importacionRealizadas.participantesYaInscritos || 0)} ya
+              estaban inscritos.
+            </p>
+            {(Number(importacionRealizadas.actividadesPendientes || 0) > 0 ||
+              Number(importacionRealizadas.participantesPendientes || 0) > 0 ||
+              Number(importacionRealizadas.participantesDuplicados || 0) > 0) && (
+              <details>
+                <summary>
+                  Pendientes y filas omitidas:{" "}
+                  {Number(importacionRealizadas.actividadesPendientes || 0)}{" "}
+                  actividades,{" "}
+                  {Number(importacionRealizadas.participantesPendientes || 0)}{" "}
+                  participantes y{" "}
+                  {Number(importacionRealizadas.participantesDuplicados || 0)}{" "}
+                  duplicados
+                </summary>
+                {razonesImportacionPendiente.length > 0 && (
+                  <ul>
+                    {razonesImportacionPendiente.map((reason) => (
+                      <li key={reason.key}>{reason.text}</li>
+                    ))}
+                  </ul>
+                )}
+              </details>
+            )}
+          </section>
+        )}
         {!cargando && (
           <div
             className="activity-overview"
             aria-label="Resumen de actividades por estado"
           >
             {actividadesPorEstado.map((grupo) => (
-              <div className="activity-overview__item" key={grupo.estado}>
+              <button
+                className={`activity-overview__item${filtroEstado === grupo.estado ? " activity-overview__item--active" : ""}`}
+                key={grupo.estado}
+                type="button"
+                aria-pressed={filtroEstado === grupo.estado}
+                title={`Filtrar actividades ${grupo.etiqueta.toLowerCase()}`}
+                onClick={() => {
+                  setFiltroEstado((current) =>
+                    current === grupo.estado ? "" : grupo.estado,
+                  );
+                  setActividadesSeleccionadas(new Set());
+                }}
+              >
                 <span
                   className={`activity-overview__icon activity-overview__icon--${grupo.estado.toLowerCase()}`}
                 >
                   <i className="fas fa-calendar-alt" aria-hidden="true"></i>
                 </span>
                 <span>
-                  <strong>{grupo.actividades.length}</strong>
+                  <strong>{grupo.total}</strong>
                   <small>{grupo.etiqueta}</small>
                 </span>
-              </div>
+                <i
+                  className="fas fa-arrow-right activity-overview__filter-icon"
+                  aria-hidden="true"
+                ></i>
+              </button>
             ))}
           </div>
         )}
@@ -684,16 +1076,22 @@ export default function ActividadesAdminView() {
           <p className="text-muted" role="status">
             Consultando actividades de PostgreSQL...
           </p>
-        ) : actividades.length === 0 ? (
+        ) : actividadesVisibles.length === 0 ? (
           <div className="activity-empty" role="status">
             <span className="activity-empty__icon">
               <i className="fas fa-calendar-day" aria-hidden="true"></i>
             </span>
-            <strong>No hay actividades para mostrar</strong>
+            <strong>
+              {actividades.length === 0
+                ? "No hay actividades para mostrar"
+                : "No hay actividades con esos filtros"}
+            </strong>
             <span>
               {busqueda
                 ? "No se encontraron actividades con esa búsqueda."
-                : "Cuando registres actividades, aparecerán organizadas aquí por estado."}
+                : filtroEstado
+                  ? `No hay actividades ${ETIQUETAS_ESTADO[filtroEstado].toLowerCase()}.`
+                  : "Cuando registres actividades, aparecerán organizadas aquí por estado."}
             </span>
           </div>
         ) : (
@@ -702,7 +1100,13 @@ export default function ActividadesAdminView() {
               <details
                 className={`activity-status-group activity-status-group--${grupo.estado.toLowerCase()}`}
                 key={grupo.estado}
-                open={grupo.actividades.length > 0}
+                open={
+                  Boolean(busqueda.trim()) ||
+                  (Boolean(filtroEstado) && filtroEstado === grupo.estado) ||
+                  (!filtroEstado &&
+                    !busqueda.trim() &&
+                    ["PROGRAMADA", "EN_CURSO"].includes(grupo.estado))
+                }
               >
                 <summary className="activity-status-group__header">
                   <span className="activity-status-group__heading">
@@ -731,8 +1135,28 @@ export default function ActividadesAdminView() {
                         ? activity.variablesModalidades
                         : [];
                       return (
-                        <article className="activity-card" key={activity.id}>
+                        <article
+                          className={`activity-card${actividadesSeleccionadas.has(activity.id) ? " activity-card--selected" : ""}`}
+                          key={activity.id}
+                        >
                           <div className="activity-card__top">
+                            {modoSeleccionMultiple && (
+                              <label className="activity-card__select">
+                                <input
+                                  type="checkbox"
+                                  checked={actividadesSeleccionadas.has(
+                                    activity.id,
+                                  )}
+                                  onChange={() =>
+                                    toggleSeleccionActividad(activity.id)
+                                  }
+                                  aria-label={`Seleccionar ${activity.actividad} para eliminación`}
+                                />
+                                <span className="sr-only">
+                                  Seleccionar para eliminación
+                                </span>
+                              </label>
+                            )}
                             <span className="activity-card__icon">
                               <i
                                 className="fas fa-calendar-check"
@@ -753,90 +1177,15 @@ export default function ActividadesAdminView() {
                             {activity.proyecto || "Actividad institucional"}
                           </p>
 
-                          <div className="activity-card__details">
-                            <div className="activity-detail">
+                          <div className="activity-card__quick-info">
+                            <span>
                               <i
                                 className="far fa-calendar-alt"
                                 aria-hidden="true"
                               ></i>
-                              <span>
-                                <strong>
-                                  {activity.periodo || "Sin periodo"}
-                                </strong>
-                                <small>
-                                  {formatoFecha(activity.fechaInicio)} –{" "}
-                                  {formatoFecha(activity.fechaFinalizacion)}
-                                </small>
-                              </span>
-                            </div>
-                            <div className="activity-detail">
-                              <i
-                                className="fas fa-map-marker-alt"
-                                aria-hidden="true"
-                              ></i>
-                              <span>
-                                <strong>
-                                  {activity.ubicacion ||
-                                    "Ubicación no especificada"}
-                                </strong>
-                                <small>
-                                  {activity.modalidad ||
-                                    "Modalidad no especificada"}
-                                </small>
-                              </span>
-                            </div>
-                          </div>
-
-                          {activity.programaBienestar && (
-                            <div className="activity-card__program">
-                              <span className="activity-card__label">
-                                PROGRAMA DE BIENESTAR
-                              </span>
-                              <strong>
-                                {bienestar?.programa ||
-                                  activity.programaBienestar}
-                              </strong>
-                              {modalidades.length > 0 && (
-                                <div className="activity-card__tags">
-                                  {modalidades.map((modalidad) => {
-                                    const detalle = programasBienestar.find(
-                                      (item) =>
-                                        item.programaCompleto === modalidad,
-                                    );
-                                    const apoyoModalidad =
-                                      activity.apoyosModalidades?.find(
-                                        (item) =>
-                                          item.programaCompleto === modalidad,
-                                      );
-                                    return (
-                                      <span
-                                        className="activity-chip"
-                                        key={modalidad}
-                                      >
-                                        {detalle?.subdivision || modalidad}
-                                        {apoyoModalidad?.tipoApoyo && (
-                                          <small>
-                                            {apoyoModalidad.tipoApoyo}
-                                          </small>
-                                        )}
-                                      </span>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                              {activity.tipoApoyoPrograma && (
-                                <span className="activity-card__support">
-                                  <i
-                                    className="fas fa-hand-holding-heart"
-                                    aria-hidden="true"
-                                  ></i>
-                                  {activity.tipoApoyoPrograma}
-                                </span>
-                              )}
-                            </div>
-                          )}
-
-                          <div className="activity-card__footer">
+                              {formatoFecha(activity.fechaInicio)} –{" "}
+                              {formatoFecha(activity.fechaFinalizacion)}
+                            </span>
                             <button
                               className="activity-card__participants"
                               type="button"
@@ -846,81 +1195,167 @@ export default function ActividadesAdminView() {
                                 className="fas fa-users"
                                 aria-hidden="true"
                               ></i>
-                              <span>
-                                <strong>{activity.totalParticipantes}</strong>{" "}
-                                participantes
-                              </span>
+                              <strong>{activity.totalParticipantes}</strong>
+                              <span>inscritos</span>
                             </button>
-                            <div className="activity-card__actions">
-                              <button
-                                className="btn btn-outline btn-sm activity-card__download"
-                                type="button"
-                                onClick={() =>
-                                  downloadAttendanceExcel(activity)
-                                }
-                                disabled={Boolean(exportandoActividadId)}
-                                title="Descargar participantes con el formato de Asistencia y reportes"
-                                aria-label={`Descargar Excel de asistencia para ${activity.actividad}`}
-                              >
+                          </div>
+
+                          <details className="activity-card__more">
+                            <summary>
+                              <span>Ver detalles y acciones</span>
+                              <i
+                                className="fas fa-chevron-down"
+                                aria-hidden="true"
+                              ></i>
+                            </summary>
+                            <div className="activity-card__details">
+                              <div className="activity-detail">
                                 <i
-                                  className={`fas ${exportandoActividadId === activity.id ? "fa-spinner fa-spin" : "fa-file-excel"}`}
+                                  className="far fa-calendar-alt"
                                   aria-hidden="true"
                                 ></i>
-                                {exportandoActividadId === activity.id
-                                  ? "Generando Excel..."
-                                  : "Excel asistencia"}
-                              </button>
-                              <label className="activity-card__status-control">
-                                <span className="sr-only">
-                                  Cambiar estado de {activity.actividad}
+                                <span>
+                                  <strong>
+                                    {activity.periodo || "Sin periodo"}
+                                  </strong>
+                                  <small>Periodo académico</small>
                                 </span>
-                                <select
-                                  className="form-select"
-                                  value={activity.estado}
-                                  onChange={(event) =>
-                                    changeStatus(
-                                      activity.id,
-                                      event.target.value,
-                                    )
+                              </div>
+                              <div className="activity-detail">
+                                <i
+                                  className="fas fa-map-marker-alt"
+                                  aria-hidden="true"
+                                ></i>
+                                <span>
+                                  <strong>
+                                    {normalizarCampus(activity.ubicacion).join(", ") ||
+                                      "Ubicación no especificada"}
+                                  </strong>
+                                  <small>
+                                    {activity.modalidad ||
+                                      "Modalidad no especificada"}
+                                  </small>
+                                </span>
+                              </div>
+                            </div>
+
+                            {activity.programaBienestar && (
+                              <div className="activity-card__program">
+                                <span className="activity-card__label">
+                                  PROGRAMA DE BIENESTAR
+                                </span>
+                                <strong>
+                                  {bienestar?.programa ||
+                                    activity.programaBienestar}
+                                </strong>
+                                {modalidades.length > 0 && (
+                                  <div className="activity-card__tags">
+                                    {modalidades.map((modalidad) => {
+                                      const detalle = programasBienestar.find(
+                                        (item) =>
+                                          item.programaCompleto === modalidad,
+                                      );
+                                      const apoyoModalidad =
+                                        activity.apoyosModalidades?.find(
+                                          (item) =>
+                                            item.programaCompleto === modalidad,
+                                        );
+                                      return (
+                                        <span
+                                          className="activity-chip"
+                                          key={modalidad}
+                                        >
+                                          {detalle?.subdivision || modalidad}
+                                          {apoyoModalidad?.tipoApoyo && (
+                                            <small>
+                                              {apoyoModalidad.tipoApoyo}
+                                            </small>
+                                          )}
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                                {activity.tipoApoyoPrograma && (
+                                  <span className="activity-card__support">
+                                    <i
+                                      className="fas fa-hand-holding-heart"
+                                      aria-hidden="true"
+                                    ></i>
+                                    {activity.tipoApoyoPrograma}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+
+                            <div className="activity-card__footer">
+                              <div className="activity-card__actions">
+                                <button
+                                  className="btn btn-outline btn-sm activity-card__download"
+                                  type="button"
+                                  onClick={() =>
+                                    downloadAttendanceExcel(activity)
+                                  }
+                                  disabled={Boolean(exportandoActividadId)}
+                                  title="Descargar participantes con el formato de Asistencia y reportes"
+                                  aria-label={`Descargar Excel de asistencia para ${activity.actividad}`}
+                                >
+                                  <i
+                                    className={`fas ${exportandoActividadId === activity.id ? "fa-spinner fa-spin" : "fa-file-excel"}`}
+                                    aria-hidden="true"
+                                  ></i>
+                                  {exportandoActividadId === activity.id
+                                    ? "Generando Excel..."
+                                    : "Excel asistencia"}
+                                </button>
+                                <label className="activity-card__status-control">
+                                  <span className="sr-only">
+                                    Cambiar estado de {activity.actividad}
+                                  </span>
+                                  <select
+                                    className="form-select"
+                                    value={activity.estado}
+                                    onChange={(event) =>
+                                      changeStatus(
+                                        activity.id,
+                                        event.target.value,
+                                      )
+                                    }
+                                  >
+                                    {ESTADOS.map((status) => (
+                                      <option key={status} value={status}>
+                                        {status.replaceAll("_", " ")}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <button
+                                  className="btn btn-outline btn-sm"
+                                  type="button"
+                                  onClick={() =>
+                                    setForm(toForm(activity, programasBienestar))
                                   }
                                 >
-                                  {ESTADOS.map((status) => (
-                                    <option key={status} value={status}>
-                                      {status.replaceAll("_", " ")}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-                              <button
-                                className="btn btn-outline btn-sm"
-                                type="button"
-                                onClick={() =>
-                                  setForm(toForm(activity, programasBienestar))
-                                }
-                              >
-                                Editar
-                              </button>
-                              {activity.estado !== "CANCELADA" && (
-                                <button
-                                  className="btn btn-outline btn-sm activity-card__archive"
-                                  type="button"
-                                  onClick={() => archiveActivity(activity)}
-                                >
-                                  Archivar
+                                  Editar
                                 </button>
-                              )}
-                              <button
-                                className="btn btn-outline btn-sm activity-card__archive"
-                                type="button"
-                                onClick={() => deleteActivity(activity)}
-                                disabled={Boolean(eliminandoActividadId)}
-                              >
-                                {eliminandoActividadId === activity.id
-                                  ? "Eliminando..."
-                                  : "Eliminar"}
-                              </button>
+                                <button
+                                  className="btn btn-danger btn-sm activity-card__delete"
+                                  type="button"
+                                  onClick={() => deleteActivity(activity)}
+                                  disabled={Boolean(eliminandoActividadId)}
+                                  title={`Eliminar permanentemente la actividad ${activity.actividad}, sin importar su estado`}
+                                >
+                                  <i
+                                    className={`fas ${eliminandoActividadId === activity.id ? "fa-spinner fa-spin" : "fa-trash-can"}`}
+                                    aria-hidden="true"
+                                  ></i>
+                                  {eliminandoActividadId === activity.id
+                                    ? "Eliminando..."
+                                    : "Eliminar actividad"}
+                                </button>
+                              </div>
                             </div>
-                          </div>
+                          </details>
                         </article>
                       );
                     })}
@@ -1045,7 +1480,7 @@ export default function ActividadesAdminView() {
           <section className="card activity-modal__card">
             <form onSubmit={save}>
               <div className="activity-form-content">
-                <section className="activity-form-section">
+                <section className="activity-form-section activity-form-section--general">
                   <div className="activity-form-section__heading">
                     <span className="activity-form-section__icon">
                       <i className="fas fa-info-circle" aria-hidden="true"></i>
@@ -1058,7 +1493,7 @@ export default function ActividadesAdminView() {
                     </span>
                   </div>
                   <div className="activity-form-grid">
-                    <div className="form-group">
+                    <div className="form-group activity-general-field">
                       <label className="form-label" htmlFor="activity-period">
                         Periodo académico
                       </label>
@@ -1079,7 +1514,7 @@ export default function ActividadesAdminView() {
                         ))}
                       </select>
                     </div>
-                    <div className="form-group">
+                    <div className="form-group activity-general-field">
                       <label className="form-label" htmlFor="activity-name">
                         Nombre de la actividad
                       </label>
@@ -1095,7 +1530,7 @@ export default function ActividadesAdminView() {
                         required
                       />
                     </div>
-                    <div className="form-group activity-form-field--wide">
+                    <div className="form-group activity-form-field--wide activity-general-field">
                       <label className="form-label" htmlFor="activity-program">
                         Programa general de Bienestar{" "}
                         <span className="activity-form-optional">Opcional</span>
@@ -1110,11 +1545,19 @@ export default function ActividadesAdminView() {
                         id="activity-program"
                         value={form.programaBienestar}
                         onChange={(event) =>
-                          setForm((current) => ({
-                            ...current,
-                            programaBienestar: event.target.value,
-                            subdivisionProgramas: [],
-                          }))
+                          setForm((current) => {
+                            const programaBienestar = event.target.value;
+                            return {
+                              ...current,
+                              programaBienestar,
+                              subdivisionProgramas: [],
+                              ...estrategiasAutocompletadas(
+                                programasBienestar,
+                                programaBienestar,
+                                [],
+                              ),
+                            };
+                          })
                         }
                       >
                         <option value="">No aplica</option>
@@ -1164,8 +1607,7 @@ export default function ActividadesAdminView() {
                               <button
                                 type="button"
                                 onClick={() =>
-                                  update(
-                                    "subdivisionProgramas",
+                                  updateModalidades(
                                     subdivisionesPrograma.map(
                                       (item) => item.programaCompleto,
                                     ),
@@ -1177,7 +1619,7 @@ export default function ActividadesAdminView() {
                               <button
                                 type="button"
                                 onClick={() =>
-                                  update("subdivisionProgramas", [])
+                                  updateModalidades([])
                                 }
                               >
                                 Limpiar
@@ -1201,8 +1643,7 @@ export default function ActividadesAdminView() {
                                   type="checkbox"
                                   checked={seleccionada}
                                   onChange={(event) =>
-                                    update(
-                                      "subdivisionProgramas",
+                                    updateModalidades(
                                       event.target.checked
                                         ? [
                                             ...form.subdivisionProgramas,
@@ -1237,6 +1678,59 @@ export default function ActividadesAdminView() {
                         </div>
                       </div>
                     )}
+                    <fieldset
+                      className="activity-form-field--wide activity-strategies-field"
+                    >
+                      <legend className="form-label">
+                        Estrategias institucionales{" "}
+                        <span className="activity-form-optional">Opcional</span>
+                      </legend>
+                      <p className="activity-program-hint">
+                        Selecciona las estrategias que correspondan a esta
+                        actividad. Si las dejas vacías, se conservarán las
+                        asociadas al programa elegido.
+                      </p>
+                      <div className="activity-form-grid">
+                        {[
+                          [
+                            "estrategiaPoliticaBienestar",
+                            "Estrategia de Bienestar",
+                          ],
+                          [
+                            "estrategiaPoliticaPermanencia",
+                            "Estrategia de Permanencia y graduación",
+                          ],
+                          [
+                            "estrategiaPoliticaEducacionInclusiva",
+                            "Estrategia de Educación inclusiva",
+                          ],
+                        ].map(([field, label], index) => (
+                          <div className="form-group" key={field}>
+                            <label
+                              className="form-label"
+                              htmlFor={`activity-${field}`}
+                            >
+                              {label}
+                            </label>
+                            <select
+                              className="form-select"
+                              id={`activity-${field}`}
+                              value={form[field] || ""}
+                              onChange={(event) =>
+                                update(field, event.target.value)
+                              }
+                            >
+                              <option value="">Usar valor del catálogo</option>
+                              {opcionesEstrategias[index][1].map((option) => (
+                                <option key={option} value={option}>
+                                  {option}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        ))}
+                      </div>
+                    </fieldset>
                     {filasCatalogoSeleccionadas.length > 0 && (
                       <section
                         className="activity-catalog-summary activity-form-field--wide"
@@ -1304,7 +1798,7 @@ export default function ActividadesAdminView() {
                   </div>
                 </section>
 
-                <section className="activity-form-section">
+                <section className="activity-form-section activity-form-section--schedule">
                   <div className="activity-form-section__heading">
                     <span className="activity-form-section__icon">
                       <i className="far fa-calendar-alt" aria-hidden="true"></i>
@@ -1316,8 +1810,8 @@ export default function ActividadesAdminView() {
                       </p>
                     </span>
                   </div>
-                  <div className="activity-form-grid">
-                    <div className="form-group">
+                  <div className="activity-form-grid activity-schedule-grid">
+                    <div className="form-group activity-schedule-field">
                       <label className="form-label" htmlFor="activity-start">
                         Fecha inicial
                       </label>
@@ -1332,7 +1826,7 @@ export default function ActividadesAdminView() {
                         required
                       />
                     </div>
-                    <div className="form-group">
+                    <div className="form-group activity-schedule-field">
                       <label className="form-label" htmlFor="activity-end">
                         Fecha final
                       </label>
@@ -1347,7 +1841,7 @@ export default function ActividadesAdminView() {
                         required
                       />
                     </div>
-                    <div className="form-group">
+                    <div className="form-group activity-schedule-field">
                       <label className="form-label" htmlFor="activity-mode">
                         Modalidad
                       </label>
@@ -1365,31 +1859,78 @@ export default function ActividadesAdminView() {
                         ))}
                       </select>
                     </div>
-                    <div className="form-group">
-                      <label className="form-label" htmlFor="activity-location">
-                        Campus
-                      </label>
-                      <select
-                        className="form-select"
-                        id="activity-location"
-                        value={form.ubicacion}
-                        onChange={(event) =>
-                          update("ubicacion", event.target.value)
-                        }
-                        required
-                      >
-                        <option value="">Selecciona el campus</option>
-                        {[
-                          "Campus Centro",
-                          "Campus San Damián",
-                          "Campus Santiago",
-                        ].map((campus) => (
-                          <option key={campus} value={campus}>
-                            {campus}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    <fieldset className="form-group activity-campus-picker">
+                      <legend className="activity-campus-picker__heading">
+                        <span className="activity-campus-picker__icon">
+                          <i
+                            className="fas fa-location-dot"
+                            aria-hidden="true"
+                          ></i>
+                        </span>
+                        <span className="activity-campus-picker__title">
+                          <span className="form-label">
+                            Sedes de la actividad <span>*</span>
+                          </span>
+                          <small>Selecciona una o varias sedes</small>
+                        </span>
+                        <span className="activity-campus-picker__count">
+                          {form.ubicacion.length} seleccionada
+                          {form.ubicacion.length === 1 ? "" : "s"}
+                        </span>
+                      </legend>
+                      <div className="activity-campus-picker__options">
+                        {CAMPUS_ACTIVIDAD.map((campus) => {
+                          const seleccionado = form.ubicacion.includes(campus);
+                          return (
+                            <label
+                              className={`activity-campus-picker__option${seleccionado ? " is-selected" : ""}`}
+                              key={campus}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={seleccionado}
+                                aria-label={campus}
+                                onChange={(event) =>
+                                  update(
+                                    "ubicacion",
+                                    event.target.checked
+                                      ? [...form.ubicacion, campus]
+                                      : form.ubicacion.filter(
+                                          (item) => item !== campus,
+                                        ),
+                                  )
+                                }
+                              />
+                              <span className="activity-campus-picker__campus-icon">
+                                <i
+                                  className="fas fa-building"
+                                  aria-hidden="true"
+                                ></i>
+                              </span>
+                              <span className="activity-campus-picker__campus-copy">
+                                <strong>{campus}</strong>
+                                <small>Sede universitaria</small>
+                              </span>
+                              <span className="activity-campus-picker__check">
+                                <i
+                                  className="fas fa-check"
+                                  aria-hidden="true"
+                                ></i>
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      <p className="activity-campus-picker__selection">
+                        <i
+                          className={`fas ${form.ubicacion.length ? "fa-circle-check" : "fa-circle-info"}`}
+                          aria-hidden="true"
+                        ></i>
+                        {form.ubicacion.length
+                          ? `Se realizará en: ${form.ubicacion.join(", ")}`
+                          : "Elige al menos una sede para continuar."}
+                      </p>
+                    </fieldset>
                   </div>
                 </section>
 
@@ -1457,6 +1998,94 @@ export default function ActividadesAdminView() {
         </Modal>
       )}
 
+      {confirmacionEliminacionMasiva && (
+        <Modal
+          title="Eliminar actividades seleccionadas"
+          subtitle="Confirma el alcance antes de continuar."
+          onClose={() => {
+            if (!eliminandoActividades) {
+              setConfirmacionEliminacionMasiva(false);
+              setErrorEliminacionMasiva("");
+            }
+          }}
+        >
+          <section className="activity-bulk-confirm">
+            <div className="activity-bulk-confirm__warning">
+              <span className="activity-bulk-confirm__icon" aria-hidden="true">
+                <i className="fas fa-triangle-exclamation"></i>
+              </span>
+              <div>
+                <strong>
+                  Se eliminarán permanentemente{" "}
+                  {actividadesSeleccionadasVisibles.length} actividades
+                </strong>
+                <p>
+                  También se borrarán {participantesSeleccionados} inscripciones
+                  y las modalidades asociadas. Los
+                  perfiles personales y estudiantiles no se eliminarán. Esta
+                  acción no se puede deshacer.
+                </p>
+              </div>
+            </div>
+            <div className="activity-bulk-confirm__list">
+              <strong>Actividades incluidas</strong>
+              <ul>
+                {actividadesSeleccionadasVisibles.slice(0, 6).map((activity) => (
+                  <li key={activity.id}>
+                    <span>{activity.actividad || "Actividad sin nombre"}</span>
+                    <small>
+                      {activity.periodo || "Sin periodo"} ·{" "}
+                      {Number(activity.totalParticipantes || 0)} inscripciones
+                    </small>
+                  </li>
+                ))}
+              </ul>
+              {actividadesSeleccionadasVisibles.length > 6 && (
+                <small>
+                  Y {actividadesSeleccionadasVisibles.length - 6} actividades
+                  más.
+                </small>
+              )}
+            </div>
+            {errorEliminacionMasiva && (
+              <div className="auth-error" role="alert">
+                {errorEliminacionMasiva}
+              </div>
+            )}
+            <div className="activity-bulk-confirm__actions">
+              <button
+                className="btn btn-outline"
+                type="button"
+                onClick={() => {
+                  setConfirmacionEliminacionMasiva(false);
+                  setErrorEliminacionMasiva("");
+                }}
+                disabled={eliminandoActividades}
+              >
+                Cancelar
+              </button>
+              <button
+                className="btn btn-danger"
+                type="button"
+                onClick={deleteSelectedActivities}
+                disabled={
+                  eliminandoActividades ||
+                  actividadesSeleccionadasVisibles.length === 0
+                }
+              >
+                <i
+                  className={`fas ${eliminandoActividades ? "fa-spinner fa-spin" : "fa-trash-can"}`}
+                  aria-hidden="true"
+                ></i>
+                {eliminandoActividades
+                  ? "Eliminando…"
+                  : `Eliminar ${actividadesSeleccionadasVisibles.length} actividades`}
+              </button>
+            </div>
+          </section>
+        </Modal>
+      )}
+
       {participantes && (
         <Modal
           title="Participantes de la actividad"
@@ -1464,7 +2093,7 @@ export default function ActividadesAdminView() {
           onClose={() => setParticipantes(null)}
           wide
         >
-          <section className="card activity-modal__card">
+          <section className="card activity-modal__card activity-participants-card">
             <div className="activity-participants-heading">
               <div>
                 <span className="activity-admin__eyebrow">
@@ -1511,7 +2140,7 @@ export default function ActividadesAdminView() {
                       confirmacionEliminacion.identificacion}
                     ?
                   </strong>
-                  {confirmacionEliminacion.rolParticipacion === "ESTUDIANTE" ? (
+                  {confirmacionEliminacion.roles?.includes("ESTUDIANTE") ? (
                     <p>
                       Solo se quitará de esta actividad. Su perfil de estudiante
                       y sus datos institucionales se conservarán.
@@ -1614,7 +2243,14 @@ export default function ActividadesAdminView() {
                       </thead>
                       <tbody>
                         {participantesFiltrados.map((row) => (
-                          <tr key={row.id}>
+                          <tr
+                            className={
+                              (row.roles || [row.rolParticipacion]).length > 1
+                                ? "vec-multiple-roles"
+                                : undefined
+                            }
+                            key={row.id}
+                          >
                             <td data-label="Persona">
                               <div className="activity-participants-person">
                                 <span
@@ -1631,10 +2267,24 @@ export default function ActividadesAdminView() {
                                     .toLocaleUpperCase("es")}
                                 </span>
                                 <span className="activity-participants-person__details">
-                                  <strong>
-                                    {row.apellidosNombres ||
-                                      "Nombre no registrado"}
-                                  </strong>
+                                  <span className="vec-multiple-roles__person">
+                                    <strong>
+                                      {row.apellidosNombres ||
+                                        "Nombre no registrado"}
+                                    </strong>
+                                    {(row.roles || [row.rolParticipacion]).length > 1 && (
+                                      <span
+                                        className="vec-multiple-roles__badge"
+                                        aria-label={`${row.roles.length} roles`}
+                                        title={row.roles
+                                          .map((role) => ETIQUETAS_ROL_PARTICIPANTE[role] || role)
+                                          .join(" · ")}
+                                      >
+                                        <i className="fas fa-layer-group" aria-hidden="true"></i>
+                                        {row.roles.length} roles
+                                      </span>
+                                    )}
+                                  </span>
                                   <small>
                                     <i
                                       className="far fa-id-card"
@@ -1656,13 +2306,66 @@ export default function ActividadesAdminView() {
                               </div>
                             </td>
                             <td data-label="Rol">
-                              <span
-                                className={`activity-participants-role activity-participants-role--${String(row.rolParticipacion || "").toLowerCase()}`}
-                              >
-                                {row.detalleTipoParticipante ||
-                                  row.rolParticipacion ||
-                                  "Sin rol"}
-                              </span>
+                              {(() => {
+                                const role = normalizarRolParticipante(row.rolParticipacion);
+                                const otherRoles = (row.roles || [])
+                                  .map(normalizarRolParticipante)
+                                  .filter((otherRole) => otherRole !== role);
+                                const multipleRoles = otherRoles.length > 0;
+                                const label = ETIQUETAS_ROL_PARTICIPANTE[role]
+                                  || row.detalleTipoParticipante
+                                  || row.rolParticipacion
+                                  || "Sin rol";
+                                const renderRoleBadge = (roleValue, roleLabel) => (
+                                  <span
+                                    className={`activity-participants-role activity-participants-role--${roleValue.toLowerCase()}`}
+                                  >
+                                    <i
+                                      className={`fas ${ICONOS_ROL_PARTICIPANTE[roleValue] || "fa-user"}`}
+                                      aria-hidden="true"
+                                    ></i>
+                                    {roleLabel}
+                                  </span>
+                                );
+                                return (
+                                  <div
+                                    className={`activity-participants-role-cell${multipleRoles ? " activity-participants-role-cell--multiple" : ""}`}
+                                  >
+                                    <div className="activity-participants-role-cell__primary">
+                                      {multipleRoles && (
+                                        <small className="activity-participants-role-cell__label">
+                                          Rol principal
+                                        </small>
+                                      )}
+                                      {renderRoleBadge(role, label)}
+                                      {row.detalleTipoParticipante
+                                        && row.detalleTipoParticipante !== label
+                                        && role !== "COLABORADOR" && (
+                                          <small className="activity-participants-role-cell__detail">
+                                            {row.detalleTipoParticipante}
+                                          </small>
+                                        )}
+                                    </div>
+                                    {multipleRoles && (
+                                      <div className="activity-participants-role-cell__other">
+                                        <small className="activity-participants-role-cell__label">
+                                          Rol adicional
+                                        </small>
+                                        <div className="activity-participants-role-cell__other-badges">
+                                          {otherRoles.map((otherRole) => (
+                                            <span key={otherRole}>
+                                              {renderRoleBadge(
+                                                otherRole,
+                                                ETIQUETAS_ROL_PARTICIPANTE[otherRole] || otherRole,
+                                              )}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </td>
                             <td data-label="Programa / modalidad">
                               <span className="activity-participants-modality">
@@ -1684,6 +2387,27 @@ export default function ActividadesAdminView() {
                                 ></i>
                                 {row.tipoApoyo || "Sin clasificar"}
                               </span>
+                              {row.tipoApoyoObservacion && (
+                                <div
+                                  className="activity-participants-support-note"
+                                  role="note"
+                                  aria-label="Observación sobre el tipo de apoyo"
+                                >
+                                  <strong>
+                                    <i
+                                      className="fas fa-triangle-exclamation"
+                                      aria-hidden="true"
+                                    ></i>
+                                    Apoyo observado
+                                  </strong>
+                                  <span>
+                                    “{row.tipoApoyoObservacion}” fue informado
+                                    en el Excel y se guardó solo para esta
+                                    inscripción porque no está en el catálogo
+                                    de apoyos.
+                                  </span>
+                                </div>
+                              )}
                             </td>
                             <td data-label="Administrar">
                               <div className="activity-participants-actions">
@@ -1721,19 +2445,6 @@ export default function ActividadesAdminView() {
                                     aria-hidden="true"
                                   ></i>
                                   <span>Apoyo</span>
-                                </button>
-                                <button
-                                  className="btn btn-outline btn-sm"
-                                  type="button"
-                                  onClick={() => showSupportAudit(row)}
-                                  title="Ver auditoría del apoyo"
-                                  aria-label={`Ver auditoría del apoyo de ${row.apellidosNombres || row.identificacion}`}
-                                >
-                                  <i
-                                    className="fas fa-clipboard-list"
-                                    aria-hidden="true"
-                                  ></i>
-                                  <span>Auditoría</span>
                                 </button>
                                 <button
                                   className="btn btn-danger btn-sm activity-participants-actions__delete"
@@ -1848,61 +2559,6 @@ export default function ActividadesAdminView() {
                 </button>
               </div>
             </form>
-          </section>
-        </Modal>
-      )}
-      {auditoriaApoyo && (
-        <Modal
-          title="Auditoría del apoyo"
-          onClose={() => setAuditoriaApoyo(null)}
-          wide
-        >
-          <section className="card activity-modal__card">
-            <div
-              className="card-header"
-              style={{ display: "flex", justifyContent: "space-between" }}
-            >
-              <h2 className="card-title">
-                Auditoría del apoyo · {auditoriaApoyo.persona}
-              </h2>
-              <button
-                className="btn btn-outline btn-sm"
-                type="button"
-                onClick={() => setAuditoriaApoyo(null)}
-              >
-                Cerrar
-              </button>
-            </div>
-            {auditoriaApoyo.rows.length === 0 ? (
-              <p className="text-muted">No hay correcciones previas.</p>
-            ) : (
-              <div className="table-responsive">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Fecha</th>
-                      <th>Usuario</th>
-                      <th>Tipo anterior</th>
-                      <th>Tipo nuevo</th>
-                      <th>Motivo</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {auditoriaApoyo.rows.map((row) => (
-                      <tr key={row.id}>
-                        <td>
-                          {new Date(row.creadoEn).toLocaleString("es-CO")}
-                        </td>
-                        <td>{row.usuarioId || "—"}</td>
-                        <td>{row.tipoAnterior}</td>
-                        <td>{row.tipoNuevo}</td>
-                        <td>{row.detalle?.motivo}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
           </section>
         </Modal>
       )}

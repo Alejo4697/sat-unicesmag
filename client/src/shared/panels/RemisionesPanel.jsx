@@ -26,6 +26,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { apiFetch } from "../api/client.js";
+import { useAuth } from "../context/AuthContext.jsx";
 import { riskBadgeClass } from "../utils/risk.js";
 
 const listRemisiones = () => apiFetch("/remisiones");
@@ -78,11 +79,13 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
     ...ESTADO_INICIAL_FORM,
     codigoEstudiante: codigoEstudiante || searchParams.get("estudiante") || ""
   });
+  const { user } = useAuth();
   const [error, setError] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [modalRemision, setModalRemision] = useState(null);
   const [modalEstado, setModalEstado] = useState("");
   const [modalRecomendaciones, setModalRecomendaciones] = useState("");
+  const [modalSoloLectura, setModalSoloLectura] = useState(false);
 
   useEffect(() => {
     const base = [listRemisiones(), listAreasRemision(), listEstadosRemision(), listRutasRemision()];
@@ -140,7 +143,13 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
     setBusquedaEjecutada(true);
     setError("");
     try {
-      const res = await buscarEstudiantesRemision(q);
+      let res = await buscarEstudiantesRemision(q);
+      if (esRestringidoAPrograma && tieneProgFijo) {
+        res = res.filter((est) => {
+          const p = String(est.programa || "").toLowerCase();
+          return p.includes(progUser) || progUser.includes(p);
+        });
+      }
       setResultadosBusqueda(res);
       // Selección automática: coincidencia exacta por documento o código, o resultado único.
       if (!estudianteSeleccionado) {
@@ -240,10 +249,63 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
     }
   }
 
-  function abrirModal(remision) {
+  function abrirModal(remision, soloLectura = false) {
     setModalRemision(remision);
-    setModalEstado(remision.estado);
+    setModalEstado(remision.estado || "Generada");
     setModalRecomendaciones(remision.recomendacionesAula || "");
+    setModalSoloLectura(soloLectura);
+  }
+
+  function verificarPermisoRemision(r) {
+    if (!user) return { puedeGestionar: false, esRemitente: false, esReceptor: false, esAdmin: false };
+    if (user.rol === "admin") return { puedeGestionar: true, esRemitente: false, esReceptor: true, esAdmin: true };
+
+    const userId = user.id;
+    const userNombre = (user.nombre || "").toLowerCase().trim();
+    const userEmail = (user.email || "").toLowerCase().trim();
+    const userCargo = (user.cargo || "").toLowerCase().trim();
+    const userDep = (user.dependencia || "").toLowerCase().trim();
+    const userDeps = (user.dependencias || []).map((d) => String(d).toLowerCase().trim());
+
+    const remitenteId = r.idUsuarioRemitente;
+    const profId = r.idUsuarioProfesional;
+    const remitidoPor = String(r.remitidoPor || "").toLowerCase();
+    const profAsignado = String(r.profesionalAsignado || "").toLowerCase();
+    const areaDestino = String(r.areaDestino || "").toLowerCase();
+
+    // 1. Quien realizó la remisión
+    const esRemitente = Boolean(
+      (remitenteId && userId && remitenteId === userId) ||
+      (userNombre && remitidoPor.includes(userNombre)) ||
+      (userEmail && remitidoPor.includes(userEmail))
+    );
+
+    // 2. Quien recibe la remisión (profesional asignado o personal del área receptora)
+    const esReceptor = Boolean(
+      (profId && userId && profId === userId && profId !== remitenteId) ||
+      (userNombre && profAsignado && (profAsignado.includes(userNombre) || userNombre.includes(profAsignado))) ||
+      (userDep && areaDestino && (areaDestino.includes(userDep) || userDep.includes(areaDestino))) ||
+      (userCargo && areaDestino && (areaDestino.includes(userCargo) || userCargo.includes(areaDestino))) ||
+      (userDeps.some((d) => areaDestino.includes(d) || d.includes(areaDestino)))
+    );
+
+    // REGLA DE SEGURIDAD ESTRICTA:
+    // Quien hace la remisión NO puede cambiar el estado.
+    // Solo quien la recibe (o un administrador) puede cambiar el estado y actualizarla.
+    if (esRemitente && !esReceptor) {
+      return { puedeGestionar: false, esRemitente: true, esReceptor: false, esAdmin: false };
+    }
+
+    if (esReceptor) {
+      return { puedeGestionar: true, esRemitente, esReceptor: true, esAdmin: false };
+    }
+
+    // Profesional asistencial institucional
+    if (user.rol === "profesional" && !esRemitente) {
+      return { puedeGestionar: true, esRemitente: false, esReceptor: true, esAdmin: false };
+    }
+
+    return { puedeGestionar: false, esRemitente, esReceptor: false, esAdmin: false };
   }
 
   async function guardarEstado() {
@@ -257,9 +319,34 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
     }
   }
 
-  const remisionesVisibles = fijo
-    ? remisiones.filter((r) => r.codigoEstudiante === codigoEstudiante)
-    : remisiones;
+  const progUser = (user?.programa || "").trim().toLowerCase();
+  const tieneProgFijo = Boolean(progUser) &&
+    progUser !== "todos" &&
+    progUser !== "no asignado" &&
+    progUser !== "programa institucional";
+  const esRestringidoAPrograma = (user?.rol === "directivo" || String(user?.cargo || "").toLowerCase().includes("docente")) &&
+    user?.rol !== "admin" &&
+    tieneProgFijo;
+
+  const remisionesVisibles = useMemo(() => {
+    let lista = fijo
+      ? remisiones.filter((r) => r.codigoEstudiante === codigoEstudiante)
+      : remisiones;
+
+    if (esRestringidoAPrograma && tieneProgFijo) {
+      const uNom = (user?.nombre || "").toLowerCase();
+      lista = lista.filter((r) => {
+        const progEst = String(r.programaEstudiante || "").toLowerCase();
+        const coincide = progEst.includes(progUser) || progUser.includes(progEst);
+        const esMio = (r.idUsuarioRemitente && r.idUsuarioRemitente === user.id) ||
+                      (r.remitidoPor && uNom && r.remitidoPor.toLowerCase().includes(uNom)) ||
+                      (r.idUsuarioProfesional && r.idUsuarioProfesional === user.id) ||
+                      (r.profesionalAsignado && uNom && r.profesionalAsignado.toLowerCase().includes(uNom));
+        return coincide || esMio;
+      });
+    }
+    return lista;
+  }, [fijo, remisiones, codigoEstudiante, esRestringidoAPrograma, tieneProgFijo, user, progUser]);
 
   // Filtrado de bandeja por código estudiantil, cédula o nombre
   const remisionesFiltradas = useMemo(() => {
@@ -606,8 +693,25 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
 
         <div className="card" style={{ gridColumn: "span 12" }}>
           <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem" }}>
-            <h3 className="card-title" style={{ margin: 0, display: "inline-flex", alignItems: "center", gap: "8px" }}>
+            <h3 className="card-title" style={{ margin: 0, display: "inline-flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
               <span>{fijo ? "Remisiones del Estudiante" : "Bandeja de Casos Remitidos"}</span>
+              {esRestringidoAPrograma && tieneProgFijo && (
+                <span
+                  className="badge"
+                  style={{
+                    backgroundColor: "#0284c7",
+                    color: "#fff",
+                    borderRadius: "999px",
+                    padding: "0.2rem 0.6rem",
+                    fontSize: "0.75rem",
+                    fontWeight: 600
+                  }}
+                  title="Alcance restringido al programa académico asignado a su perfil institucional"
+                >
+                  <i className="fas fa-graduation-cap" style={{ marginRight: 4 }}></i>
+                  {user.programa}
+                </span>
+              )}
               <span
                 className="badge"
                 title="Remisiones pendientes por atender"
@@ -720,11 +824,69 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
                     </td>
                     <td>
                       <span className={`badge ${estadoBadgeClass(r.estado)}`}>{r.estado}</span>
+                      {(() => {
+                        const perm = verificarPermisoRemision(r);
+                        if (perm.esRemitente && !perm.puedeGestionar) {
+                          return (
+                            <span
+                              style={{
+                                display: "block",
+                                fontSize: "0.7rem",
+                                color: "#64748b",
+                                marginTop: "3px",
+                                fontWeight: 500
+                              }}
+                              title="Usted generó esta remisión. Por seguridad, solo el profesional o área receptora puede cambiar el estado."
+                            >
+                              <i className="fas fa-lock" style={{ fontSize: "0.65rem", marginRight: "3px" }}></i>
+                              Generada por mí
+                            </span>
+                          );
+                        }
+                        if (perm.puedeGestionar && !perm.esAdmin) {
+                          return (
+                            <span
+                              style={{
+                                display: "block",
+                                fontSize: "0.7rem",
+                                color: "#059669",
+                                marginTop: "3px",
+                                fontWeight: 500
+                              }}
+                              title="Asignada a su rol o área de atención institucional."
+                            >
+                              <i className="fas fa-inbox" style={{ fontSize: "0.65rem", marginRight: "3px" }}></i>
+                              Receptor autorizado
+                            </span>
+                          );
+                        }
+                        return null;
+                      })()}
                     </td>
                     <td>
-                      <button className="btn btn-outline btn-sm" onClick={() => abrirModal(r)}>
-                        <i className="fas fa-tasks"></i> Gestionar Estado
-                      </button>
+                      {(() => {
+                        const perm = verificarPermisoRemision(r);
+                        if (perm.puedeGestionar) {
+                          return (
+                            <button
+                              className="btn btn-primary btn-sm"
+                              onClick={() => abrirModal(r, false)}
+                              title="Gestionar y actualizar el estado de esta remisión recibida"
+                            >
+                              <i className="fas fa-tasks"></i> Gestionar Estado
+                            </button>
+                          );
+                        }
+                        return (
+                          <button
+                            className="btn btn-outline btn-sm"
+                            onClick={() => abrirModal(r, true)}
+                            title="Ver detalle del caso y recomendaciones registradas (Solo lectura para el remitente)"
+                          >
+                            <i className="fas fa-eye"></i> Ver Detalle
+                          </button>
+                        );
+                      })()}
                     </td>
                   </tr>
                 ))}
@@ -739,15 +901,44 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
           style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.6)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center" }}
           onClick={() => setModalRemision(null)}
         >
-          <div className="card" style={{ width: 500, maxWidth: "92%", margin: 0, padding: "2rem" }} onClick={(e) => e.stopPropagation()}>
+          <div className="card" style={{ width: 520, maxWidth: "94%", margin: 0, padding: "2rem" }} onClick={(e) => e.stopPropagation()}>
             <div className="card-header" style={{ marginBottom: "1rem" }}>
               <h3 className="card-title">
-                <i className="fas fa-exchange-alt"></i> Actualizar Estado de Remisión {modalRemision.id}
+                {modalSoloLectura ? (
+                  <>
+                    <i className="fas fa-shield-alt" style={{ color: "#2563EB", marginRight: "8px" }}></i>
+                    Detalle de Remisión {modalRemision.id}
+                  </>
+                ) : (
+                  <>
+                    <i className="fas fa-exchange-alt" style={{ marginRight: "8px" }}></i>
+                    Actualizar Estado de Remisión {modalRemision.id}
+                  </>
+                )}
               </h3>
               <button onClick={() => setModalRemision(null)} style={{ background: "none", border: "none", fontSize: "1.2rem", cursor: "pointer" }}>
                 &times;
               </button>
             </div>
+
+            {modalSoloLectura && (
+              <div
+                style={{
+                  background: "#F8FAFC",
+                  border: "1px solid #CBD5E1",
+                  borderRadius: 8,
+                  padding: "0.75rem 1rem",
+                  marginBottom: "1rem",
+                  fontSize: "0.82rem",
+                  color: "#334155",
+                  lineHeight: 1.5
+                }}
+              >
+                <i className="fas fa-lock" style={{ color: "#E06D53", marginRight: 6 }}></i>
+                <strong>Control de Seguridad SAT:</strong> Como creador de la remisión, su estado figura como{" "}
+                <strong style={{ color: "#002855" }}>{modalRemision.estado || "Generada"}</strong>. Solo la persona o área receptora tiene permisos para modificar el estado y registrar recomendaciones de retorno al aula.
+              </div>
+            )}
 
             {modalRemision.tipoApoyo && (
               <p style={{ fontSize: "0.83rem", marginBottom: "0.5rem" }}>
@@ -761,33 +952,59 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
 
             <div className="form-group">
               <label className="form-label">Estado de la Remisión</label>
-              <select className="form-select" value={modalEstado} onChange={(e) => setModalEstado(e.target.value)}>
-                {opcionesEstado.map((estado) => (
-                  <option key={estado.id} value={estado.nombre}>
-                    {estado.nombre}
-                    {estado.inhabilitado ? " (inhabilitado)" : ""}
-                  </option>
-                ))}
-              </select>
+              {modalSoloLectura ? (
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "0.35rem 0" }}>
+                  <span className={`badge ${estadoBadgeClass(modalRemision.estado)}`} style={{ fontSize: "0.85rem", padding: "0.4rem 0.8rem" }}>
+                    {modalRemision.estado || "Generada"}
+                  </span>
+                  <span style={{ fontSize: "0.8rem", color: "#64748b" }}>
+                    (Pendiente de gestión por el área receptora)
+                  </span>
+                </div>
+              ) : (
+                <select className="form-select" value={modalEstado} onChange={(e) => setModalEstado(e.target.value)}>
+                  {opcionesEstado.map((estado) => (
+                    <option key={estado.id} value={estado.nombre}>
+                      {estado.nombre}
+                      {estado.inhabilitado ? " (inhabilitado)" : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
 
             <div className="form-group">
               <label className="form-label">Recomendaciones para el Aula / Docente Acompañante</label>
-              <textarea
-                className="form-control"
-                placeholder="Redacte recomendaciones generales para el aula respetando la reserva psicosocial..."
-                value={modalRecomendaciones}
-                onChange={(e) => setModalRecomendaciones(e.target.value)}
-              />
+              {modalSoloLectura ? (
+                <textarea
+                  className="form-control"
+                  readOnly
+                  disabled
+                  rows={3}
+                  style={{ backgroundColor: "#F8FAFC", cursor: "default", color: modalRecomendaciones ? "#1E293B" : "#94A3B8" }}
+                  placeholder="El área receptora aún no ha registrado recomendaciones para el aula."
+                  value={modalRecomendaciones}
+                />
+              ) : (
+                <textarea
+                  className="form-control"
+                  rows={3}
+                  placeholder="Redacte recomendaciones generales para el aula respetando la reserva psicosocial..."
+                  value={modalRecomendaciones}
+                  onChange={(e) => setModalRecomendaciones(e.target.value)}
+                />
+              )}
             </div>
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: "1.5rem" }}>
               <button onClick={() => setModalRemision(null)} className="btn btn-outline">
-                Cancelar
+                {modalSoloLectura ? "Cerrar" : "Cancelar"}
               </button>
-              <button onClick={guardarEstado} className="btn btn-primary">
-                Actualizar y Notificar Feedback
-              </button>
+              {!modalSoloLectura && (
+                <button onClick={guardarEstado} className="btn btn-primary">
+                  Actualizar y Notificar Feedback
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -15,7 +15,8 @@ function fechaCorta(value) {
 
 const ROL_LABELS = {
   ESTUDIANTE: "Estudiante",
-  COLABORADOR: "Colaborador",
+  DOCENTE: "Docente",
+  COLABORADOR: "Docente",
   ADMINISTRATIVO: "Administrativo",
   EGRESADO: "Egresado",
   EXTERNO: "Externo",
@@ -36,6 +37,12 @@ function normalizarBusqueda(value) {
     .replace(/[\u0300-\u036f]/g, "")
     .toLocaleLowerCase("es")
     .trim();
+}
+
+function asistenciaEstaConfirmada(asistente) {
+  return Boolean(
+    asistente.asistenciaVerificada || asistente.asistenciaEstado === "PRESENTE",
+  );
 }
 
 export default function AsistentesActividadTable() {
@@ -264,12 +271,14 @@ export default function AsistentesActividadTable() {
   }
 
   const asistentesPendientesVisibles = asistentesFiltrados.filter((item) => (
-    !item.asistenciaVerificada && item.asistenciaEstado !== "AUSENTE"
+    !asistenciaEstaConfirmada(item) && item.asistenciaEstado !== "AUSENTE"
   ));
-  const seleccionadosPendientes = asistentes.filter((item) => idsSeleccionados.has(item.id) && !item.asistenciaVerificada);
+  const seleccionadosPendientes = asistentes.filter((item) => (
+    idsSeleccionados.has(item.id) && !asistenciaEstaConfirmada(item)
+  ));
 
   function cambiarSeleccion(asistente, seleccionado) {
-    if (asistente.asistenciaVerificada) return;
+    if (asistenciaEstaConfirmada(asistente)) return;
     setIdsSeleccionados((actuales) => {
       const siguientes = new Set(actuales);
       if (seleccionado) siguientes.add(asistente.id);
@@ -344,17 +353,17 @@ export default function AsistentesActividadTable() {
           ? `${confirmados} ${confirmados === 1 ? "asistencia confirmada" : "asistencias confirmadas"} desde ${fuente}.`
           : asistenciaEstado === "AUSENTE"
             ? `${confirmados} ${confirmados === 1 ? "persona confirmada como ausente" : "personas confirmadas como ausentes"} desde ${fuente}.`
-            : `${confirmados} registros devueltos a pendiente desde ${fuente}.`,
+            : `${confirmados} ${confirmados === 1 ? "asistencia devuelta" : "asistencias devueltas"} a pendiente desde ${fuente}.`,
       );
       if (confirmados !== registros.length) {
         const noConfirmados = registros.length - confirmados;
-        const message = `Se confirmaron ${confirmados} de ${registros.length} personas; ${noConfirmados} no se guardaron. Recarga la actividad y verifica que estas personas estén inscritas en ella.`;
+        const message = `Se actualizaron ${confirmados} de ${registros.length} registros; ${noConfirmados} no se guardaron. Recarga la actividad y verifica que estas personas estén inscritas en ella.`;
         setError(message);
         return { confirmed: false, message };
       }
       return { confirmed: true };
     } catch (requestError) {
-      const message = requestError.message || "No se pudieron confirmar las asistencias seleccionadas.";
+      const message = requestError.message || "No se pudo actualizar la asistencia seleccionada.";
       setError(message);
       return { confirmed: false, message };
     } finally {
@@ -375,6 +384,22 @@ export default function AsistentesActividadTable() {
     return guardarAsistencias([id], {
       fuente: "la revisión manual",
       asistenciaEstado: asistio ? "PRESENTE" : "AUSENTE",
+    });
+  }
+
+  async function quitarAsistencia(asistente) {
+    const nombre =
+      asistente.apellidosNombres || asistente.identificacion || "esta persona";
+    if (
+      !window.confirm(
+        `¿Quitar la asistencia confirmada de ${nombre}? El registro volverá a quedar pendiente y podrás confirmarlo de nuevo.`,
+      )
+    ) {
+      return;
+    }
+    await guardarAsistencias([asistente.id], {
+      fuente: "la corrección manual",
+      asistenciaEstado: "PENDIENTE",
     });
   }
 
@@ -618,25 +643,39 @@ export default function AsistentesActividadTable() {
                           <tr className={multipleRoles ? "vec-multiple-roles" : undefined} key={asistente.id}>
                             <td>
                               {esCoordinador ? (
-                                <label className="vec-attendance-checkbox">
-                                  <input
-                                    type="checkbox"
-                                    checked={Boolean(asistente.asistenciaVerificada || idsSeleccionados.has(asistente.id))}
-                                    onChange={(event) => cambiarSeleccion(asistente, event.target.checked)}
-                                    disabled={Boolean(asistente.asistenciaVerificada) || verificandoIds.includes(asistente.id)}
-                                    aria-label={`Confirmar asistencia de ${asistente.apellidosNombres || asistente.identificacion}`}
-                                  />
-                                  <span>
-                                    {asistente.asistenciaVerificada || asistente.asistenciaEstado === "PRESENTE"
-                                      ? `Confirmada · ${asistente.origenAsistencia === "EXCEL" ? "Excel" : "manual"}`
-                                      : asistente.asistenciaEstado === "AUSENTE"
-                                        ? idsSeleccionados.has(asistente.id) ? "Seleccionada para corregir" : "No asistió · revisada"
-                                        : idsSeleccionados.has(asistente.id) ? "Seleccionada" : "Pendiente"}
-                                  </span>
-                                </label>
+                                <div className="vec-attendance-state">
+                                  <label className="vec-attendance-checkbox">
+                                    <input
+                                      type="checkbox"
+                                      checked={Boolean(asistenciaEstaConfirmada(asistente) || idsSeleccionados.has(asistente.id))}
+                                      onChange={(event) => cambiarSeleccion(asistente, event.target.checked)}
+                                      disabled={asistenciaEstaConfirmada(asistente) || verificandoIds.includes(asistente.id)}
+                                      aria-label={`Confirmar asistencia de ${asistente.apellidosNombres || asistente.identificacion}`}
+                                    />
+                                    <span>
+                                      {asistenciaEstaConfirmada(asistente)
+                                        ? `Confirmada · ${asistente.origenAsistencia === "EXCEL" ? "Excel" : "manual"}`
+                                        : asistente.asistenciaEstado === "AUSENTE"
+                                          ? idsSeleccionados.has(asistente.id) ? "Seleccionada para corregir" : "No asistió · revisada"
+                                          : idsSeleccionados.has(asistente.id) ? "Seleccionada" : "Pendiente"}
+                                    </span>
+                                  </label>
+                                  {asistenciaEstaConfirmada(asistente) && (
+                                    <button
+                                      className="vec-attendance-undo"
+                                      type="button"
+                                      onClick={() => quitarAsistencia(asistente)}
+                                      disabled={verificandoIds.includes(asistente.id)}
+                                      aria-label={`Quitar asistencia de ${asistente.apellidosNombres || asistente.identificacion}`}
+                                    >
+                                      <i className="fas fa-rotate-left" aria-hidden="true"></i>
+                                      Quitar asistencia
+                                    </button>
+                                  )}
+                                </div>
                               ) : (
                                 <span>
-                                  {asistente.asistenciaVerificada || asistente.asistenciaEstado === "PRESENTE"
+                                  {asistenciaEstaConfirmada(asistente)
                                     ? `Confirmada · ${asistente.origenAsistencia === "EXCEL" ? "Excel" : "manual"}`
                                     : asistente.asistenciaEstado === "AUSENTE"
                                       ? "No asistió · revisada"
@@ -658,7 +697,29 @@ export default function AsistentesActividadTable() {
                               ))}
                             </td>
                             <td>{asistente.identificacion || "—"}</td>
-                            <td>{asistente.apellidosNombres || "—"}</td>
+                            <td>
+                              <div className="vec-multiple-roles__person">
+                                <span
+                                  className={
+                                    multipleRoles
+                                      ? "vec-multiple-roles__name"
+                                      : undefined
+                                  }
+                                >
+                                  {asistente.apellidosNombres || "—"}
+                                </span>
+                                {multipleRoles && (
+                                  <span
+                                    className="vec-multiple-roles__badge"
+                                    aria-label={`${roles.length} roles`}
+                                    title={roles.map((role) => ROL_LABELS[role] || role).join(" · ")}
+                                  >
+                                    <i className="fas fa-layer-group" aria-hidden="true"></i>
+                                    {roles.length} roles
+                                  </span>
+                                )}
+                              </div>
+                            </td>
                             <td>{asistente.codigo || "—"}</td>
                             <td>{asistente.programaPregrado || asistente.programaPosgrado || "—"}</td>
                             <td>{asistente.correo || "—"}</td>

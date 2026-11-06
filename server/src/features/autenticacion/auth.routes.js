@@ -12,6 +12,7 @@ import bcrypt from "bcryptjs";
 import { query } from "../../shared/db/pool.js";
 import { identifyUser } from "../../shared/middleware/requireRole.js";
 import { MOCK_DATA } from "../../shared/data/mockData.js";
+import { enviarCorreoRecuperacionPassword } from "../../shared/services/emailService.js";
 
 const router = Router();
 
@@ -454,6 +455,163 @@ router.post("/cambiar-password", identifyUser, async (req, res) => {
   } catch (err) {
     console.error("Error al cambiar contraseña:", err);
     res.status(500).json({ error: "Error interno al actualizar la contraseña." });
+  }
+});
+
+/**
+ * POST /api/auth/solicitar-recuperacion
+ * Valida el correo institucional del usuario, genera un código temporal de recuperación
+ * seguro (válido por 15 minutos), lo almacena en sat.tokens_recuperacion y lo envía por correo.
+ */
+router.post("/solicitar-recuperacion", async (req, res) => {
+  const emailRaw = String(req.body.email || "").trim().toLowerCase();
+
+  if (!emailRaw) {
+    return res.status(400).json({ error: "Por favor ingrese su correo institucional." });
+  }
+
+  try {
+    // 1. Validar que el usuario exista y esté activo en sat.usuarios
+    const { rows: usuarios } = await query(`
+      SELECT id_usuarios, nombres, apellidos, correo_institucional, activo
+      FROM sat.usuarios
+      WHERE LOWER(correo_institucional) = $1 AND activo = true
+      LIMIT 1
+    `, [emailRaw]);
+
+    if (usuarios.length === 0) {
+      return res.status(404).json({
+        error: "No existe ninguna cuenta institucional activa asociada a ese correo electrónico."
+      });
+    }
+
+    const usuario = usuarios[0];
+    const nombreCompleto = `${usuario.nombres} ${usuario.apellidos}`.trim();
+
+    // 2. Generar código de recuperación de 6 dígitos numéricos
+    const codigoRecuperacion = Math.floor(100000 + Math.random() * 900000).toString();
+    const tokenHash = crypto.createHash("sha256").update(codigoRecuperacion).digest("hex");
+    const expiraMinutos = 15;
+
+    // 3. Registrar en sat.tokens_recuperacion (invalidando tokens previos no utilizados)
+    await query(`
+      UPDATE sat.tokens_recuperacion
+      SET usado_en = NOW()
+      WHERE id_usuarios = $1 AND usado_en IS NULL
+    `, [usuario.id_usuarios]);
+
+    await query(`
+      INSERT INTO sat.tokens_recuperacion
+        (id_tokens_recuperacion, id_usuarios, token_hash, expira_en, creado_en)
+      VALUES
+        (gen_random_uuid(), $1, $2, NOW() + INTERVAL '15 minutes', NOW())
+    `, [usuario.id_usuarios, tokenHash]);
+
+    // 4. Enviar correo electrónico con la plantilla institucional
+    const resEnvio = await enviarCorreoRecuperacionPassword({
+      correo: usuario.correo_institucional,
+      nombre: nombreCompleto,
+      codigoRecuperacion,
+      expiraMinutos
+    });
+
+    res.json({
+      ok: true,
+      message: `Hemos enviado un código de recuperación de 6 dígitos a su correo institucional (${usuario.correo_institucional}).`,
+      email: usuario.correo_institucional,
+      expiraMinutos,
+      envioRealizado: resEnvio.envioRealizado
+    });
+  } catch (err) {
+    console.error("Error al procesar solicitud de recuperación:", err);
+    res.status(500).json({ error: "Error interno al generar la solicitud de recuperación de contraseña." });
+  }
+});
+
+/**
+ * POST /api/auth/restablecer-password
+ * Valida el código temporal de recuperación y actualiza automáticamente la contraseña
+ * con su nuevo hash bcrypt en la base de datos PostgreSQL.
+ */
+router.post("/restablecer-password", async (req, res) => {
+  const { email, codigo, nuevoPassword } = req.body;
+  const emailRaw = String(email || "").trim().toLowerCase();
+  const codigoRaw = String(codigo || "").trim();
+
+  if (!emailRaw || !codigoRaw || !nuevoPassword) {
+    return res.status(400).json({ error: "Debe suministrar el correo, el código de recuperación y la nueva contraseña." });
+  }
+
+  if (String(nuevoPassword).length < 8) {
+    return res.status(400).json({ error: "La nueva contraseña debe tener al menos 8 caracteres." });
+  }
+
+  try {
+    // 1. Buscar usuario
+    const { rows: usuarios } = await query(`
+      SELECT id_usuarios, nombres, apellidos, correo_institucional
+      FROM sat.usuarios
+      WHERE LOWER(correo_institucional) = $1 AND activo = true
+      LIMIT 1
+    `, [emailRaw]);
+
+    if (usuarios.length === 0) {
+      return res.status(404).json({ error: "Usuario no encontrado en el sistema." });
+    }
+
+    const usuario = usuarios[0];
+
+    // 2. Verificar código en sat.tokens_recuperacion
+    const tokenHash = crypto.createHash("sha256").update(codigoRaw).digest("hex");
+
+    const { rows: tokens } = await query(`
+      SELECT id_tokens_recuperacion, expira_en, usado_en
+      FROM sat.tokens_recuperacion
+      WHERE id_usuarios = $1 AND token_hash = $2 AND usado_en IS NULL
+      ORDER BY creado_en DESC
+      LIMIT 1
+    `, [usuario.id_usuarios, tokenHash]);
+
+    if (tokens.length === 0) {
+      return res.status(400).json({
+        error: "El código de recuperación ingresado es inválido o ya fue utilizado."
+      });
+    }
+
+    const tokenRow = tokens[0];
+    if (new Date(tokenRow.expira_en).getTime() < Date.now()) {
+      return res.status(400).json({
+        error: "El código de recuperación ha expirado. Por favor solicite uno nuevo."
+      });
+    }
+
+    // 3. Generar nuevo hash bcrypt y actualizar en sat.usuarios
+    const nuevoHash = await bcrypt.hash(nuevoPassword, 10);
+
+    await query(`
+      UPDATE sat.usuarios
+      SET password_hash = $1,
+          debe_cambiar_password = false,
+          intentos_fallidos = 0,
+          bloqueado_hasta = NULL,
+          actualizado_en = NOW()
+      WHERE id_usuarios = $2
+    `, [nuevoHash, usuario.id_usuarios]);
+
+    // 4. Marcar token como utilizado
+    await query(`
+      UPDATE sat.tokens_recuperacion
+      SET usado_en = NOW()
+      WHERE id_tokens_recuperacion = $1
+    `, [tokenRow.id_tokens_recuperacion]);
+
+    res.json({
+      ok: true,
+      message: "¡Contraseña actualizada exitosamente en la base de datos! Ya puede iniciar sesión con su nueva clave."
+    });
+  } catch (err) {
+    console.error("Error al restablecer contraseña:", err);
+    res.status(500).json({ error: "Error interno al actualizar la contraseña en la base de datos." });
   }
 });
 

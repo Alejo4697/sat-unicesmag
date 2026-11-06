@@ -41,7 +41,7 @@ WITH nuevos AS (
          'Acceso a ' || m.nombre,
          'Permite ver y usar el módulo "' || m.nombre || '".'
   FROM sat.modulos m
-  WHERE m.codigo IN ('dashboard','ficha','alertas','intervenciones','remisiones',
+  WHERE m.codigo IN ('dashboard','ficha','alertas','actividades','intervenciones','remisiones',
                      'caracterizacion','reportes','administracion')
   ON CONFLICT (codigo) DO NOTHING
   RETURNING id_permisos, codigo
@@ -62,6 +62,10 @@ JOIN (VALUES
   ('acceso:alertas',         'admin'),
   ('acceso:alertas',         'profesional'),
   ('acceso:alertas',         'directivo'),
+
+  ('acceso:actividades',     'admin'),
+  ('acceso:actividades',     'profesional'),
+  ('acceso:actividades',     'reporte_actividades'),
 
   ('acceso:intervenciones',  'admin'),
   ('acceso:intervenciones',  'profesional'),

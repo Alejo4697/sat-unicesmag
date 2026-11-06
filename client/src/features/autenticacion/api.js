@@ -13,3 +13,9 @@ export const cambiarPassword = ({ passwordActual, nuevoPassword }) =>
   apiFetch("/auth/cambiar-password", { method: "POST", body: { passwordActual, nuevoPassword } });
 
 export const getMe = () => apiFetch("/auth/me");
+
+export const solicitarRecuperacionPassword = (email) =>
+  apiFetch("/auth/solicitar-recuperacion", { method: "POST", body: { email } });
+
+export const restablecerPasswordConCodigo = ({ email, codigo, nuevoPassword }) =>
+  apiFetch("/auth/restablecer-password", { method: "POST", body: { email, codigo, nuevoPassword } });

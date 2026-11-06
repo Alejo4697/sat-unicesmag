@@ -15,21 +15,37 @@ ALTER TABLE sat.participantes_vec
 ALTER TABLE sat.participantes_vec
   DROP CONSTRAINT IF EXISTS participantes_vec_tipo_participante_check;
 
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1
-    FROM pg_constraint
-    WHERE conrelid = 'sat.participantes_vec'::regclass
-      AND conname = 'participantes_vec_tipo_participante_check'
-  ) THEN
-    ALTER TABLE sat.participantes_vec
-      ADD CONSTRAINT participantes_vec_tipo_participante_check
-      CHECK (tipo_participante IN (
-        'ESTUDIANTE', 'COLABORADOR', 'EGRESADO', 'EXTERNO', 'ADMINISTRATIVO'
-      ));
-  END IF;
-END $$;
+INSERT INTO sat.participantes_vec (
+  id_personas, tipo_participante, detalle_tipo_participante
+)
+SELECT DISTINCT persona.id, 'COLABORADOR', 'Docente'
+FROM sat.docentes docente
+JOIN sat.personas persona
+  ON persona.id = docente.id_personas
+  OR (
+    docente.id_personas IS NULL
+    AND persona.numero_identificacion = docente.numero_documento
+  )
+WHERE docente.activo = true
+ON CONFLICT (id_personas, tipo_participante) DO NOTHING;
+
+INSERT INTO sat.participantes_vec (
+  id_personas, tipo_participante, detalle_tipo_participante
+)
+SELECT DISTINCT COALESCE(usuario.id_personas, persona.id), 'COLABORADOR', 'Docente'
+FROM sat.usuarios usuario
+JOIN sat.usuarios_roles usuario_rol
+  ON usuario_rol.id_usuarios = usuario.id_usuarios
+JOIN sat.roles rol
+  ON rol.id_roles = usuario_rol.id_roles
+LEFT JOIN sat.personas persona
+  ON persona.numero_identificacion = usuario.numero_documento
+WHERE usuario.activo = true
+  AND usuario.eliminado_en IS NULL
+  AND rol.activo = true
+  AND UPPER(BTRIM(rol.nombre)) IN ('DOCENTE', 'DOCENTE_PERMANENCIA')
+  AND COALESCE(usuario.id_personas, persona.id) IS NOT NULL
+ON CONFLICT (id_personas, tipo_participante) DO NOTHING;
 
 ALTER TABLE sat.actividades_vec_participantes
   ADD COLUMN IF NOT EXISTS asistencia_verificada boolean NOT NULL DEFAULT false,
@@ -145,6 +161,9 @@ ALTER TABLE sat.actividades_vec_participantes
 ALTER TABLE sat.actividades_vec_participantes
   ADD COLUMN IF NOT EXISTS programa_modalidad varchar(250);
 
+ALTER TABLE sat.actividades_vec_participantes
+  ADD COLUMN IF NOT EXISTS tipo_apoyo_otro varchar(250);
+
 WITH modalidades_unicas AS (
   SELECT id_actividades_vec,
          id_tipos_apoyo,
@@ -209,5 +228,97 @@ CREATE TABLE IF NOT EXISTS sat.actividades_vec_participantes_auditoria (
 
 CREATE INDEX IF NOT EXISTS idx_actividades_vec_participantes_auditoria
   ON sat.actividades_vec_participantes_auditoria (id_actividades_vec_participantes, creado_en DESC);
+
+UPDATE sat.actividades_vec_participantes destino
+SET id_tipos_apoyo = COALESCE(destino.id_tipos_apoyo, origen.id_tipos_apoyo),
+    asistencia_verificada = destino.asistencia_verificada OR origen.asistencia_verificada,
+    asistencia_verificada_en = COALESCE(destino.asistencia_verificada_en, origen.asistencia_verificada_en),
+    asistencia_verificada_por = COALESCE(destino.asistencia_verificada_por, origen.asistencia_verificada_por),
+    asistencia_verificada_origen = CASE
+      WHEN destino.asistencia_verificada THEN destino.asistencia_verificada_origen
+      ELSE origen.asistencia_verificada_origen
+    END,
+    estado_asistencia = CASE
+      WHEN destino.estado_asistencia <> 'PENDIENTE' THEN destino.estado_asistencia
+      ELSE origen.estado_asistencia
+    END
+FROM sat.participantes_vec docente
+JOIN sat.participantes_vec colaborador
+  ON colaborador.id_personas = docente.id_personas
+ AND colaborador.tipo_participante = 'COLABORADOR'
+JOIN sat.actividades_vec_participantes origen
+  ON origen.id_participantes_vec = docente.id_participantes_vec
+WHERE docente.tipo_participante = 'DOCENTE'
+  AND destino.id_participantes_vec = colaborador.id_participantes_vec
+  AND destino.id_actividades_vec = origen.id_actividades_vec;
+
+UPDATE sat.actividades_vec_participantes origen
+SET id_participantes_vec = colaborador.id_participantes_vec
+FROM sat.participantes_vec docente
+JOIN sat.participantes_vec colaborador
+  ON colaborador.id_personas = docente.id_personas
+ AND colaborador.tipo_participante = 'COLABORADOR'
+WHERE docente.tipo_participante = 'DOCENTE'
+  AND origen.id_participantes_vec = docente.id_participantes_vec
+  AND NOT EXISTS (
+    SELECT 1
+    FROM sat.actividades_vec_participantes destino
+    WHERE destino.id_actividades_vec = origen.id_actividades_vec
+      AND destino.id_participantes_vec = colaborador.id_participantes_vec
+  );
+
+UPDATE sat.actividades_vec_participantes_auditoria auditoria
+SET id_actividades_vec_participantes = destino.id_actividades_vec_participantes
+FROM sat.actividades_vec_participantes origen
+JOIN sat.participantes_vec docente
+  ON docente.id_participantes_vec = origen.id_participantes_vec
+ AND docente.tipo_participante = 'DOCENTE'
+JOIN sat.participantes_vec colaborador
+  ON colaborador.id_personas = docente.id_personas
+ AND colaborador.tipo_participante = 'COLABORADOR'
+JOIN sat.actividades_vec_participantes destino
+  ON destino.id_participantes_vec = colaborador.id_participantes_vec
+ AND destino.id_actividades_vec = origen.id_actividades_vec
+WHERE auditoria.id_actividades_vec_participantes =
+  origen.id_actividades_vec_participantes;
+
+DELETE FROM sat.actividades_vec_participantes origen
+USING sat.participantes_vec docente,
+      sat.participantes_vec colaborador,
+      sat.actividades_vec_participantes destino
+WHERE docente.tipo_participante = 'DOCENTE'
+  AND colaborador.tipo_participante = 'COLABORADOR'
+  AND colaborador.id_personas = docente.id_personas
+  AND origen.id_participantes_vec = docente.id_participantes_vec
+  AND destino.id_participantes_vec = colaborador.id_participantes_vec
+  AND destino.id_actividades_vec = origen.id_actividades_vec;
+
+DELETE FROM sat.participantes_vec docente
+USING sat.participantes_vec colaborador
+WHERE docente.tipo_participante = 'DOCENTE'
+  AND colaborador.tipo_participante = 'COLABORADOR'
+  AND colaborador.id_personas = docente.id_personas;
+
+UPDATE sat.participantes_vec
+SET tipo_participante = 'COLABORADOR',
+    detalle_tipo_participante = 'Docente',
+    actualizado_en = now()
+WHERE tipo_participante = 'DOCENTE';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'sat.participantes_vec'::regclass
+      AND conname = 'participantes_vec_tipo_participante_check'
+  ) THEN
+    ALTER TABLE sat.participantes_vec
+      ADD CONSTRAINT participantes_vec_tipo_participante_check
+      CHECK (tipo_participante IN (
+        'ESTUDIANTE', 'COLABORADOR', 'EGRESADO', 'EXTERNO', 'ADMINISTRATIVO'
+      ));
+  END IF;
+END $$;
 
 COMMIT;
