@@ -71,8 +71,35 @@ SELECT
                            p.primer_nombre, p.segundo_nombre)), ''),
     NULLIF(BTRIM(CONCAT_WS(' ', e.apellidos, e.nombres)), '')
   ) AS apellidos_y_nombres,
-  prog_acad.nombre AS programa_academico_pregrado,
-  pv.programa_posgrado_dependencia AS programa_academico_posgrado,
+  COALESCE(
+    NULLIF(BTRIM(matricula_pregrado.programa), ''),
+    CASE
+      WHEN NULLIF(BTRIM(prog_acad.nombre), '') IS NOT NULL
+        AND TRANSLATE(UPPER(BTRIM(prog_acad.nombre)), 'ÁÉÍÓÚÜ', 'AEIOUU')
+          !~ '(ESPECIALIZ|MAESTR|DOCTOR|POSGRADO|COTERMINAL|(^|[^A-Z])ESP[.]?([^A-Z]|$))'
+      THEN prog_acad.nombre
+    END,
+    CASE
+      WHEN NULLIF(BTRIM(pv.programa_academico), '') IS NOT NULL
+        AND TRANSLATE(UPPER(BTRIM(pv.programa_academico)), 'ÁÉÍÓÚÜ', 'AEIOUU')
+          !~ '(ESPECIALIZ|MAESTR|DOCTOR|POSGRADO|COTERMINAL|(^|[^A-Z])ESP[.]?([^A-Z]|$))'
+      THEN pv.programa_academico
+    END
+  ) AS programa_academico_pregrado,
+  COALESCE(
+    NULLIF(BTRIM(pv.programa_posgrado_dependencia), ''),
+    NULLIF(BTRIM(matricula_posgrado.programa), ''),
+    CASE
+      WHEN TRANSLATE(UPPER(BTRIM(prog_acad.nombre)), 'ÁÉÍÓÚÜ', 'AEIOUU')
+        ~ '(ESPECIALIZ|MAESTR|DOCTOR|POSGRADO|COTERMINAL|(^|[^A-Z])ESP[.]?([^A-Z]|$))'
+      THEN prog_acad.nombre
+    END,
+    CASE
+      WHEN TRANSLATE(UPPER(BTRIM(pv.programa_academico)), 'ÁÉÍÓÚÜ', 'AEIOUU')
+        ~ '(ESPECIALIZ|MAESTR|DOCTOR|POSGRADO|COTERMINAL|(^|[^A-Z])ESP[.]?([^A-Z]|$))'
+      THEN pv.programa_academico
+    END
+  ) AS programa_academico_posgrado,
   COALESCE(m.semestre, e.semestre_actual, pv.semestre) AS semestre,
   COALESCE(e.genero, p.genero) AS genero,
   m.jornada,
@@ -135,6 +162,31 @@ LEFT JOIN LATERAL (
 ) m ON TRUE
 LEFT JOIN sat.programas_academicos prog_acad
   ON prog_acad.id_programas_academicos = COALESCE(m.id_programas_academicos, e.id_programas_academicos)
+LEFT JOIN LATERAL (
+  SELECT programa.nombre AS programa
+  FROM sat.matriculas matricula
+  JOIN sat.programas_academicos programa
+    ON programa.id_programas_academicos = matricula.id_programas_academicos
+  WHERE matricula.id_estudiantes = e.id_estudiantes
+    AND TRANSLATE(UPPER(BTRIM(programa.nombre)), 'ÁÉÍÓÚÜ', 'AEIOUU')
+      !~ '(ESPECIALIZ|MAESTR|DOCTOR|POSGRADO|COTERMINAL|(^|[^A-Z])ESP[.]?([^A-Z]|$))'
+  ORDER BY
+    (UPPER(COALESCE(matricula.estado, '')) = 'ACTIVA') DESC,
+    matricula.id_matriculas DESC
+  LIMIT 1
+) matricula_pregrado ON TRUE
+LEFT JOIN LATERAL (
+  SELECT programa.nombre AS programa
+  FROM sat.matriculas matricula
+  JOIN sat.programas_academicos programa
+    ON programa.id_programas_academicos = matricula.id_programas_academicos
+  WHERE matricula.id_estudiantes = e.id_estudiantes
+    AND UPPER(COALESCE(matricula.estado, '')) = 'ACTIVA'
+    AND TRANSLATE(UPPER(BTRIM(programa.nombre)), 'ÁÉÍÓÚÜ', 'AEIOUU')
+      ~ '(ESPECIALIZ|MAESTR|DOCTOR|POSGRADO|COTERMINAL|(^|[^A-Z])ESP[.]?([^A-Z]|$))'
+  ORDER BY matricula.id_matriculas DESC
+  LIMIT 1
+) matricula_posgrado ON TRUE
 LEFT JOIN sat.dependencias d ON d.id_dependencias = a.id_dependencias
 LEFT JOIN sat.programas_bienestar pb
   ON pb.id_programas_bienestar = a.id_programas_bienestar

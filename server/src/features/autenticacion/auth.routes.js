@@ -17,9 +17,9 @@ import { enviarCorreoRecuperacionPassword } from "../../shared/services/emailSer
 const router = Router();
 
 function normalizarRol(rol) {
-  if (!rol) return "admin";
+  if (!rol) return "sin_rol";
   const r = String(rol).toLowerCase().trim();
-  if (r === "administrador" || r === "coordinador") return "admin";
+  if (r === "administrador" || r === "coordinador" || r === "admin") return "admin";
   if (r === "docente" || r === "docente_permanencia") return "directivo";
   if (r === "profesional_asistencial") return "profesional";
   return r;
@@ -29,7 +29,7 @@ function normalizarRol(rol) {
  * GET /api/auth/usuarios
  * Lista los usuarios institucionales con su cargo, rol, dependencia y programa asignado.
  */
-router.get("/usuarios", async (req, res) => {
+router.get("/usuarios", identifyUser, async (req, res) => {
   try {
     const { rows } = await query(`
       SELECT 
@@ -101,50 +101,11 @@ router.get("/usuarios", async (req, res) => {
  * Autentica mediante correo_institucional o número de documento (cédula) y contraseña.
  */
 router.post("/login", async (req, res) => {
-  const { email, correo, documento, identificacion, usuario: usuarioInput, password, userId } = req.body;
+  const { email, correo, documento, identificacion, usuario: usuarioInput, password } = req.body;
   const targetRaw = (email || correo || documento || identificacion || usuarioInput || "").trim();
   const targetLower = targetRaw.toLowerCase();
   const targetCleanDoc = targetRaw.replace(/[^0-9a-zA-Z]/g, "");
   const usernameOnly = targetLower.includes("@") ? targetLower.split("@")[0].trim() : targetLower;
-
-  // Si no se proporcionó ni contraseña ni email, validar si viene userId de mockup
-  if (!password && userId) {
-    // Modo compatibilidad / pruebas rápidas
-    try {
-      const { rows } = await query(`
-        SELECT u.id_usuarios AS id,
-               CONCAT(u.nombres, ' ', u.apellidos) AS nombre,
-               u.correo_institucional AS email,
-               COALESCE(LOWER(r.nombre), 'admin') AS rol,
-               COALESCE(u.cargo, 'Funcionario Institucional') AS cargo,
-               d.nombre AS dependencia,
-               p.nombre AS programa,
-               u.debe_cambiar_password AS "debeCambiarPassword"
-        FROM sat.usuarios u
-        LEFT JOIN sat.usuarios_roles ur ON u.id_usuarios = ur.id_usuarios
-        LEFT JOIN sat.roles r ON ur.id_roles = r.id_roles
-        LEFT JOIN sat.usuarios_dependencias ud ON u.id_usuarios = ud.id_usuarios
-        LEFT JOIN sat.dependencias d ON ud.id_dependencias = d.id_dependencias
-        LEFT JOIN sat.usuarios_programas up ON u.id_usuarios = up.id_usuarios
-        LEFT JOIN sat.programas_academicos p ON up.id_programas_academicos = p.id_programas_academicos
-        WHERE (u.id_usuarios::text = $1 OR LOWER(u.correo_institucional) = LOWER($1))
-          AND u.activo = true
-        LIMIT 1
-      `, [userId]);
-
-      if (rows.length > 0) {
-        const u = rows[0];
-        u.rol = normalizarRol(u.rol);
-        return res.json({ user: u, token: null });
-      }
-    } catch (err) {
-      console.warn("Fallo en login de compatibilidad:", err.message);
-    }
-
-    const mock = MOCK_DATA.usuarios.find((u) => u.id === userId || u.email === userId);
-    if (mock) return res.json({ user: mock, token: null });
-    return res.status(404).json({ error: "Usuario no encontrado." });
-  }
 
   if (!targetRaw || !password) {
     return res.status(400).json({ error: "Debe ingresar el correo institucional o documento y la contraseña." });

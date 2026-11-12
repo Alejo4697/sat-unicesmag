@@ -20,6 +20,7 @@ const EMPTY_FORM = {
   actividad: "",
   programaBienestar: "",
   subdivisionProgramas: [],
+  apoyosPorModalidad: {},
   descripcion: "",
   ubicacion: [],
   fechaInicio: "",
@@ -216,23 +217,40 @@ function Modal({ title, subtitle, onClose, children, wide = false }) {
   );
 }
 
-function toForm(activity, programasBienestar) {
+function toForm(activity, programasBienestar, tiposApoyo) {
   const programa = programasBienestar.find(
     (item) => item.programaCompleto === activity.programaBienestar,
   );
+  const subdivisionProgramas =
+    Array.isArray(activity.variablesModalidades) &&
+    activity.variablesModalidades.length
+      ? activity.variablesModalidades
+      : programa?.subdivision
+        ? [programa.programaCompleto]
+        : [];
+  const apoyosPorModalidad = Object.fromEntries(
+    (activity.apoyosModalidades || [])
+      .filter((item) => item.programa)
+      .map((item) => [item.programa, item.idTipoApoyo || ""]),
+  );
+  for (const programaCompleto of subdivisionProgramas) {
+    if (Object.hasOwn(apoyosPorModalidad, programaCompleto)) continue;
+    const catalogItem = programasBienestar.find(
+      (item) => item.programaCompleto === programaCompleto,
+    );
+    const support = tiposApoyo.find(
+      (item) => Number(item.numero) === Number(catalogItem?.numeroTipoApoyo),
+    );
+    apoyosPorModalidad[programaCompleto] = support?.id || "";
+  }
   return {
     ...EMPTY_FORM,
     idEventoExistente: activity.id,
     idPeriodo: activity.idPeriodo,
     actividad: activity.actividad || "",
     programaBienestar: programa?.programa || activity.programaBienestar || "",
-    subdivisionProgramas:
-      Array.isArray(activity.variablesModalidades) &&
-      activity.variablesModalidades.length
-        ? activity.variablesModalidades
-        : programa?.subdivision
-          ? [programa.programaCompleto]
-          : [],
+    subdivisionProgramas,
+    apoyosPorModalidad,
     descripcion: activity.descripcion || "",
     ubicacion: normalizarCampus(activity.ubicacion),
     fechaInicio: String(activity.fechaInicio || "").slice(0, 10),
@@ -254,7 +272,7 @@ function toForm(activity, programasBienestar) {
   };
 }
 
-export default function ActividadesAdminView() {
+export default function ActividadesAdminView({ readOnly = false }) {
   const location = useLocation();
   const navigate = useNavigate();
   const importacionRealizadas = location.state?.importacionRealizadas;
@@ -384,6 +402,17 @@ export default function ActividadesAdminView() {
     setForm((current) => ({
       ...current,
       subdivisionProgramas: value,
+      apoyosPorModalidad: Object.fromEntries(value.map((programaCompleto) => {
+        const existing = current.apoyosPorModalidad?.[programaCompleto];
+        if (existing !== undefined) return [programaCompleto, existing];
+        const catalogItem = programasBienestar.find(
+          (item) => item.programaCompleto === programaCompleto,
+        );
+        const support = tiposApoyo.find(
+          (item) => Number(item.numero) === Number(catalogItem?.numeroTipoApoyo),
+        );
+        return [programaCompleto, support?.id || ""];
+      })),
       ...estrategiasAutocompletadas(
         programasBienestar,
         current.programaBienestar,
@@ -424,7 +453,13 @@ export default function ActividadesAdminView() {
       filasCatalogoSeleccionadas.map((item) => item[field]).filter(Boolean),
     ),
   ];
-  const apoyosCatalogoSeleccionados = valoresCatalogoSeleccionados("tipoApoyo");
+  const apoyosCatalogoSeleccionados = modalidadesSeleccionadas.length
+    ? [...new Set(modalidadesSeleccionadas.map((item) => (
+      tiposApoyo.find(
+        (support) => support.id === form?.apoyosPorModalidad?.[item.programaCompleto],
+      )?.nombre || item.tipoApoyo
+    )).filter(Boolean))]
+    : valoresCatalogoSeleccionados("tipoApoyo");
   const estrategiasCatalogoSeleccionadas = [
     [
       "Bienestar institucional",
@@ -543,6 +578,12 @@ export default function ActividadesAdminView() {
         setError(
           "Selecciona variables o modalidades válidas para el programa de Bienestar.",
         );
+        return;
+      }
+      if (form.subdivisionProgramas.some(
+        (value) => !form.apoyosPorModalidad?.[value],
+      )) {
+        setError("Selecciona el tipo de apoyo correspondiente a cada modalidad.");
         return;
       }
     }
@@ -857,16 +898,20 @@ export default function ActividadesAdminView() {
               Actividades
             </h2>
             <p className="activity-admin__subtitle">
-              Organiza, consulta y administra las actividades registradas.
+              {readOnly
+                ? "Consulta las actividades registradas y revisa sus datos y participantes."
+                : "Organiza, consulta y administra las actividades registradas."}
             </p>
           </div>
-          <button
-            className="btn btn-primary"
-            type="button"
-            onClick={() => setForm({ ...EMPTY_FORM })}
-          >
-            <i className="fas fa-plus" aria-hidden="true"></i> Crear actividad
-          </button>
+          {!readOnly && (
+            <button
+              className="btn btn-primary"
+              type="button"
+              onClick={() => setForm({ ...EMPTY_FORM })}
+            >
+              <i className="fas fa-plus" aria-hidden="true"></i> Crear actividad
+            </button>
+          )}
         </div>
         <div className="activity-toolbar">
           <div className="activity-toolbar__search">
@@ -932,7 +977,7 @@ export default function ActividadesAdminView() {
             </button>
           </div>
         </div>
-        {modoSeleccionMultiple &&
+        {!readOnly && modoSeleccionMultiple &&
           !cargando &&
           actividadesVisibles.length > 0 && (
             <div className="activity-bulk-toolbar">
@@ -952,7 +997,7 @@ export default function ActividadesAdminView() {
               <span className="activity-bulk-toolbar__summary" role="status">
                 {actividadesSeleccionadasVisibles.length} seleccionadas
               </span>
-              <button
+              {!readOnly && <button
                 className="btn btn-danger btn-sm activity-bulk-toolbar__delete"
                 type="button"
                 onClick={() => {
@@ -966,7 +1011,7 @@ export default function ActividadesAdminView() {
               >
                 <i className="fas fa-trash-can" aria-hidden="true"></i>
                 Eliminar seleccionadas
-              </button>
+              </button>}
             </div>
         )}
         {importacionRealizadas && (
@@ -1027,40 +1072,49 @@ export default function ActividadesAdminView() {
           </section>
         )}
         {!cargando && (
-          <div
-            className="activity-overview"
-            aria-label="Resumen de actividades por estado"
-          >
-            {actividadesPorEstado.map((grupo) => (
-              <button
-                className={`activity-overview__item${filtroEstado === grupo.estado ? " activity-overview__item--active" : ""}`}
-                key={grupo.estado}
-                type="button"
-                aria-pressed={filtroEstado === grupo.estado}
-                title={`Filtrar actividades ${grupo.etiqueta.toLowerCase()}`}
-                onClick={() => {
-                  setFiltroEstado((current) =>
-                    current === grupo.estado ? "" : grupo.estado,
-                  );
-                  setActividadesSeleccionadas(new Set());
-                }}
-              >
-                <span
-                  className={`activity-overview__icon activity-overview__icon--${grupo.estado.toLowerCase()}`}
+          <>
+            <div className="activity-section-heading">
+              <div>
+                <span className="activity-section-heading__eyebrow">VISTA GENERAL</span>
+                <h3>Actividades por estado</h3>
+              </div>
+              <p>Selecciona un estado para filtrar la lista.</p>
+            </div>
+            <div
+              className="activity-overview"
+              aria-label="Resumen de actividades por estado"
+            >
+              {actividadesPorEstado.map((grupo) => (
+                <button
+                  className={`activity-overview__item${filtroEstado === grupo.estado ? " activity-overview__item--active" : ""}`}
+                  key={grupo.estado}
+                  type="button"
+                  aria-pressed={filtroEstado === grupo.estado}
+                  title={`Filtrar actividades ${grupo.etiqueta.toLowerCase()}`}
+                  onClick={() => {
+                    setFiltroEstado((current) =>
+                      current === grupo.estado ? "" : grupo.estado,
+                    );
+                    setActividadesSeleccionadas(new Set());
+                  }}
                 >
-                  <i className="fas fa-calendar-alt" aria-hidden="true"></i>
-                </span>
-                <span>
-                  <strong>{grupo.total}</strong>
-                  <small>{grupo.etiqueta}</small>
-                </span>
-                <i
-                  className="fas fa-arrow-right activity-overview__filter-icon"
-                  aria-hidden="true"
-                ></i>
-              </button>
-            ))}
-          </div>
+                  <span
+                    className={`activity-overview__icon activity-overview__icon--${grupo.estado.toLowerCase()}`}
+                  >
+                    <i className="fas fa-calendar-alt" aria-hidden="true"></i>
+                  </span>
+                  <span className="activity-overview__content">
+                    <strong>{grupo.total}</strong>
+                    <small>{grupo.etiqueta}</small>
+                  </span>
+                  <i
+                    className="fas fa-arrow-right activity-overview__filter-icon"
+                    aria-hidden="true"
+                  ></i>
+                </button>
+              ))}
+            </div>
+          </>
         )}
         {error && (
           <div className="auth-error" role="alert">
@@ -1070,6 +1124,18 @@ export default function ActividadesAdminView() {
         {mensaje && (
           <div className="autosave-banner" role="status">
             {mensaje}
+          </div>
+        )}
+        {!cargando && actividadesVisibles.length > 0 && (
+          <div className="activity-section-heading activity-section-heading--results">
+            <div>
+              <span className="activity-section-heading__eyebrow">GESTIÓN VEC</span>
+              <h3>Listado de actividades</h3>
+            </div>
+            <span className="activity-section-heading__count">
+              {actividadesVisibles.length}{" "}
+              {actividadesVisibles.length === 1 ? "resultado" : "resultados"}
+            </span>
           </div>
         )}
         {cargando ? (
@@ -1140,7 +1206,7 @@ export default function ActividadesAdminView() {
                           key={activity.id}
                         >
                           <div className="activity-card__top">
-                            {modoSeleccionMultiple && (
+                            {!readOnly && modoSeleccionMultiple && (
                               <label className="activity-card__select">
                                 <input
                                   type="checkbox"
@@ -1202,7 +1268,7 @@ export default function ActividadesAdminView() {
 
                           <details className="activity-card__more">
                             <summary>
-                              <span>Ver detalles y acciones</span>
+                              <span>{readOnly ? "Ver detalles" : "Ver detalles y acciones"}</span>
                               <i
                                 className="fas fa-chevron-down"
                                 aria-hidden="true"
@@ -1237,6 +1303,18 @@ export default function ActividadesAdminView() {
                                   </small>
                                 </span>
                               </div>
+                              <div className="activity-detail">
+                                <i
+                                  className="fas fa-user-plus"
+                                  aria-hidden="true"
+                                ></i>
+                                <span>
+                                  <strong>
+                                    {activity.creadoPor || "No registrado"}
+                                  </strong>
+                                  <small>Creada por</small>
+                                </span>
+                              </div>
                             </div>
 
                             {activity.programaBienestar && (
@@ -1258,7 +1336,7 @@ export default function ActividadesAdminView() {
                                       const apoyoModalidad =
                                         activity.apoyosModalidades?.find(
                                           (item) =>
-                                            item.programaCompleto === modalidad,
+                                            (item.programaCompleto || item.programa) === modalidad,
                                         );
                                       return (
                                         <span
@@ -1308,7 +1386,7 @@ export default function ActividadesAdminView() {
                                     ? "Generando Excel..."
                                     : "Excel asistencia"}
                                 </button>
-                                <label className="activity-card__status-control">
+                                {!readOnly && <label className="activity-card__status-control">
                                   <span className="sr-only">
                                     Cambiar estado de {activity.actividad}
                                   </span>
@@ -1328,17 +1406,17 @@ export default function ActividadesAdminView() {
                                       </option>
                                     ))}
                                   </select>
-                                </label>
-                                <button
+                                </label>}
+                                {!readOnly && <button
                                   className="btn btn-outline btn-sm"
                                   type="button"
                                   onClick={() =>
-                                    setForm(toForm(activity, programasBienestar))
+                                    setForm(toForm(activity, programasBienestar, tiposApoyo))
                                   }
                                 >
                                   Editar
-                                </button>
-                                <button
+                                </button>}
+                                {!readOnly && <button
                                   className="btn btn-danger btn-sm activity-card__delete"
                                   type="button"
                                   onClick={() => deleteActivity(activity)}
@@ -1352,7 +1430,7 @@ export default function ActividadesAdminView() {
                                   {eliminandoActividadId === activity.id
                                     ? "Eliminando..."
                                     : "Eliminar actividad"}
-                                </button>
+                                </button>}
                               </div>
                             </div>
                           </details>
@@ -1468,7 +1546,7 @@ export default function ActividadesAdminView() {
         )}
       </section>
 
-      {form && (
+      {form && !readOnly && (
         <Modal
           title={
             form.idEventoExistente ? "Editar actividad" : "Crear actividad"
@@ -1551,6 +1629,7 @@ export default function ActividadesAdminView() {
                               ...current,
                               programaBienestar,
                               subdivisionProgramas: [],
+                              apoyosPorModalidad: {},
                               ...estrategiasAutocompletadas(
                                 programasBienestar,
                                 programaBienestar,
@@ -1599,8 +1678,8 @@ export default function ActividadesAdminView() {
                         </div>
                         <div className="activity-modalities-field__toolbar">
                           <p className="activity-modalities__hint">
-                            Cada modalidad conservará su tipo de apoyo
-                            correspondiente.
+                            Elige el tipo de apoyo que se guardará para cada
+                            modalidad y aparecerá en el Excel de asistencia.
                           </p>
                           {subdivisionesPrograma.length > 1 && (
                             <div className="activity-modalities-field__quick-actions">
@@ -1628,20 +1707,24 @@ export default function ActividadesAdminView() {
                           )}
                         </div>
                         <div className="activity-modalities">
-                          {subdivisionesPrograma.map((item) => {
+                          {subdivisionesPrograma.map((item, index) => {
                             const seleccionada =
                               form.subdivisionProgramas.includes(
                                 item.programaCompleto,
                               );
+                            const checkboxId = `activity-modality-${index}`;
+                            const supportId = `activity-modality-support-${index}`;
                             return (
-                              <label
+                              <div
                                 className={`activity-modality${seleccionada ? " activity-modality--selected" : ""}`}
                                 key={item.programaCompleto}
                               >
                                 <input
                                   className="activity-modality__checkbox"
+                                  id={checkboxId}
                                   type="checkbox"
                                   checked={seleccionada}
+                                  aria-label={`Incluir modalidad ${item.subdivision}`}
                                   onChange={(event) =>
                                     updateModalidades(
                                       event.target.checked
@@ -1656,23 +1739,56 @@ export default function ActividadesAdminView() {
                                     )
                                   }
                                 />
-                                <span className="activity-modality__content">
-                                  <span className="activity-modality__name">
-                                    {item.subdivision}
+                                <label
+                                  className="activity-modality__choice"
+                                  htmlFor={checkboxId}
+                                >
+                                  <span className="activity-modality__content">
+                                    <span className="activity-modality__name">
+                                      {item.subdivision}
+                                    </span>
+                                    <span className="activity-modality__support">
+                                      <i
+                                        className="fas fa-hand-holding-heart"
+                                        aria-hidden="true"
+                                      ></i>
+                                      {tiposApoyo.find(
+                                        (support) => support.id === form.apoyosPorModalidad?.[item.programaCompleto],
+                                      )?.nombre || item.tipoApoyo || "Apoyo del catálogo"}
+                                    </span>
                                   </span>
-                                  <span className="activity-modality__support">
-                                    <i
-                                      className="fas fa-hand-holding-heart"
-                                      aria-hidden="true"
-                                    ></i>
-                                    {item.tipoApoyo || "Apoyo no especificado"}
-                                  </span>
-                                </span>
+                                </label>
+                                {seleccionada && (
+                                  <div className="activity-modality__support-picker">
+                                    <label htmlFor={supportId}>Tipo de apoyo</label>
+                                    <select
+                                      className="form-select"
+                                      id={supportId}
+                                      value={form.apoyosPorModalidad?.[item.programaCompleto] || ""}
+                                      onChange={(event) =>
+                                        setForm((current) => ({
+                                          ...current,
+                                          apoyosPorModalidad: {
+                                            ...current.apoyosPorModalidad,
+                                            [item.programaCompleto]: event.target.value,
+                                          },
+                                        }))
+                                      }
+                                    >
+                                      <option value="">Selecciona un tipo de apoyo</option>
+                                      {tiposApoyo.map((support) => (
+                                        <option key={support.id} value={support.id}>
+                                          {support.numero}. {support.nombre}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                )}
                                 <i
                                   className="fas fa-check activity-modality__check"
                                   aria-hidden="true"
                                 ></i>
-                              </label>
+                              </div>
                             );
                           })}
                         </div>
@@ -1998,7 +2114,7 @@ export default function ActividadesAdminView() {
         </Modal>
       )}
 
-      {confirmacionEliminacionMasiva && (
+      {confirmacionEliminacionMasiva && !readOnly && (
         <Modal
           title="Eliminar actividades seleccionadas"
           subtitle="Confirma el alcance antes de continuar."
@@ -2101,8 +2217,9 @@ export default function ActividadesAdminView() {
                 </span>
                 <h2>Personas inscritas</h2>
                 <p>
-                  Consulta el programa o modalidad elegida, el apoyo asignado y
-                  administra las inscripciones.
+                  {readOnly
+                    ? "Consulta el programa o modalidad elegida y el apoyo asignado."
+                    : "Consulta el programa o modalidad elegida, el apoyo asignado y administra las inscripciones."}
                 </p>
               </div>
               {!participantes.cargando && !participantes.error && (
@@ -2125,7 +2242,7 @@ export default function ActividadesAdminView() {
                 {errorEliminacionInscripcion}
               </div>
             )}
-            {confirmacionEliminacion && (
+            {confirmacionEliminacion && !readOnly && (
               <div className="activity-delete-confirm" role="alert">
                 <span className="activity-delete-confirm__icon">
                   <i
@@ -2409,7 +2526,7 @@ export default function ActividadesAdminView() {
                                 </div>
                               )}
                             </td>
-                            <td data-label="Administrar">
+                            <td data-label={readOnly ? "Historial" : "Administrar"}>
                               <div className="activity-participants-actions">
                                 <button
                                   className="btn btn-outline btn-sm"
@@ -2424,7 +2541,7 @@ export default function ActividadesAdminView() {
                                   ></i>
                                   <span>Historial</span>
                                 </button>
-                                <button
+                                {!readOnly && <button
                                   className="btn btn-outline btn-sm"
                                   type="button"
                                   onClick={() =>
@@ -2445,8 +2562,8 @@ export default function ActividadesAdminView() {
                                     aria-hidden="true"
                                   ></i>
                                   <span>Apoyo</span>
-                                </button>
-                                <button
+                                </button>}
+                                {!readOnly && <button
                                   className="btn btn-danger btn-sm activity-participants-actions__delete"
                                   type="button"
                                   onClick={() =>
@@ -2461,7 +2578,7 @@ export default function ActividadesAdminView() {
                                     aria-hidden="true"
                                   ></i>
                                   <span>Eliminar</span>
-                                </button>
+                                </button>}
                               </div>
                             </td>
                           </tr>
@@ -2475,7 +2592,7 @@ export default function ActividadesAdminView() {
           </section>
         </Modal>
       )}
-      {edicionApoyo && (
+      {edicionApoyo && !readOnly && (
         <Modal
           title="Corregir tipo de apoyo"
           onClose={() => setEdicionApoyo(null)}

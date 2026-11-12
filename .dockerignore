@@ -1,0 +1,12 @@
+**/node_modules
+**/dist
+**/.git
+**/.gitignore
+**/.vscode
+**/*.log
+**/.env
+**/.env.local
+tmp
+temp
+logs
+coverage

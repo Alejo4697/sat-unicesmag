@@ -24,6 +24,10 @@ const ROLE_SUMMARY_PRIORITY = [
   "EGRESADO",
   "EXTERNO",
 ];
+const ROLE_LABELS = {
+  ...Object.fromEntries(ROLE_OPTIONS.map(({ value, label }) => [value, label])),
+  POR_CONFIRMAR: "Por confirmar",
+};
 const STATUS_FILTER_OPTIONS = [
   ["valid", "Listo para inscribir"],
   ["invalid", "Hay que revisar"],
@@ -31,7 +35,6 @@ const STATUS_FILTER_OPTIONS = [
   ["registered", "Inscrito"],
   ["failed", "No se pudo inscribir"],
   ["not_found", "Sin perfil"],
-  ["registering", "Inscribiendo"],
 ];
 const UNKNOWN_ROLE_OPTIONS = ROLE_OPTIONS.filter(
   (role) => role.value !== "ESTUDIANTE",
@@ -310,8 +313,12 @@ function UnknownParticipantDialog({
         </span>
         <div>
           <span className="vec-bulk-registration__eyebrow">REGISTRO DE PARTICIPANTE</span>
-          <h3 id="vec-bulk-unregistered-title">Registrar persona no encontrada</h3>
-          <p>Ingresa la información para crear el perfil y agregarlo a la actividad.</p>
+          <h3 id="vec-bulk-unregistered-title">
+            {row.personaExiste ? "Completar ficha y asignar a la actividad" : "Registrar persona no encontrada"}
+          </h3>
+          <p>{row.personaExiste
+            ? "La persona ya existe en la base de datos. Completa los datos obligatorios para crear su perfil de participante y vincularla a esta actividad."
+            : "Ingresa la información para crear el perfil y agregarlo a la actividad."}</p>
         </div>
         <button className="activity-modal__close" type="button" onClick={onClose} aria-label="Cerrar ventana">
           <i className="fas fa-times" aria-hidden="true"></i>
@@ -692,6 +699,19 @@ const COLUMN_DEFINITIONS = {
     aliases: ["ACTIVIDAD"],
     matches: (header) => /^ACTIVIDAD/.test(header),
   },
+  modalidad: {
+    aliases: [
+      "MODALIDAD",
+      "MODALIDADACTIVIDAD",
+      "MODALIDADPARAINSCRIPCION",
+      "MODALIDADVARIABLE",
+      "VARIABLE",
+      "SUBDIVISION",
+      "SUBPROGRAMAMODALIDAD",
+      "PROGRAMAMODALIDAD",
+    ],
+    matches: (header) => /(?:MODALIDAD|SUBDIVISION|SUBPROGRAMAMODALIDAD|PROGRAMAMODALIDAD|VARIABLE)/.test(header),
+  },
   periodo: {
     aliases: ["PERIODO", "PERIODOACADEMICO"],
     matches: (header) => /^PERIODO(?:ACADEMICO)?$/.test(header),
@@ -744,7 +764,28 @@ function participantEntry(row, rowNumber, columns) {
     rolOriginal: columns.rol ? cellText(row[columns.rol - 1]) : "",
     programaOriginal: columns.programa ? cellText(row[columns.programa - 1]) : "",
     dependenciaOriginal: columns.dependencia ? cellText(row[columns.dependencia - 1]) : "",
+    modalidadOriginal: columns.modalidad ? cellText(row[columns.modalidad - 1]) : "",
   };
+}
+
+function modalityMatchKey(value) {
+  return normalizeText(value)
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+function resolveSpreadsheetModality(value, options) {
+  const key = modalityMatchKey(value);
+  if (!key) return "";
+  const matches = options.filter((option) => [
+    option.programaCompleto,
+    option.subdivision,
+    option.programa,
+    option.tipoApoyo,
+    option.label,
+    modalityLabel(option),
+  ].some((candidate) => modalityMatchKey(candidate) === key));
+  return matches.length === 1 ? matches[0].programaCompleto : "";
 }
 
 function periodKey(value) {
@@ -980,19 +1021,6 @@ function excelFilterMatches(row, field, selectedValue) {
   return normalizeText(value) === normalizeText(selectedValue);
 }
 
-async function mapConcurrent(items, limit, worker) {
-  const results = new Array(items.length);
-  let index = 0;
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (index < items.length) {
-      const current = index;
-      index += 1;
-      results[current] = await worker(items[current], current);
-    }
-  }));
-  return results;
-}
-
 async function createWorkbook() {
   const { default: ExcelJS } = await import("exceljs");
   return new ExcelJS.Workbook();
@@ -1003,6 +1031,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
   const restoringHistoryRef = useRef(false);
   const historyIndexRef = useRef(window.history.state?.idx);
   const eventPickerInputRef = useRef(null);
+  const registrationConfirmationRef = useRef(null);
   const [events, setEvents] = useState([]);
   const [selectedEventId, setSelectedEventId] = useState("");
   const [eventQuery, setEventQuery] = useState("");
@@ -1013,20 +1042,25 @@ export default function BulkParticipantImport({ onPendingChange }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [validating, setValidating] = useState(false);
+  const [validatingRowId, setValidatingRowId] = useState("");
   const [registering, setRegistering] = useState(false);
   const [creatingRowId, setCreatingRowId] = useState("");
-  const [creatingUnknownBatch, setCreatingUnknownBatch] = useState(false);
-  const [unknownBatchProgress, setUnknownBatchProgress] = useState({ completed: 0, total: 0 });
-  const [autoCreateRoles, setAutoCreateRoles] = useState({
-    EXTERNO: false,
-    EGRESADO: false,
-    COLABORADOR: false,
-  });
   const [editingUnknownId, setEditingUnknownId] = useState("");
   const [unknownDrafts, setUnknownDrafts] = useState({});
   const [unknownSubmitError, setUnknownSubmitError] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [registrationConfirmation, setRegistrationConfirmation] = useState(null);
+
+  useEffect(() => {
+    if (!registrationConfirmation) return undefined;
+    const dialog = registrationConfirmationRef.current;
+    if (dialog && !dialog.open) dialog.showModal();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    return () => {
+      if (dialog?.open) dialog.close();
+    };
+  }, [registrationConfirmation]);
 
   useEffect(() => {
     let active = true;
@@ -1136,12 +1170,6 @@ export default function BulkParticipantImport({ onPendingChange }) {
   )).length;
   const advancedFiltersActive = advancedFilterCount > 0;
   const filteredRowsCount = filteredReviewRows.length + filteredNotFoundRows.length;
-  const enabledNotFoundRows = notFoundRows.filter((row) => autoCreateRoles[row.tipo]);
-  const readyUnknownRows = enabledNotFoundRows.filter(
-    (row) => (!requiresSupportVariable || row.modalidadVariable)
-      && Object.keys(validarBorradorNoEncontrado(prepareUnknownParticipant(row))).length === 0,
-  );
-  const incompleteUnknownCount = enabledNotFoundRows.length - readyUnknownRows.length;
   const completedCount = rows.filter((row) => row.status === "registered").length;
   const registerableRows = rows.filter((row) => ["valid", "failed"].includes(row.status));
   const pendingValidCount = registerableRows.length;
@@ -1152,7 +1180,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
   const allRegistered = previouslyRegisterableCount > 0
     && completedCount === previouslyRegisterableCount;
   const hasPendingParticipants = rows.some((row) => (
-    ["waiting", "valid", "invalid", "not_found", "failed", "registering"].includes(row.status)
+    ["waiting", "valid", "invalid", "not_found", "failed"].includes(row.status)
   ));
 
   useEffect(() => {
@@ -1223,8 +1251,6 @@ export default function BulkParticipantImport({ onPendingChange }) {
     setEditingUnknownId("");
     setAdvancedFilters(emptyAdvancedFilters());
     setUnknownSubmitError("");
-    setUnknownBatchProgress({ completed: 0, total: 0 });
-    setAutoCreateRoles({ EXTERNO: false, EGRESADO: false, COLABORADOR: false });
     setMessage("");
     setError("");
   }
@@ -1264,22 +1290,20 @@ export default function BulkParticipantImport({ onPendingChange }) {
   }
 
   function startNextSupportBatch() {
-    if (hasPendingParticipants || registering || validating || creatingUnknownBatch) return;
+    if (hasPendingParticipants || registering || validating || validatingRowId || creatingRowId) return;
     setRows([]);
     setBulkSupportVariable("");
     setUnknownDrafts({});
     setEditingUnknownId("");
     setAdvancedFilters(emptyAdvancedFilters());
     setUnknownSubmitError("");
-    setUnknownBatchProgress({ completed: 0, total: 0 });
-    setAutoCreateRoles({ EXTERNO: false, EGRESADO: false, COLABORADOR: false });
     setError("");
     setMessage("");
   }
 
   async function registerUnknownParticipant(row) {
     const draft = unknownDrafts[row.id];
-    if (!selectedEvent || !draft) return;
+    if (!selectedEvent || !draft || validatingRowId || creatingRowId) return;
     if (requiresSupportVariable && !row.modalidadVariable) {
       setUnknownSubmitError("Selecciona la variable o modalidad para inscribir a esta persona.");
       return;
@@ -1301,13 +1325,14 @@ export default function BulkParticipantImport({ onPendingChange }) {
       if (result?.registrado !== true || !result.idInscripcion) {
         throw new Error("El servidor no confirmó la inscripción. Verifica el resultado antes de volver a intentarlo.");
       }
+      const roleLabel = ROLE_LABELS[result.rol] || result.rol;
       setRows((current) => current.map((item) => (
         item.id === row.id
-          ? { ...item, status: "registered", message: `Creado e inscrito como ${ROLE_OPTIONS.find((role) => role.value === result.rol)?.label || result.rol}.` }
+          ? { ...item, status: "registered", message: `Creado e inscrito como ${roleLabel}.` }
           : item
       )));
       setEditingUnknownId("");
-      setMessage(`La persona de la fila ${row.rowNumber} se creó y quedó inscrita como ${ROLE_OPTIONS.find((role) => role.value === result.rol)?.label || result.rol}.`);
+      setMessage(`La persona de la fila ${row.rowNumber} se creó y quedó inscrita como ${roleLabel}.`);
     } catch (requestError) {
       setUnknownSubmitError(requestError.message || "No se pudo crear e inscribir a la persona. Revisa los datos e inténtalo de nuevo.");
     } finally {
@@ -1315,66 +1340,44 @@ export default function BulkParticipantImport({ onPendingChange }) {
     }
   }
 
-  async function registerUnknownParticipantsBatch() {
-    if (!selectedEvent || creatingUnknownBatch || !readyUnknownRows.length) return;
-    const batchRows = readyUnknownRows;
-    setCreatingUnknownBatch(true);
+  async function registerPendingParticipant(row) {
+    if (!selectedEvent || !row.personaExiste || creatingRowId) return;
+    if (requiresSupportVariable && !row.modalidadVariable) {
+      setError("Selecciona la variable o modalidad para inscribir a esta persona.");
+      return;
+    }
+    setCreatingRowId(row.id);
     setUnknownSubmitError("");
     setError("");
     setMessage("");
-    setUnknownBatchProgress({ completed: 0, total: batchRows.length });
-    setRows((current) => current.map((row) => (
-      batchRows.some((candidate) => candidate.id === row.id)
-        ? { ...row, status: "registering", message: "Creando perfil e inscribiendo en la actividad..." }
-        : row
-    )));
-
     try {
-      const outcomes = await mapConcurrent(batchRows, 4, async (row) => {
-        try {
-          const participant = prepareUnknownParticipant(row);
-          const result = await registrarNoEncontradoMasivo({
-            idActividad: selectedEvent.id,
-            participante: {
-              ...participant,
-              fila: row.rowNumber,
-              modalidadVariable: row.modalidadVariable || "",
-            },
-          });
-          if (result?.registrado !== true || !result.idInscripcion) {
-            throw new Error("El servidor no confirmó la inscripción.");
-          }
-          return {
-            id: row.id,
-            status: "registered",
-            message: `Creado e inscrito como ${ROLE_OPTIONS.find((role) => role.value === result.rol)?.label || result.rol}.`,
-          };
-        } catch (requestError) {
-          return {
-            id: row.id,
-            status: "not_found",
-            message: requestError.message || "No se pudo crear el perfil; completa o corrige los datos.",
-          };
-        } finally {
-          setUnknownBatchProgress((current) => ({
-            ...current,
-            completed: current.completed + 1,
-          }));
-        }
+      const result = await registrarNoEncontradoMasivo({
+        idActividad: selectedEvent.id,
+        participante: {
+          identificacion: row.identificacion,
+          tipo: "POR_CONFIRMAR",
+          fila: row.rowNumber,
+          modalidadVariable: row.modalidadVariable || "",
+        },
       });
-      const outcomeById = new Map(outcomes.map((outcome) => [outcome.id, outcome]));
-      setRows((current) => current.map((row) => {
-        const outcome = outcomeById.get(row.id);
-        return outcome ? { ...row, status: outcome.status, message: outcome.message } : row;
-      }));
-      const registeredCount = outcomes.filter((outcome) => outcome.status === "registered").length;
-      const failedCount = outcomes.length - registeredCount;
-      setMessage(
-        `${registeredCount} perfiles creados e inscritos en la actividad.`
-        + (failedCount ? ` ${failedCount} filas requieren corrección; revisa el mensaje de cada una.` : ""),
-      );
+      if (result?.registrado !== true || !result.idInscripcion) {
+        throw new Error("El servidor no confirmó la inscripción. Verifica el resultado antes de volver a intentarlo.");
+      }
+      const roleLabel = ROLE_LABELS[result.rol] || result.rol;
+      setRows((current) => current.map((item) => (
+        item.id === row.id
+          ? { ...item, status: "registered", message: `Inscrita como ${roleLabel}; queda pendiente de verificación administrativa.` }
+          : item
+      )));
+      setMessage(`La persona de la fila ${row.rowNumber} quedó inscrita como ${roleLabel}. Un administrador podrá confirmar su rol después.`);
+    } catch (requestError) {
+      const errorMessage = requestError.message || "No se pudo inscribir a la persona como Por confirmar.";
+      setError(errorMessage);
+      setRows((current) => current.map((item) => (
+        item.id === row.id ? { ...item, message: errorMessage } : item
+      )));
     } finally {
-      setCreatingUnknownBatch(false);
+      setCreatingRowId("");
     }
   }
 
@@ -1385,10 +1388,6 @@ export default function BulkParticipantImport({ onPendingChange }) {
     if (!file) return;
     if (!selectedEvent) {
       setError("Selecciona primero la actividad a la que se registrarán los participantes.");
-      return;
-    }
-    if (requiresSupportVariable && !bulkSupportVariable) {
-      setError("Selecciona primero la modalidad del grupo.");
       return;
     }
     const extension = file.name.split(".").pop()?.toLocaleLowerCase("es");
@@ -1412,9 +1411,10 @@ export default function BulkParticipantImport({ onPendingChange }) {
         cellDates: false,
         codepage: 65001,
       });
-      const parsedRows = parseWorkbook(spreadsheet).map((row) => ({
+      const parsedRows = parseWorkbook(spreadsheet, selectedEvent).map((row) => ({
         ...row,
-        modalidadVariable: bulkSupportVariable
+        modalidadVariable: resolveSpreadsheetModality(row.modalidadOriginal, supportOptions)
+          || bulkSupportVariable
           || (selectedEvent?.variablesModalidades?.length === 1 && supportOptions.length === 1
             ? supportOptions[0].programaCompleto
             : ""),
@@ -1442,17 +1442,28 @@ export default function BulkParticipantImport({ onPendingChange }) {
         const validationsByRow = new Map(validation.filas.map((row) => [row.fila, row]));
         const prepared = parsedRows.map((row) => {
           const validated = validationsByRow.get(row.rowNumber);
+          const datosPersona = validated?.participante || {};
           return {
             ...row,
             status: validated?.status || "invalid",
             message: validated?.message || "No se recibió el resultado de validación.",
             tipo: validated?.tipo || row.tipo,
             roles: validated?.roles || [],
+            personaExiste: validated?.personaExiste === true,
             identificacion: validated?.identificacion || row.identificacion,
             codigoInstitucional: row.codigoInstitucional,
-            nombres: validated?.nombres || row.nombres,
+            tipoDocumento: datosPersona.tipoDocumento || row.tipoDocumento,
+            nombres: datosPersona.nombres || validated?.nombres || row.nombres,
             nombreCompleto: row.nombreCompleto,
-            apellidos: validated?.apellidos || row.apellidos,
+            apellidos: datosPersona.apellidos || validated?.apellidos || row.apellidos,
+            fechaNacimiento: datosPersona.fechaNacimiento || row.fechaNacimiento,
+            lugarNacimiento: datosPersona.lugarNacimiento || row.lugarNacimiento,
+            genero: datosPersona.genero || row.genero,
+            correo: datosPersona.correo || row.correo,
+            celular: datosPersona.contacto || row.celular,
+            telefono: datosPersona.telefono || row.telefono,
+            direccion: datosPersona.direccion || row.direccion,
+            municipio: datosPersona.municipio || row.municipio,
             modalidadVariable: validated?.modalidadVariable || row.modalidadVariable || "",
             idTipoApoyo: validated?.idTipoApoyo || "",
           };
@@ -1471,7 +1482,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
           setMessage("No hay personas listas para inscribir todavía. Revisa las que necesitan ayuda o aparecen repetidas.");
         }
         if (prepared.some((row) => row.status === "invalid")) {
-          setError("Hay filas con otros errores de validación. Corrígelas y vuelve a cargar el archivo.");
+          setError("Hay filas que requieren revisión. Asigna la modalidad correcta o corrige los demás datos antes de inscribir.");
         }
       } catch (validationError) {
         const messageText = validationError.message || "No se pudo validar la carga en el servidor.";
@@ -1486,7 +1497,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
   }
 
   async function registerParticipants() {
-    if (!selectedEvent || !readyToRegister) return;
+    if (!selectedEvent || !readyToRegister || validatingRowId) return;
     setRegistering(true);
     setError("");
     setMessage("");
@@ -1521,11 +1532,20 @@ export default function BulkParticipantImport({ onPendingChange }) {
       ).length;
       const missingCount = outcomes.filter((participant) => participant.status === "not_found").length
         + notFoundRows.length;
+      const registeredCount = outcomes.filter((participant) => participant.status === "registered").length;
       setMessage(
         `${result.registrados} participantes registrados correctamente.`
         + (failedCount ? ` ${failedCount} requieren revisión; los demás continúan disponibles.` : "")
         + (missingCount ? ` ${missingCount} personas no encontradas siguen disponibles para crear su perfil.` : ""),
       );
+      if (registeredCount > 0) {
+        setRegistrationConfirmation({
+          actividad: selectedEvent.actividad,
+          inscritos: registeredCount,
+          pendientes: failedCount + missingCount,
+          repetidos: duplicateCount,
+        });
+      }
     } catch (requestError) {
       const messageText = requestError.message || "No se pudo completar el registro masivo.";
       setRows((current) => current.map((row) => ({
@@ -1560,6 +1580,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
       { header: "Teléfono alternativo", key: "telefono", width: 24 },
       { header: "Dirección", key: "direccion", width: 32 },
       { header: "Municipio de residencia", key: "municipio", width: 26 },
+      { header: "Modalidad", key: "modalidad", width: 36 },
     ];
     const header = sheet.getRow(1);
     header.height = 26;
@@ -1568,7 +1589,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF002855" } };
       cell.alignment = { vertical: "middle" };
     });
-    sheet.autoFilter = { from: "A1", to: "M1" };
+    sheet.autoFilter = { from: "A1", to: "N1" };
     const instructions = workbook.addWorksheet("Instrucciones");
     instructions.addRows([
       ["Plantilla para registrar participantes"],
@@ -1579,9 +1600,9 @@ export default function BulkParticipantImport({ onPendingChange }) {
       ["Si la persona no está registrada con ningún rol de participante, podrás crear su perfil como egresado, docente o externo. No se creará como estudiante."],
       ["Al marcar en la revisión los roles permitidos, se crean los perfiles correspondientes para egresados, docentes o externos (requiere la migración de roles) y se inscriben en la actividad seleccionada."],
       ["Para fechas usa AAAA-MM-DD o DD/MM/AAAA; el género debe coincidir con una opción permitida en el formulario."],
-      ["Elige la modalidad antes de subir el archivo; todas las personas de esta lista quedarán inscritas en esa modalidad. La columna Apoyo del archivo no cambia esta selección."],
+      ["La columna Modalidad es opcional: escribe en cada fila el nombre de la modalidad, variable, subdivisión, programa o apoyo tal como aparece en la actividad. Si no coincide de forma única, selecciónalo manualmente en la revisión. También puedes elegir una modalidad predeterminada; la columna Apoyo no reemplaza la modalidad."],
       ["Se admiten archivos .xlsx, .xls, .xlsm, .xlsb, .ods, .csv y .tsv; encabezados en distintas filas o una columna identificable sin encabezados."],
-      ["Las personas no encontradas se muestran aparte. Puedes crear su perfil con el rol correspondiente; conservarán la modalidad elegida para esta lista."],
+      ["Las personas sin rol reconocido se muestran aparte. Si ya existen en la base, puedes inscribirlas como Por confirmar; si no existen, completa sus datos para crear un perfil con el rol correspondiente."],
       ["Actividad", selectedEvent
         ? `${selectedEvent.actividad} · ${selectedEvent.periodo}`
         : "Elige la actividad antes de cargar la lista."],
@@ -1619,10 +1640,104 @@ export default function BulkParticipantImport({ onPendingChange }) {
         : "",
     );
     setRows([]);
-    setAutoCreateRoles({ EXTERNO: false, EGRESADO: false, COLABORADOR: false });
-    setUnknownBatchProgress({ completed: 0, total: 0 });
     setError("");
     setMessage("");
+  }
+
+  async function updateRowModality(rowId, programaCompleto) {
+    const option = supportOptions.find(
+      (item) => item.programaCompleto === programaCompleto,
+    );
+    const row = rows.find((item) => item.id === rowId);
+    if (!row || ["registered", "duplicate"].includes(row.status)) return;
+    if (!programaCompleto) {
+      setRows((current) => current.map((item) => (
+        item.id === rowId
+          ? {
+            ...item,
+            modalidadVariable: "",
+            idTipoApoyo: "",
+            status: "invalid",
+            message: "Selecciona la modalidad correspondiente a esta persona.",
+          }
+          : item
+      )));
+      return;
+    }
+
+    setRows((current) => current.map((row) => (
+      row.id === rowId
+        ? {
+          ...row,
+          modalidadVariable: programaCompleto,
+          idTipoApoyo: option?.idTipoApoyo || "",
+          status: row.status === "duplicate" ? "duplicate" : "waiting",
+          message: row.status === "duplicate"
+            ? row.message
+            : "Validando la modalidad seleccionada...",
+        }
+        : row
+    )));
+    if (row.status === "duplicate") return;
+    if (!selectedEvent || !requiresSupportVariable) {
+      setRows((current) => current.map((item) => (
+        item.id === rowId
+          ? {
+            ...item,
+            status: "invalid",
+            message: "No se pudo validar la modalidad para la actividad seleccionada.",
+          }
+          : item
+      )));
+      return;
+    }
+
+    setValidatingRowId(rowId);
+    setError("");
+    try {
+      const validation = await validarParticipantesMasivo({
+        idActividad: selectedEvent.id,
+        participantes: [{
+          fila: row.rowNumber,
+          identificacion: row.identificacion,
+          codigoInstitucional: row.codigoInstitucional,
+          tipo: row.tipo,
+          tipoDocumento: row.tipoDocumento || "CC",
+          nombres: row.nombres,
+          nombreCompleto: row.nombreCompleto,
+          apellidos: row.apellidos,
+          modalidadVariable: programaCompleto,
+        }],
+      });
+      const result = validation.filas?.[0];
+      if (!result) {
+        throw new Error("No se recibió el resultado de validación para esta persona.");
+      }
+      setRows((current) => current.map((item) => (
+        item.id === rowId
+          ? {
+            ...item,
+            status: result.status || "invalid",
+            message: result.message || "La fila requiere revisión después de validar la modalidad.",
+            tipo: result.tipo || item.tipo,
+            roles: result.roles || item.roles,
+            idTipoApoyo: result.idTipoApoyo || "",
+          }
+          : item
+      )));
+    } catch (requestError) {
+      setRows((current) => current.map((item) => (
+        item.id === rowId
+          ? {
+            ...item,
+            status: "invalid",
+            message: requestError.message || "No se pudo validar la modalidad seleccionada.",
+          }
+          : item
+      )));
+    } finally {
+      setValidatingRowId("");
+    }
   }
 
   return (
@@ -1686,7 +1801,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
                 }
               }}
               placeholder={loading ? "Cargando actividades..." : "Busca o selecciona una actividad"}
-              disabled={loading || validating || registering || creatingUnknownBatch}
+              disabled={loading || validating || Boolean(validatingRowId) || registering || Boolean(creatingRowId)}
               autoComplete="off"
               />
               <i className={`fas ${eventPickerOpen ? "fa-chevron-up" : "fa-chevron-down"}`} aria-hidden="true"></i>
@@ -1741,7 +1856,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
           <div className="vec-bulk-registration__modalities">
             <span className="form-label">
               {supportOptions.length > 1
-                ? "Paso 2 · Elige la modalidad para este grupo"
+                ? "Paso 2 · Modalidad predeterminada para el grupo"
                 : "Modalidades y apoyos de esta actividad"}
             </span>
             {supportOptions.length > 0 ? (
@@ -1754,7 +1869,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
                       key={item.programaCompleto}
                       aria-pressed={bulkSupportVariable === item.programaCompleto}
                       onClick={() => setBulkSupportVariable(item.programaCompleto)}
-                      disabled={rows.length > 0 || validating || registering || creatingUnknownBatch}
+                      disabled={rows.length > 0 || validating || registering || Boolean(creatingRowId)}
                     >
                       <span className="vec-bulk-registration__modality-option-icon" aria-hidden="true">
                         <i className={`fas ${index % 2 === 0 ? "fa-layer-group" : "fa-hand-holding-heart"}`}></i>
@@ -1769,14 +1884,14 @@ export default function BulkParticipantImport({ onPendingChange }) {
                 </div>
                 <span className="vec-bulk-registration__no-modalities">
                   {rows.length > 0
-                    ? `Modalidad definida para este grupo: ${supportOptions.find((item) => item.programaCompleto === bulkSupportVariable)?.label || "sin modalidad"}. Para cargar otra, termina este grupo y pulsa «Cargar otro grupo».`
+                    ? `Valor predeterminado: ${supportOptions.find((item) => item.programaCompleto === bulkSupportVariable)?.label || "sin modalidad"}. Puedes cambiar la modalidad de cada persona en la revisión.`
                     : supportOptions.length > 1
                       ? bulkSupportVariable
-                        ? "La modalidad elegida se aplicará a todas las personas del archivo."
-                        : "Selecciona la modalidad antes de cargar el archivo."
+                        ? "Esta modalidad se asignará inicialmente a la lista; podrás ajustarla persona por persona antes de inscribir."
+                        : "La modalidad predeterminada es opcional: puedes incluir Modalidad en el archivo y ajustar cada fila antes de inscribir."
                       : bulkSupportVariable
-                        ? "La modalidad seleccionada se aplicará a todas las personas del archivo."
-                        : "Selecciona la modalidad antes de cargar el archivo."}
+                        ? "Esta modalidad se asignará inicialmente a la lista; podrás ajustarla persona por persona antes de inscribir."
+                        : "Puedes asignar la modalidad desde una columna del archivo; si no coincide, podrás corregirla en la revisión."}
                 </span>
               </>
             ) : (
@@ -1801,7 +1916,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
               setError("");
               downloadTemplate().catch(() => setError("Hubo un error al generar la plantilla."));
             }}
-            disabled={registering || creatingUnknownBatch}
+            disabled={registering || Boolean(creatingRowId)}
           >
             <i className="fas fa-download" aria-hidden="true"></i> Descargar plantilla
           </button>
@@ -1822,7 +1937,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
             </section>
             <section>
               <strong>El rol no hace falta</strong>
-              <p>Buscamos sus roles en el sistema. Si no aparece, podrás completar sus datos y crearla como egresado, docente o externo; nunca la haremos estudiante automáticamente.</p>
+              <p>Buscamos sus roles en el sistema. Si ya existe pero no tiene un rol reconocido, puedes inscribirla como <b>Por confirmar</b> para que un administrador revise su rol. Si no existe, completa sus datos y crea su perfil como egresado, docente o externo; nunca la haremos estudiante automáticamente.</p>
             </section>
           </div>
           <div className="vec-upload-guide__example">
@@ -1836,7 +1951,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
           </ul>
         </div>
         <label
-          className={`vec-bulk-registration__dropzone${!selectedEvent || (requiresSupportVariable && !bulkSupportVariable) ? " is-disabled" : ""}`}
+          className={`vec-bulk-registration__dropzone${!selectedEvent ? " is-disabled" : ""}`}
           htmlFor="bulk-file"
         >
           <i className="fas fa-cloud-arrow-up" aria-hidden="true"></i>
@@ -1844,11 +1959,9 @@ export default function BulkParticipantImport({ onPendingChange }) {
           <span>
             {!selectedEvent
               ? "Primero elige una actividad."
-              : requiresSupportVariable && !bulkSupportVariable
-                ? "Primero selecciona arriba la modalidad para este grupo."
-                : rows.length > 0
-                  ? "La modalidad elegida se conservará para este grupo."
-                  : "Cuando lo elijas, revisaremos la lista antes de inscribir a alguien."}
+              : rows.length > 0
+                ? "Puedes ajustar la modalidad de cada persona en la revisión."
+                : "Incluye una columna Modalidad para asignarla por fila, o deja que el valor predeterminado se aplique a las filas sin modalidad."}
           </span>
           <span className="vec-bulk-registration__dropzone-hint">
             <i className="fas fa-file-excel" aria-hidden="true"></i>
@@ -1861,10 +1974,10 @@ export default function BulkParticipantImport({ onPendingChange }) {
             onChange={handleFile}
             disabled={
               !selectedEvent
-              || (requiresSupportVariable && !bulkSupportVariable)
               || validating
+              || Boolean(validatingRowId)
               || registering
-              || creatingUnknownBatch
+              || Boolean(creatingRowId)
             }
           />
         </label>
@@ -1979,14 +2092,10 @@ export default function BulkParticipantImport({ onPendingChange }) {
             </div>
           </details>
 
-          {(registering || creatingUnknownBatch) && (
+          {registering && (
             <div className="vec-bulk-progress" role="status">
-              <span>{creatingUnknownBatch
-                ? `Completando fichas e inscribiendo: ${unknownBatchProgress.completed} de ${unknownBatchProgress.total}.`
-                : "Inscribiendo las personas listas. Cada fila se guarda por separado."}</span>
-              {creatingUnknownBatch
-                ? <progress value={unknownBatchProgress.completed} max={unknownBatchProgress.total || 1} />
-                : <progress />}
+              <span>Inscribiendo las personas listas. Cada fila se guarda por separado.</span>
+              <progress />
             </div>
           )}
 
@@ -1998,14 +2107,14 @@ export default function BulkParticipantImport({ onPendingChange }) {
                 </div>
                 <div>
                   <h4>Personas que encontramos</h4>
-                  <p>Comprueba sus nombres y roles. Todas las personas de esta lista conservarán la modalidad seleccionada arriba.</p>
+                  <p>Comprueba sus nombres y roles, y selecciona para cada persona la modalidad en la que debe quedar inscrita.</p>
                 </div>
                 <span className="vec-bulk-preview__section-total">{filteredReviewRows.length} registros</span>
               </div>
               <div className="table-responsive vec-bulk-preview__table">
                 <table className="table vec-bulk-preview__data-table">
                   <thead>
-                    <tr><th>Fila</th><th>Documento o código</th><th>Persona</th><th>Sus roles</th><th>Modalidad</th><th>¿Qué sigue?</th></tr>
+                    <tr><th>Fila</th><th>Documento o código</th><th>Persona</th><th>Sus roles</th><th>Modalidad individual</th><th>¿Qué sigue?</th></tr>
                   </thead>
                   <tbody>
                     {filteredReviewRows.map((row) => (
@@ -2015,9 +2124,24 @@ export default function BulkParticipantImport({ onPendingChange }) {
                         <td><span className="vec-bulk-preview__person-name">{[row.nombres, row.apellidos].filter(Boolean).join(" ") || "—"}</span></td>
                         <td>{(row.roles || []).map((role) => ROLE_OPTIONS.find((item) => item.value === role)?.label || role).join(", ") || "—"}</td>
                         <td>
-                          {row.modalidadVariable
-                            ? <span className="vec-bulk-modality-label">{supportOptions.find((option) => option.programaCompleto === row.modalidadVariable)?.label || row.modalidadVariable}</span>
-                            : <span className="vec-bulk-modality-label is-unassigned">Sin modalidad</span>}
+                          {requiresSupportVariable ? (
+                            <select
+                              className="form-select form-select-sm vec-bulk-modality-select"
+                              aria-label={`Modalidad para ${[row.nombres, row.apellidos].filter(Boolean).join(" ") || `fila ${row.rowNumber}`}`}
+                              value={row.modalidadVariable || ""}
+                              onChange={(event) => updateRowModality(row.id, event.target.value)}
+                              disabled={["registered", "duplicate"].includes(row.status) || validating || Boolean(validatingRowId) || registering || Boolean(creatingRowId)}
+                            >
+                              <option value="">Selecciona modalidad</option>
+                              {supportOptions.map((option) => (
+                                <option key={option.programaCompleto} value={option.programaCompleto}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span className="vec-bulk-modality-label">No aplica</span>
+                          )}
                         </td>
                         <td>
                           <span className={`vec-bulk-row-status vec-bulk-row-status--${row.status}`}>
@@ -2047,57 +2171,14 @@ export default function BulkParticipantImport({ onPendingChange }) {
                   <i className="fas fa-user-plus"></i>
                 </div>
                 <div>
-                  <h4>Personas que todavía no aparecen</h4>
-                  <p>Estas personas no tienen un perfil que podamos usar. Puedes completar sus datos para crear un perfil de egresado, docente o externo. No se crearán estudiantes automáticamente.</p>
+                  <h4>Personas que necesitan completar su ficha</h4>
+                  <p>Algunas ya existen en la base, pero no tienen un rol reconocido; otras no aparecen todavía. Gestiona cada persona desde su fila: puedes completar sus datos o, si ya existe en la base, inscribirla como “Por confirmar”.</p>
                 </div>
                 <span className="vec-bulk-preview__section-total">{filteredNotFoundRows.length} pendientes</span>
               </div>
-              <div className="vec-bulk-auto-create">
-                <div className="vec-bulk-auto-create__roles">
-                  {ROLE_OPTIONS.filter((role) => role.value !== "ESTUDIANTE").map((role) => (
-                    <label key={role.value}>
-                      <input
-                        type="checkbox"
-                        checked={autoCreateRoles[role.value]}
-                        onChange={(event) => setAutoCreateRoles((current) => ({
-                          ...current,
-                          [role.value]: event.target.checked,
-                        }))}
-                        disabled={creatingUnknownBatch || registering}
-                      />
-                      <span>Crear como {role.label.toLocaleLowerCase("es")}</span>
-                    </label>
-                  ))}
-                </div>
-                <div className="vec-bulk-auto-create__action">
-                  <p>
-                    {readyUnknownRows.length} personas listas para crear
-                    {incompleteUnknownCount ? ` · ${incompleteUnknownCount} necesitan completar datos` : ""}
-                    {!enabledNotFoundRows.length ? " · Marca el rol que quieres crear." : ""}
-                  </p>
-                  <button
-                    className="btn btn-primary btn-sm"
-                    type="button"
-                    onClick={registerUnknownParticipantsBatch}
-                    disabled={
-                      creatingUnknownBatch
-                      || registering
-                      || validating
-                      || Boolean(editingUnknownId)
-                      || readyUnknownRows.length === 0
-                    }
-                  >
-                    <i className={`fas ${creatingUnknownBatch ? "fa-spinner fa-spin" : "fa-users"}`} aria-hidden="true"></i>
-                    {creatingUnknownBatch
-                      ? "Creando e inscribiendo..."
-                      : `Crear e inscribir ${readyUnknownRows.length} personas`}
-                  </button>
-                </div>
-                <small>Para crear varias personas a la vez, cada fila debe tener todos sus datos personales y de contacto. Si a alguien le falta algo, puedes completar su ficha con el botón de esa fila.</small>
-              </div>
               <div className="table-responsive vec-bulk-preview__table">
                 <table className="table vec-bulk-preview__data-table">
-                  <thead><tr><th>Fila</th><th>Documento o código</th><th>Nombre de la lista</th><th>Modalidad del grupo</th><th>Ayuda</th></tr></thead>
+                  <thead><tr><th>Fila</th><th>Documento o código</th><th>Nombre de la lista</th><th>Modalidad individual</th><th>Ayuda</th></tr></thead>
                   <tbody>
                     {filteredNotFoundRows.map((row) => (
                       <tr key={row.id}>
@@ -2105,22 +2186,58 @@ export default function BulkParticipantImport({ onPendingChange }) {
                         <td><span className="vec-bulk-preview__identifier">{row.identificacion || row.codigoInstitucional || "—"}</span></td>
                         <td><span className="vec-bulk-preview__person-name">{[row.nombres, row.apellidos].filter(Boolean).join(" ") || row.nombreCompleto || "Sin nombre en el archivo"}</span></td>
                         <td>
-                          {row.modalidadVariable
-                            ? <span className="vec-bulk-modality-label">{supportOptions.find((option) => option.programaCompleto === row.modalidadVariable)?.label || row.modalidadVariable}</span>
-                            : <span className="vec-bulk-modality-label is-unassigned">Sin modalidad</span>}
+                          {requiresSupportVariable ? (
+                            <select
+                              className="form-select form-select-sm vec-bulk-modality-select"
+                              aria-label={`Modalidad para fila ${row.rowNumber}`}
+                              value={row.modalidadVariable || ""}
+                              onChange={(event) => updateRowModality(row.id, event.target.value)}
+                              disabled={Boolean(validatingRowId) || Boolean(creatingRowId)}
+                            >
+                              <option value="">Selecciona modalidad</option>
+                              {supportOptions.map((option) => (
+                                <option key={option.programaCompleto} value={option.programaCompleto}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span className="vec-bulk-modality-label">No aplica</span>
+                          )}
                         </td>
                         <td className="vec-bulk-unregistered__action">
-                          <span className="vec-bulk-row-status vec-bulk-row-status--not-found">Falta crear su perfil</span>
+                          <span className={`vec-bulk-row-status ${row.personaExiste
+                            ? "vec-bulk-row-status--person-found"
+                            : "vec-bulk-row-status--not-found"}`}>
+                            {row.personaExiste
+                              ? "Encontrada en la base · sin rol reconocido"
+                              : "No encontrada · falta crear su perfil"}
+                          </span>
                           <small className="vec-bulk-row-message">{row.message}</small>
                           <button
-                            className="btn btn-outline btn-sm"
+                            className={`btn btn-sm ${row.personaExiste ? "btn-primary" : "btn-outline"}`}
                             type="button"
                             onClick={() => editUnknownParticipant(row)}
-                            disabled={registering || creatingUnknownBatch || creatingRowId === row.id}
+                            disabled={registering || Boolean(creatingRowId)}
                           >
                             <i className="fas fa-user-plus" aria-hidden="true"></i>
-                            {editingUnknownId === row.id ? "Cerrar ficha" : "Completar ficha"}
+                            {editingUnknownId === row.id
+                              ? "Cerrar ficha"
+                              : row.personaExiste
+                                ? "Completar datos y asignar"
+                                : "Completar ficha"}
                           </button>
+                          {row.personaExiste && (
+                            <button
+                              className="btn btn-outline btn-sm"
+                              type="button"
+                              onClick={() => registerPendingParticipant(row)}
+                              disabled={registering || Boolean(creatingRowId)}
+                            >
+                              <i className={`fas ${creatingRowId === row.id ? "fa-spinner fa-spin" : "fa-circle-question"}`} aria-hidden="true"></i>
+                              Inscribir como Por confirmar
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -2157,7 +2274,7 @@ export default function BulkParticipantImport({ onPendingChange }) {
                     className="btn btn-outline"
                     type="button"
                     onClick={startNextSupportBatch}
-                    disabled={registering || creatingUnknownBatch || validating}
+                    disabled={registering || Boolean(creatingRowId) || validating || Boolean(validatingRowId)}
                   >
                     <i className="fas fa-layer-group" aria-hidden="true"></i>
                     Nueva carga · elegir apoyo
@@ -2169,13 +2286,86 @@ export default function BulkParticipantImport({ onPendingChange }) {
               className="btn btn-primary"
               type="button"
               onClick={registerParticipants}
-              disabled={registering || creatingUnknownBatch || validating || !readyToRegister}
+              disabled={registering || Boolean(creatingRowId) || validating || Boolean(validatingRowId) || !readyToRegister}
             >
               <i className={`fas ${registering ? "fa-spinner fa-spin" : "fa-users"}`} aria-hidden="true"></i>
               {allRegistered ? "Lista inscrita" : registering ? "Inscribiendo lista..." : `Inscribir ${pendingValidCount} personas listas`}
             </button>
           </div>
         </div>
+      )}
+      {registrationConfirmation && (
+        <dialog
+          ref={registrationConfirmationRef}
+          className="activity-modal"
+          aria-labelledby="vec-bulk-registration-confirmation-title"
+          onCancel={(event) => {
+            event.preventDefault();
+            setRegistrationConfirmation(null);
+          }}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setRegistrationConfirmation(null);
+            }
+          }}
+        >
+          <div className="activity-modal__header">
+            <div className="activity-modal__heading">
+              <span className="activity-modal__heading-icon" aria-hidden="true">
+                <i className="fas fa-circle-check"></i>
+              </span>
+              <span>
+                <h2 id="vec-bulk-registration-confirmation-title">
+                  {registrationConfirmation.pendientes
+                    ? "Inscripción completada con pendientes"
+                    : "¡Lista inscrita correctamente!"}
+                </h2>
+                <p>{registrationConfirmation.actividad}</p>
+              </span>
+            </div>
+            <button
+              className="activity-modal__close"
+              type="button"
+              onClick={() => setRegistrationConfirmation(null)}
+              aria-label="Cerrar confirmación"
+            >
+              <i className="fas fa-times" aria-hidden="true"></i>
+            </button>
+          </div>
+          <div className="activity-modal__body">
+            <section className="card activity-modal__card">
+              <p role="status">
+                Se inscribieron correctamente{" "}
+                <strong>
+                  {registrationConfirmation.inscritos}{" "}
+                  {registrationConfirmation.inscritos === 1 ? "persona" : "personas"}
+                </strong>
+                .
+              </p>
+              {registrationConfirmation.pendientes > 0 && (
+                <p className="text-muted">
+                  {registrationConfirmation.pendientes} fila(s) quedaron pendientes
+                  de revisión. Consulta sus estados en la lista antes de cerrar.
+                </p>
+              )}
+              {registrationConfirmation.repetidos > 0 && (
+                <p className="text-muted">
+                  Se omitieron {registrationConfirmation.repetidos} filas repetidas
+                  o de personas que ya estaban inscritas.
+                </p>
+              )}
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "1rem" }}>
+                <button
+                  className="btn btn-primary"
+                  type="button"
+                  onClick={() => setRegistrationConfirmation(null)}
+                >
+                  Entendido
+                </button>
+              </div>
+            </section>
+          </div>
+        </dialog>
       )}
     </section>
   );

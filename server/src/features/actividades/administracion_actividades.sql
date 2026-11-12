@@ -5,8 +5,18 @@ BEGIN;
 ALTER TABLE sat.actividades_vec
   ADD COLUMN IF NOT EXISTS estado varchar(20) NOT NULL DEFAULT 'PROGRAMADA',
   ADD COLUMN IF NOT EXISTS actualizado_en timestamptz NOT NULL DEFAULT now(),
+  ADD COLUMN IF NOT EXISTS cancelada_en timestamptz,
   ADD COLUMN IF NOT EXISTS ubicacion text,
   ADD COLUMN IF NOT EXISTS variables_modalidades text[] NOT NULL DEFAULT ARRAY[]::text[];
+
+UPDATE sat.actividades_vec
+SET cancelada_en = now()
+WHERE estado = 'CANCELADA'
+  AND cancelada_en IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_actividades_vec_canceladas_en
+  ON sat.actividades_vec (cancelada_en)
+  WHERE estado = 'CANCELADA';
 
 ALTER TABLE sat.participantes_vec
   ADD COLUMN IF NOT EXISTS detalle_tipo_participante varchar(120),
@@ -316,7 +326,8 @@ BEGIN
     ALTER TABLE sat.participantes_vec
       ADD CONSTRAINT participantes_vec_tipo_participante_check
       CHECK (tipo_participante IN (
-        'ESTUDIANTE', 'COLABORADOR', 'EGRESADO', 'EXTERNO', 'ADMINISTRATIVO'
+        'ESTUDIANTE', 'COLABORADOR', 'EGRESADO', 'EXTERNO', 'ADMINISTRATIVO',
+        'POR_CONFIRMAR'
       ));
   END IF;
 END $$;

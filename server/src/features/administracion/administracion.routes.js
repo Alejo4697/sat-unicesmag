@@ -221,15 +221,14 @@ router.get("/cargos-catalogo", (req, res) => {
     profesional: [
       "Docente Acompañante",
       "Docente Tutor",
-      "Docente Asistencial Unidad Servicios Psicológicos",
       "Coordinador Paz y Convivencia",
       "Enfermería San Damián",
       "Coordinador Pastoral",
-      "Área de Salud María Goretti",
-      "Psicólogo de Área",
+      "Unidad de Salud María Goretti",
       "Trabajo Social",
       "Unidad de Servicios Psicológicos (USP)",
-      "Coordinador de Servicios Psicológicos",
+      "Unidad de Servicios Psicológicos Leopoldo Mandic",
+      "Inclusión y Diversidad",
       "Consultorios Jurídicos"
     ],
     directivo: [
@@ -486,6 +485,7 @@ router.get("/estado-sincronizacion", async (req, res, next) => {
         (SELECT COUNT(*) FROM sat.asignaturas) AS total_asignaturas,
         (SELECT COUNT(*) FROM sat.usuarios WHERE eliminado_en IS NULL) AS total_usuarios,
         (SELECT COUNT(*) FROM sat.docentes) AS total_docentes,
+        (SELECT COUNT(*) FROM sat.participantes_vec WHERE tipo_participante = 'EGRESADO') AS total_egresados,
         (SELECT COUNT(*) FROM sat.facultades) AS total_facultades;
     `);
 

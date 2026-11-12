@@ -73,12 +73,14 @@ export default function DashboardView() {
         </div>
         <p className="text-muted">Resumen basado en los registros guardados en el módulo VEC.</p>
       </section>
-      {puedeAdministrar && <ProfileBulkImport onSaved={() => setActualizacion((current) => current + 1)} />}
       {puedeAdministrar && (
-        <RoleProfilesManager
-          refreshKey={actualizacion}
-          onChanged={() => setActualizacion((current) => current + 1)}
-        />
+        <>
+          <ProfileBulkImport onSaved={() => setActualizacion((current) => current + 1)} />
+          <RoleProfilesManager
+            refreshKey={actualizacion}
+            onChanged={() => setActualizacion((current) => current + 1)}
+          />
+        </>
       )}
       <ParticipantesTable
         limite={100}

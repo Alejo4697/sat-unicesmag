@@ -12,11 +12,11 @@ const ETIQUETAS_ROL = {
 
 export default function ApoyosView() {
   const [tiposApoyo, setTiposApoyo] = useState([]);
-  const [tipoApoyoId, setTipoApoyoId] = useState("todos");
+  const [tipoApoyoId, setTipoApoyoId] = useState("");
   const [pagina, setPagina] = useState(1);
   const [resultado, setResultado] = useState(null);
   const [cargandoTipos, setCargandoTipos] = useState(true);
-  const [cargandoBeneficiarios, setCargandoBeneficiarios] = useState(true);
+  const [cargandoBeneficiarios, setCargandoBeneficiarios] = useState(false);
   const [error, setError] = useState("");
   const totalPaginas = resultado ? Math.max(1, Math.ceil(resultado.total / resultado.limite)) : 1;
 
@@ -38,6 +38,12 @@ export default function ApoyosView() {
   }, []);
 
   useEffect(() => {
+    if (!tipoApoyoId) {
+      setResultado(null);
+      setCargandoBeneficiarios(false);
+      return undefined;
+    }
+
     const controller = new AbortController();
     setCargandoBeneficiarios(true);
     setError("");
@@ -84,7 +90,7 @@ export default function ApoyosView() {
             }}
             disabled={cargandoTipos || tiposApoyo.length === 0}
           >
-            <option value="todos">Todos los tipos de apoyo</option>
+            <option value="">Selecciona un tipo de apoyo</option>
             {tiposApoyo.map((tipo, index) => (
               <option key={tipo.id} value={tipo.id}>
                 {tipo.numero ?? index + 1}. {tipo.nombre}
@@ -96,11 +102,14 @@ export default function ApoyosView() {
         {!cargandoTipos && tiposApoyo.length === 0 && (
           <span className="vec-support-filter-card__hint">No hay tipos de apoyo disponibles.</span>
         )}
+        {!cargandoTipos && tiposApoyo.length > 0 && !tipoApoyoId && (
+          <span className="vec-support-filter-card__hint">Selecciona un tipo de apoyo para consultar sus beneficiarios.</span>
+        )}
       </section>
 
       {error && <div className="auth-error vec-support-error" role="alert">{error}</div>}
 
-      <section className="vec-support-results" aria-label="Personas beneficiarias" aria-live="polite">
+      {tipoApoyoId && <section className="vec-support-results" aria-label="Personas beneficiarias" aria-live="polite">
         <div className="vec-support-results__header">
           <div>
             <span className="vec-support-results__eyebrow">RESULTADOS</span>
@@ -122,7 +131,7 @@ export default function ApoyosView() {
           <div className="vec-support-state vec-support-state--empty" role="status">
             <span className="vec-support-state__icon"><i className="fas fa-magnifying-glass" aria-hidden="true"></i></span>
             <strong>No hay beneficiarios para este filtro</strong>
-            <span>Prueba con otro tipo de apoyo o consulta todas las categorías.</span>
+            <span>Prueba con otro tipo de apoyo.</span>
           </div>
         ) : resultado ? (
           <>
@@ -232,9 +241,9 @@ export default function ApoyosView() {
             )}
           </>
         ) : null}
-      </section>
+      </section>}
 
-      {resultado && resultado.rutas?.length > 0 && (
+      {tipoApoyoId && resultado && resultado.rutas?.length > 0 && (
         <details className="vec-support-routes">
           <summary className="vec-support-routes__summary">
             <span>

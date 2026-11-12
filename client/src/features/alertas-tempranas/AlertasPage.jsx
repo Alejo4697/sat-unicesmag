@@ -585,9 +585,17 @@ export default function AlertasPage() {
                       </span>
                     </td>
                     <td>
-                      {formatDateTime(a.fechaCreacion)}
-                      <br />
-                      <small className="text-muted">{a.creador}</small>
+                      <div title="Fecha del reporte o alerta (manual)" style={{ fontWeight: 600, color: "#002855" }}>
+                        <i className="far fa-calendar-alt" style={{ marginRight: 4, color: "#E06D53" }}></i>
+                        {formatDateTime(a.fechaCreacion)}
+                      </div>
+                      {a.fechaRegistro && (
+                        <div style={{ fontSize: "0.7rem", color: "#64748b", marginTop: "2px" }} title="Fecha y hora de registro en el sistema">
+                          <i className="fas fa-desktop" style={{ marginRight: 3 }}></i>
+                          Sistema: {formatDateTime(a.fechaRegistro)}
+                        </div>
+                      )}
+                      <small className="text-muted" style={{ display: "block", marginTop: "2px" }}>{a.creador}</small>
                     </td>
                     <td>
                       <Link

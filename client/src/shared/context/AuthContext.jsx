@@ -24,17 +24,9 @@ export function AuthProvider({ children }) {
       return null;
     }
   });
-  const [usuariosDisponibles, setUsuariosDisponibles] = useState([]);
-  const [cargandoUsuarios, setCargandoUsuarios] = useState(true);
+  const [usuariosDisponibles] = useState([]);
   const [permisos, setPermisos] = useState(null);
   const [cargandoPermisos, setCargandoPermisos] = useState(!!user);
-
-  useEffect(() => {
-    apiFetch("/auth/usuarios")
-      .then(setUsuariosDisponibles)
-      .catch((err) => console.error("No se pudo cargar la lista de usuarios:", err))
-      .finally(() => setCargandoUsuarios(false));
-  }, []);
 
   const recargarPermisos = useCallback(() => {
     return apiFetch("/menu/permisos")
@@ -45,6 +37,16 @@ export function AuthProvider({ children }) {
       })
       .finally(() => setCargandoPermisos(false));
   }, []);
+
+  useEffect(() => {
+    function onAuthExpired() {
+      setUser(null);
+      setPermisos(null);
+      navigate("/", { replace: true });
+    }
+    window.addEventListener("sat:auth-expired", onAuthExpired);
+    return () => window.removeEventListener("sat:auth-expired", onAuthExpired);
+  }, [navigate]);
 
   useEffect(() => {
     if (!user) {
@@ -61,7 +63,7 @@ export function AuthProvider({ children }) {
     [user, permisos]
   );
 
-  const cargando = cargandoUsuarios || cargandoPermisos;
+  const cargando = cargandoPermisos;
 
   function iniciarSesionComo(usuario, token = null) {
     localStorage.setItem(ACTIVE_USER_KEY, JSON.stringify(usuario));

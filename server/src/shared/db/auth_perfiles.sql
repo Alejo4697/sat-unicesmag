@@ -36,9 +36,9 @@ CREATE TABLE IF NOT EXISTS sat.usuarios_programas (
 INSERT INTO sat.dependencias (nombre, tipo, es_confidencialidad_especial, activo) VALUES
   ('Vicerrectoría de Evangelización de las Culturas', 'UNIDAD_INTERNA', false, true),
   ('Coordinación de Acompañamiento',                  'UNIDAD_INTERNA', false, true),
-  ('Docentes Asistenciales Unidad Servicios Psicológicos', 'AREA_ATENCION', true, true),
-  ('Psicólogos de Área',                              'AREA_ATENCION', true,  true),
-  ('Coordinador de Servicios Psicológicos',           'AREA_ATENCION', true,  true),
+  ('Unidad de Servicios Psicológicos Leopoldo Mandic', 'AREA_ATENCION', true, true),
+  ('Inclusión y Diversidad',                          'AREA_ATENCION', false, true),
+  ('Unidad de Salud María Goretti',                   'AREA_ATENCION', false, true),
   ('Docentes Tutor',                                  'AREA_ATENCION', false, true),
   ('Dirección de Programas Académicos',               'UNIDAD_INTERNA', false, true),
   ('Coordinación de Especializaciones',               'UNIDAD_INTERNA', false, true),

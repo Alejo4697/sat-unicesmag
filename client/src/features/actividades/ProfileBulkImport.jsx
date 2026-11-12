@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import * as XLSX from "@e965/xlsx";
 import {
   registrarPerfilesMasivo,
-  sincronizarPerfilesInstitucionales,
   validarPerfilesMasivo,
 } from "./participantesApi.js";
 
@@ -184,11 +183,8 @@ function ProfileBulkImport({ onSaved }) {
   const [selectedRows, setSelectedRows] = useState(() => new Set());
   const [confirmRows, setConfirmRows] = useState(() => new Set());
   const [busy, setBusy] = useState(false);
-  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [syncError, setSyncError] = useState("");
-  const [syncMessage, setSyncMessage] = useState("");
   const [manualAdmin, setManualAdmin] = useState({
     identificacion: "",
     nombres: "",
@@ -478,21 +474,6 @@ function ProfileBulkImport({ onSaved }) {
     }
   }
 
-  async function synchronizeInstitutionalProfiles() {
-    setSyncing(true);
-    setSyncError("");
-    setSyncMessage("");
-    try {
-      const response = await sincronizarPerfilesInstitucionales();
-      setSyncMessage(response.mensaje || "La sincronización institucional finalizó correctamente.");
-      onSaved?.();
-    } catch (syncRequestError) {
-      setSyncError(syncRequestError.message || "No se pudo completar la sincronización institucional.");
-    } finally {
-      setSyncing(false);
-    }
-  }
-
   const roleLabel = ROLES.find((item) => item.value === role)?.singular || role;
 
   function selectRole(nextRole) {
@@ -518,38 +499,12 @@ function ProfileBulkImport({ onSaved }) {
         <div>
           <span className="vec-profile-import__eyebrow">GESTIÓN DE PERFILES</span>
           <h2 id="vec-profile-import-title">Perfiles de participantes</h2>
-          <p>Sincroniza los docentes institucionales y carga los perfiles de administrativos o externos que no vienen de esa fuente.</p>
+          <p>Aquí puedes cargar perfiles administrativos y externos desde un archivo.</p>
         </div>
       </div>
 
       {!cargaOpen && error && <div className="auth-error" role="alert">{error}</div>}
       {!cargaOpen && message && <p className="vec-profile-import__message" role="status">{message}</p>}
-
-      <section className="vec-profile-import__sync-panel" aria-labelledby="vec-profile-sync-title">
-        <div className="vec-profile-import__sync-copy">
-          <span className="vec-profile-import__sync-icon" aria-hidden="true"><i className="fas fa-arrows-rotate"></i></span>
-          <div>
-            <h3 id="vec-profile-sync-title">Docentes institucionales</h3>
-            <p>Actualiza docentes desde la base institucional. Esta acción también sincroniza estudiantes, matrículas, facultades, notas y apoyos.</p>
-          </div>
-        </div>
-        <button
-          className="btn btn-primary vec-profile-import__sync-button"
-          type="button"
-          onClick={synchronizeInstitutionalProfiles}
-          disabled={syncing || busy}
-        >
-          <i className={`fas ${syncing ? "fa-spinner fa-spin" : "fa-arrows-rotate"}`} aria-hidden="true"></i>
-          {syncing ? "Sincronizando..." : "Sincronizar datos institucionales"}
-        </button>
-        {syncError && <p className="vec-profile-import__sync-error" role="alert">{syncError}</p>}
-        {syncMessage && <p className="vec-profile-import__sync-message" role="status">{syncMessage}</p>}
-      </section>
-
-      <div className="vec-profile-import__sync-note" role="note">
-        <i className="fas fa-circle-info" aria-hidden="true"></i>
-        <span><strong>Egresados:</strong> la sincronización institucional actual no incluye una fuente de egresados. No se cargan desde Excel para evitar registros desactualizados; se requiere configurar la vista institucional correspondiente.</span>
-      </div>
 
       <h3 className="vec-profile-import__load-title">Carga manual disponible</h3>
       <div className="vec-profile-import__role-shortcuts vec-profile-import__role-shortcuts--limited" role="group" aria-label="Seleccionar rol para importar">
@@ -560,7 +515,7 @@ function ProfileBulkImport({ onSaved }) {
             key={item.value}
             aria-pressed={role === item.value}
             onClick={() => openImporter(item.value)}
-            disabled={busy || syncing}
+            disabled={busy}
           >
             <i className={`fas ${item.icon}`} aria-hidden="true"></i>
             <span>Cargar {item.label.toLowerCase()}</span>

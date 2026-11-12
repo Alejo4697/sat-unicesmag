@@ -124,6 +124,7 @@ router.get("/", async (req, res, next) => {
                 CASE WHEN r.escalada THEN 'Alto' ELSE 'Medio' END AS "nivelRiesgo",
                 r.motivo AS "motivoRemision",
                 r.generada_en AS "fechaRemision",
+                r.actualizado_en AS "fechaRegistro",
                 er.nombre AS estado,
                 r.escalada AS "escalado48h",
                 r.recomendaciones_docente AS "recomendacionesAula"
@@ -262,11 +263,26 @@ const SIN_PROFESIONAL = "Bandeja General / Por Asignar";
 
 // Crear remisión en PostgreSQL
 router.post("/", async (req, res, next) => {
-  const { codigoEstudiante, idRuta, areaDestino, nivelRiesgo, motivoRemision } = req.body;
+  const { codigoEstudiante, idRuta, areaDestino, nivelRiesgo, motivoRemision, fechaManual, fechaRemision } = req.body;
 
   if (!codigoEstudiante || (!idRuta && !areaDestino) || !motivoRemision) {
     return res.status(400).json({ error: "Complete todos los campos obligatorios." });
   }
+
+  const fechaFinalISO = (() => {
+    const fechaRef = fechaManual || fechaRemision;
+    if (fechaRef) {
+      if (typeof fechaRef === "string" && /^\d{4}-\d{2}-\d{2}$/.test(fechaRef)) {
+        const [y, m, d] = fechaRef.split("-").map(Number);
+        const now = new Date();
+        const fechaObj = new Date(y, m - 1, d, now.getHours(), now.getMinutes(), now.getSeconds());
+        return fechaObj.toISOString();
+      }
+      const parsed = new Date(fechaRef);
+      if (!isNaN(parsed.getTime())) return parsed.toISOString();
+    }
+    return new Date().toISOString();
+  })();
 
   // Datos de destino resueltos en el servidor.
   let destino;
@@ -330,6 +346,7 @@ router.post("/", async (req, res, next) => {
   let codigoEstudianteReal = codigoEstudiante;
   let documentoEstudianteFinal = null;
   let programaEstudianteFinal = null;
+  let idProfesionalDestino = null;
 
   try {
     // 1. Obtener estudiante en DB exclusivamente por código estudiantil
@@ -395,7 +412,7 @@ router.post("/", async (req, res, next) => {
         ? req.user.id
         : usuarios[0]?.id_usuarios;
 
-      let idProfesionalDestino = null;
+      idProfesionalDestino = null;
       if (idDependencia) {
         const { rows: profRows } = await query(
           `SELECT u.id_usuarios
@@ -433,7 +450,7 @@ router.post("/", async (req, res, next) => {
       const { rows: insertRem } = await query(
         `INSERT INTO sat.remisiones
           (id_casos, id_dependencias, id_usuarios_profesional, id_usuarios_remitente, id_estados_remision, motivo, generada_en, escalada, actualizado_en)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, NOW())
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
          RETURNING id_remisiones`,
         [
           idCaso,
@@ -442,6 +459,7 @@ router.post("/", async (req, res, next) => {
           idUser,
           idEstadoGenerada,
           motivoRemision,
+          fechaFinalISO,
           nivelRiesgo === "Alto" || nivelRiesgo === "Muy Alto"
         ]
       );
@@ -464,7 +482,8 @@ router.post("/", async (req, res, next) => {
     ...destino,
     nivelRiesgo: nivelRiesgo || "Medio",
     motivoRemision,
-    fechaRemision: new Date().toISOString(),
+    fechaRemision: fechaFinalISO,
+    fechaRegistro: new Date().toISOString(),
     estado: "Generada",
     escalado48h: nivelRiesgo === "Alto" || nivelRiesgo === "Muy Alto",
     recomendacionesAula: ""

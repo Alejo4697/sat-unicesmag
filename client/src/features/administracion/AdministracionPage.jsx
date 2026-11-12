@@ -154,7 +154,7 @@ export default function AdministracionPage() {
   async function handleSincronizar() {
     setSincronizando(true);
     setError("");
-    setMensaje("Conectando con base de datos institucional prod18sep2 y sincronizando registros... Por favor espere.");
+    setMensaje("Conectando con prod18sep2 y sincronizando estudiantes, docentes y egresados... Por favor espere.");
     try {
       const res = await sincronizarAcademico();
       const [uActualizados, syncActualizado] = await Promise.all([
@@ -164,10 +164,17 @@ export default function AdministracionPage() {
       setUsuarios(uActualizados);
       setEstadoSync(syncActualizado);
 
+      if (!res.ok) {
+        setMensaje("");
+        setError(res.mensaje || "La sincronización quedó incompleta. Revisa los resultados e inténtalo nuevamente.");
+        return;
+      }
+
+      const institucional = res.institucional || {};
       avisar(
-        `¡Sincronización exitosa! Se procesaron ${res.estudiantesSincronizados?.toLocaleString()} estudiantes, ` +
-        `${(res.docentes || 0).toLocaleString()} docentes, ${(res.facultades || 0).toLocaleString()} facultades, ` +
-        `${res.calificaciones?.toLocaleString()} calificaciones y se actualizaron los estados institucionales en ${res.duracionSegundos}s.`
+        `${res.mensaje || "Sincronización completada."} ` +
+        `Facultades: ${(institucional.facultades || 0).toLocaleString()}; ` +
+        `calificaciones: ${(institucional.calificaciones || 0).toLocaleString()}.`
       );
     } catch (err) {
       setError(`Error en la sincronización: ${err.message}`);
@@ -319,7 +326,7 @@ export default function AdministracionPage() {
               </span>
             </div>
             <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "4px 0 10px" }}>
-              Sincroniza en 1 clic los estudiantes, docentes, facultades, matrículas activas, notas y estados académicos desde la base de datos institucional.
+              Sincroniza estudiantes, docentes, egresados, facultades, matrículas activas, notas y estados académicos desde las bases institucionales.
             </p>
 
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10, fontSize: "0.8rem" }}>
@@ -328,6 +335,9 @@ export default function AdministracionPage() {
               </div>
               <div style={{ background: "var(--surface-card)", padding: "4px 10px", borderRadius: 6, border: "1px solid var(--border-color)" }}>
                 <strong><i className="fas fa-chalkboard-teacher text-muted"></i> Docentes:</strong> {estadoSync?.metricas?.total_docentes ? Number(estadoSync.metricas.total_docentes).toLocaleString() : "402"}
+              </div>
+              <div style={{ background: "var(--surface-card)", padding: "4px 10px", borderRadius: 6, border: "1px solid var(--border-color)" }}>
+                <strong><i className="fas fa-user-graduate text-muted"></i> Egresados:</strong> {Number(estadoSync?.metricas?.total_egresados || 0).toLocaleString()}
               </div>
               <div style={{ background: "var(--surface-card)", padding: "4px 10px", borderRadius: 6, border: "1px solid var(--border-color)" }}>
                 <strong><i className="fas fa-university text-muted"></i> Facultades:</strong> {estadoSync?.metricas?.total_facultades ? Number(estadoSync.metricas.total_facultades).toLocaleString() : "7"}
@@ -658,10 +668,10 @@ export default function AdministracionPage() {
                   value={formUsuario.rol}
                   onChange={(e) => setFormUsuario({ ...formUsuario, rol: e.target.value })}
                 >
-                  <option value="profesional">Rol Profesionales (Docente Acompañante, USP, etc.)</option>
-                  <option value="directivo">Rol Directivos (Directores / Coordinadores)</option>
-                  <option value="admin">Rol Administrativo</option>
-                  <option value="reporte_actividades">Rol Reporte Actividades</option>
+                  <option value="admin">1. Rol Administrativo</option>
+                  <option value="profesional">2. Rol Profesionales</option>
+                  <option value="directivo">3. Rol Directivos</option>
+                  <option value="reporte_actividades">4. Rol Reporte de Actividades</option>
                 </select>
               </div>
 
@@ -897,19 +907,24 @@ export default function AdministracionPage() {
                     const nuevoRol = e.target.value;
                     const defaultCargo = nuevoRol === "profesional" 
                       ? "Docente Acompañante" 
-                      : (nuevoRol === "directivo" ? "Director de Programa" : "Coordinador de Acompañamiento");
+                      : nuevoRol === "directivo"
+                        ? "Director de Programa"
+                        : nuevoRol === "reporte_actividades"
+                          ? "Reporte de Actividades"
+                          : "Coordinador de Acompañamiento";
                     setFormAcceso({ ...formAcceso, rol: nuevoRol, cargo: defaultCargo });
                   }}
                 >
+                  <option value="admin">1. Rol Administrativo (Coordinador de Acompañamiento, VEC)</option>
                   <option value="profesional">2. Rol Profesionales (Docentes Acompañantes, Tutores, USP, Salud, etc.)</option>
                   <option value="directivo">3. Rol Directivos (Directores de Programa, Coordinadores)</option>
-                  <option value="admin">1. Rol Administrativo (Coordinador Acompañamiento, VEC)</option>
-                  <option value="reporte_actividades">Rol Reporte de Actividades</option>
+                  <option value="reporte_actividades">4. Rol Reporte de Actividades</option>
                 </select>
                 <small className="text-muted" style={{ display: "block", marginTop: 4 }}>
                   {formAcceso.rol === "profesional" && "• Rol Profesionales: Incluye a los Docentes Acompañantes, Tutores, Psicólogos, Salud y Trabajo Social."}
                   {formAcceso.rol === "directivo" && "• Rol Directivos: Filtra los reportes y consultas exclusivamente al programa académico asignado."}
                   {formAcceso.rol === "admin" && "• Rol Administrativo: Acceso total institucional a intervenciones, remisiones, usuarios y reportes."}
+                  {formAcceso.rol === "reporte_actividades" && "• Rol Reporte de Actividades: Acceso al módulo de actividades y sus reportes."}
                 </small>
               </div>
 

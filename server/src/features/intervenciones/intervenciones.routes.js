@@ -116,11 +116,26 @@ router.get("/", async (req, res, next) => {
 
 // Registrar intervención en PostgreSQL
 router.post("/", async (req, res, next) => {
-  const { codigoEstudiante, tipoIntervencion, motivo, resumenAcuerdo, esSensibleVBG, adjuntos, canalAtencion } = req.body;
+  const { codigoEstudiante, tipoIntervencion, motivo, resumenAcuerdo, esSensibleVBG, adjuntos, canalAtencion, fechaManual, fecha } = req.body;
 
   if (!codigoEstudiante || !tipoIntervencion || !motivo || !resumenAcuerdo) {
     return res.status(400).json({ error: "Diligencie todos los campos requeridos (incluido el tipo de intervención)." });
   }
+
+  const fechaAtencionISO = (() => {
+    const fechaRef = fechaManual || fecha;
+    if (fechaRef) {
+      if (typeof fechaRef === "string" && /^\d{4}-\d{2}-\d{2}$/.test(fechaRef)) {
+        const [y, m, d] = fechaRef.split("-").map(Number);
+        const now = new Date();
+        const fechaObj = new Date(y, m - 1, d, now.getHours(), now.getMinutes(), now.getSeconds());
+        return fechaObj.toISOString();
+      }
+      const parsed = new Date(fechaRef);
+      if (!isNaN(parsed.getTime())) return parsed.toISOString();
+    }
+    return new Date().toISOString();
+  })();
 
   try {
     // 1. Validar y obtener tipo de intervención
@@ -204,12 +219,13 @@ router.post("/", async (req, res, next) => {
       const { rows: insertRes } = await query(
         `INSERT INTO sat.intervenciones
           (id_casos, id_tipos_intervencion, id_usuarios, fecha_atencion, descripcion, estado, canal_atencion, es_tutorias, cerrada_en, creado_en, actualizado_en)
-         VALUES ($1, $2, $3, NOW(), $4, 'Pendiente', $5, $6, NULL, NOW(), NOW())
+         VALUES ($1, $2, $3, $4, $5, 'Pendiente', $6, $7, NULL, NOW(), NOW())
          RETURNING id_intervenciones`,
         [
           idCaso,
           idTipo,
           idUsuarioFinal,
+          fechaAtencionISO,
           `${motivo} - ${resumenAcuerdo}`,
           canalAtencion || "Presencial",
           tipoIntervencion.toLowerCase().includes("tutor")
@@ -225,7 +241,7 @@ router.post("/", async (req, res, next) => {
       atendidoPor: req.user?.nombre || "Personal Institucional",
       cargoAtendio: req.user?.cargo || "Acompañamiento",
       idUsuarioAtendio: req.user?.id,
-      fecha: ahora,
+      fecha: fechaAtencionISO,
       fechaRegistro: ahora,
       tipoIntervencion,
       motivo,

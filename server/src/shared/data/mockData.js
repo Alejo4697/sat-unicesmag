@@ -17,7 +17,7 @@ export const MOCK_DATA = {
     {
       id: "profesional",
       nombre: "Rol Profesionales",
-      integrantes: ["Coordinador Paz y Convivencia", "Enfermera San Damián", "Coordinador Pastoral", "Área de Salud María Goretti", "Docentes Asistenciales USP", "Psicólogos de Área", "Trabajo Social", "Unidad de Servicios Psicológicos (USP)", "Coordinador USP", "Consultorios Jurídicos", "Docentes Tutor"],
+      integrantes: ["Coordinador Paz y Convivencia", "Enfermera San Damián", "Coordinador Pastoral", "Unidad de Salud María Goretti", "Inclusión y Diversidad", "Trabajo Social", "Unidad de Servicios Psicológicos (USP)", "Unidad de Servicios Psicológicos Leopoldo Mandic", "Consultorios Jurídicos", "Docentes Tutor"],
       permisos: ["hacer_reportes", "ver_reportes", "editar_reportes", "exportar_reportes", "hacer_intervenciones_area", "atender_remisiones"]
     },
     {

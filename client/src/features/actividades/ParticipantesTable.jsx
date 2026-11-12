@@ -13,6 +13,7 @@ const ROLE_LABELS = {
   ADMINISTRATIVO: "Administrativo",
   EGRESADO: "Egresado",
   EXTERNO: "Externo",
+  POR_CONFIRMAR: "Por confirmar",
 };
 
 function puedeEliminarParticipante(participante) {

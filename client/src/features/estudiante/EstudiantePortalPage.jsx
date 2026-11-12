@@ -1300,13 +1300,13 @@ export default function EstudiantePortalPage() {
               <div style={{ padding: "1rem 1.25rem", borderRadius: "10px", border: "1px solid #e2e8f0", background: "#f8fafc" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.35rem" }}>
                   <i className="fas fa-heart-pulse" style={{ color: "#EF4444", fontSize: "1.1rem" }}></i>
-                  <strong style={{ fontSize: "1rem", color: "#1e293b" }}>Área de Salud María Goretti y Pastoral Universitaria</strong>
+                  <strong style={{ fontSize: "1rem", color: "#1e293b" }}>Unidad de Salud María Goretti y Pastoral Universitaria</strong>
                 </div>
                 <p style={{ margin: "0 0 0.5rem 0", fontSize: "0.875rem", color: "#475569" }}>
                   Primeros auxilios, valoración de salud general, enfermería, actividades de formación integral y bienestar espiritual.
                 </p>
                 <span style={{ fontSize: "0.8rem", color: "#EF4444", fontWeight: 600 }}>
-                  <i className="fas fa-phone"></i> PBX: (2) 724 4434 - Área de Salud
+                  <i className="fas fa-phone"></i> PBX: (2) 724 4434 - Unidad de Salud
                 </span>
               </div>
             </div>

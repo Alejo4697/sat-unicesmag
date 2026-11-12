@@ -63,15 +63,26 @@ export function esUsuarioRestringidoAPrograma(user) {
 
 export function directivoPuedeVerEstudiante(user, estudiante) {
   if (!user) return false;
-  if (user.rol !== "directivo") return true;
+  if (user.rol === "admin") return true;
   if (!estudiante) return false;
 
-  const progEst = estudiante.programa || estudiante.programaEstudiante;
-  const coincide = coincidePrograma(progEst, user.programa);
-  if (!coincide) return false;
-
-  if (estudiante.riesgoGlobal) {
-    return estudiante.riesgoGlobal !== "Bajo";
+  // Si el usuario pertenece a un programa académico restringido (directivo, docente o profesional de programa)
+  if (esUsuarioRestringidoAPrograma(user)) {
+    const progEst = estudiante.programa || estudiante.programaEstudiante;
+    const coincide = coincidePrograma(progEst, user.programa);
+    if (!coincide) return false;
   }
+
+  // Si el perfil es directivo (director de programa / decano), solo ve estudiantes con riesgo
+  if (user.rol === "directivo") {
+    const progEst = estudiante.programa || estudiante.programaEstudiante;
+    const coincide = coincidePrograma(progEst, user.programa);
+    if (!coincide) return false;
+
+    if (estudiante.riesgoGlobal) {
+      return estudiante.riesgoGlobal !== "Bajo";
+    }
+  }
+
   return true;
 }

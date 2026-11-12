@@ -1,0 +1,113 @@
+# ==============================================================================
+# Docker Compose - Orquestación SAT-UNICESMAG
+# Sistema de Alertas Tempranas y Permanencia Estudiantil (Universidad CESMAG)
+# ==============================================================================
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. Base de Datos PostgreSQL
+  # ----------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    container_name: sat-unicesmag-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-sat_unicesmag}
+      POSTGRES_USER: ${DB_USER:-sat_admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-Cesmag2026*Secure!}
+      TZ: America/Bogota
+    ports:
+      - "${HOST_DB_PORT:-5432}:5432"
+    volumes:
+      - sat_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-sat_admin} -d ${DB_NAME:-sat_unicesmag}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - sat_net
+
+  # ----------------------------------------------------------------------------
+  # 2. Servidor Backend API (Express + Node.js)
+  # ----------------------------------------------------------------------------
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: sat-unicesmag-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      CLIENT_ORIGIN: ${CLIENT_ORIGIN:-http://localhost}
+      # Conexión a la base de datos principal SAT
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-sat_unicesmag}
+      DB_USER: ${DB_USER:-sat_admin}
+      DB_PASSWORD: ${DB_PASSWORD:-Cesmag2026*Secure!}
+      # Configuración de Correo Institucional (Notificaciones y OTP)
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-adviser@unicesmag.edu.co}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-"SAT UNICESMAG <adviser@unicesmag.edu.co>"}
+      # Base de Datos Académica Institucional (Sincronización periódica)
+      ACADEMIC_DB_HOST: ${ACADEMIC_DB_HOST:-}
+      ACADEMIC_DB_PORT: ${ACADEMIC_DB_PORT:-5432}
+      ACADEMIC_DB_NAME: ${ACADEMIC_DB_NAME:-}
+      ACADEMIC_DB_USER: ${ACADEMIC_DB_USER:-}
+      ACADEMIC_DB_PASSWORD: ${ACADEMIC_DB_PASSWORD:-}
+    ports:
+      - "4000:4000"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4000/api/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - sat_net
+
+  # ----------------------------------------------------------------------------
+  # 3. Frontend Web SPA (React + Vite + Nginx Reverse Proxy)
+  # ----------------------------------------------------------------------------
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api
+    container_name: sat-unicesmag-web
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "5173:80"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - sat_net
+
+# ------------------------------------------------------------------------------
+# Volúmenes y Redes
+# ------------------------------------------------------------------------------
+volumes:
+  sat_postgres_data:
+    name: sat_postgres_data
+
+networks:
+  sat_net:
+    name: sat_network
+    driver: bridge

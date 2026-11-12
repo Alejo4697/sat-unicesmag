@@ -18,7 +18,7 @@ const TIPOS = [
 ];
 const DETALLES_POR_TIPO = {
   ESTUDIANTE: [{ value: "Estudiante", label: "Estudiante" }],
-  EGRESADO: [{ value: "Egresado no titulado", label: "Egresado" }],
+  EGRESADO: [{ value: "Egresado", label: "Egresado" }],
   COLABORADOR: [{ value: "Docente", label: "Docente" }],
   ADMINISTRATIVO: [{ value: "Administrativo", label: "Administrativo" }],
   EXTERNO: [{ value: "Externo", label: "Externo" }],
@@ -427,6 +427,7 @@ export default function NewParticipantView({ onCancel }) {
   const rolesRegistrados = [...new Set(busqueda.participante?.roles || [])];
   const rolesVerificados = [...new Set(busqueda.participante?.rolesVerificados || [])];
   const rolesExistentes = [...new Set([...rolesRegistrados, ...rolesVerificados])];
+  const sinRolesReconocidos = personaEncontrada && rolesExistentes.length === 0;
   const estudianteSinRegistroInstitucional = tipo === "ESTUDIANTE"
     && !rolesExistentes.includes("ESTUDIANTE");
   const rolExternoIncompatible = rolesExistentes.includes("EXTERNO")
@@ -598,6 +599,13 @@ export default function NewParticipantView({ onCancel }) {
             setTipo("ADMINISTRATIVO");
             return;
           }
+          if (
+            participante.rolesVerificados?.includes("ESTUDIANTE")
+            && tipo !== "ESTUDIANTE"
+          ) {
+            setTipo("ESTUDIANTE");
+            return;
+          }
           const rolesEncontrados = [...new Set([
             ...(participante.roles || []),
             ...(participante.rolesVerificados || []),
@@ -643,6 +651,8 @@ export default function NewParticipantView({ onCancel }) {
             participante,
             mensaje: participante.yaRegistrado
               ? `Encontramos a ${[participante.nombres, participante.apellidos].filter(Boolean).join(" ")}. Ya tiene el rol ${TIPOS.find((item) => item.value === (participante.tipoRegistrado || tipo))?.label || participante.tipoRegistrado || tipo}; puedes inscribirla en otra actividad con ese rol.`
+              : rolesEncontrados.length === 0
+                ? `Encontramos a ${[participante.nombres, participante.apellidos].filter(Boolean).join(" ")} en la base de datos, pero no tiene un rol de participante registrado. Revisa sus datos y selecciona el rol adecuado para continuar.`
               : esRolNuevo
                 ? `Encontramos a ${[participante.nombres, participante.apellidos].filter(Boolean).join(" ")}. Esta persona ya tiene el rol ${rolesEncontradosTexto}.`
                 : `Encontramos a ${[participante.nombres, participante.apellidos].filter(Boolean).join(" ")}. Completamos sus datos para que puedas revisarlos.`,
@@ -1060,22 +1070,21 @@ export default function NewParticipantView({ onCancel }) {
         )}
         {["found", "not-found", "duplicate", "error"].includes(busqueda.status) && (
           <div
-            className={busqueda.status === "error"
-              ? "auth-error vec-participant-status"
-              : "autosave-banner vec-participant-status"}
+            className={`vec-participant-status ${
+              busqueda.status === "error"
+                ? "auth-error"
+                : "autosave-banner"
+            }${personaEncontrada ? " vec-participant-status--found" : ""}${
+              busqueda.status === "not-found" ? " vec-participant-status--not-found" : ""
+            }`}
             role={busqueda.status === "error" ? "alert" : "status"}
-            style={personaEncontrada ? {
-              background: "var(--risk-low-bg)",
-              border: "1px solid var(--risk-low-border)",
-              color: "var(--risk-low-text)",
-            } : undefined}
           >
             <i
               className={`fas ${personaEncontrada ? "fa-check" : busqueda.status === "error" ? "fa-circle-xmark" : "fa-circle-info"} vec-participant-status-icon${personaEncontrada ? " vec-participant-status-icon-success" : ""}`}
               aria-hidden="true"
             />
             <span>{busqueda.status === "not-found" && tipo === "ESTUDIANTE"
-              ? "No encontramos a esta persona en el registro institucional de estudiantes."
+              ? "No encontramos a esta persona en la base de datos."
               : busqueda.mensaje}</span>
             {requiereDecisionDeRol && (
               <div className="vec-participant-role-choice">
@@ -1126,10 +1135,12 @@ export default function NewParticipantView({ onCancel }) {
                 </div>
               </div>
             )}
-            {estudianteSinRegistroInstitucional
+            {(sinRolesReconocidos || estudianteSinRegistroInstitucional)
               && ["not-found", "found"].includes(busqueda.status) && (
               <label className="vec-participant-status__missing-role">
-                <span>Esta persona no tiene un registro institucional de estudiante. Para continuar, selecciona uno de estos roles:</span>
+                <span>{sinRolesReconocidos
+                  ? "Selecciona el rol con el que vas a registrar a esta persona:"
+                  : "Esta persona no tiene un registro institucional de estudiante. Para continuar, selecciona uno de estos roles:"}</span>
                 <select
                   className="form-select"
                   value=""
@@ -1159,6 +1170,11 @@ export default function NewParticipantView({ onCancel }) {
               </span>
             ))}
           </div>
+        )}
+        {busqueda.participante?.tieneRolPorConfirmar && (
+          <p className="text-muted vec-participant-status" role="status">
+            Esta persona tiene una inscripción provisional pendiente de verificación administrativa.
+          </p>
         )}
         {busqueda.participante?.rolesInstitucionales?.length > 0 && (
           <div

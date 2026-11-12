@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   agregarPerfilPorRol,
   actualizarPerfilPorRol,
+  confirmarPerfilPorRol,
   eliminarPersonaParticipanteDefinitivamente,
   eliminarPerfilPorRol,
   getPerfilesPorRol,
@@ -12,6 +13,7 @@ import {
 } from "./rolePresentation.js";
 
 const ROLES = [
+  { value: "POR_CONFIRMAR", label: "Por confirmar", singular: "Por confirmar", icon: "fa-circle-question" },
   { value: "COLABORADOR", label: "Docentes", singular: "Docente", icon: "fa-user-tie" },
   { value: "ADMINISTRATIVO", label: "Administrativos", singular: "Administrativo", icon: "fa-user-gear" },
   { value: "EGRESADO", label: "Egresados", singular: "Egresado", icon: "fa-user-graduate" },
@@ -24,7 +26,15 @@ const ROLE_LABELS = {
   COLABORADOR: "Docente",
   ADMINISTRATIVO: "Administrativo",
   EXTERNO: "Externo",
+  POR_CONFIRMAR: "Por confirmar",
 };
+const CONFIRMED_ROLES = [
+  ["ESTUDIANTE", "Estudiante"],
+  ["EGRESADO", "Egresado"],
+  ["COLABORADOR", "Docente"],
+  ["ADMINISTRATIVO", "Administrativo"],
+  ["EXTERNO", "Externo"],
+];
 
 const EMPTY_FORM = {
   nombres: "",
@@ -147,6 +157,8 @@ export default function RoleProfilesManager({ refreshKey = 0, onChanged }) {
   const [addRoleTarget, setAddRoleTarget] = useState(null);
   const [addRoleValue, setAddRoleValue] = useState("");
   const [addingRole, setAddingRole] = useState(false);
+  const [resolveRoleValues, setResolveRoleValues] = useState({});
+  const [resolvingId, setResolvingId] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [reload, setReload] = useState(0);
@@ -247,6 +259,23 @@ export default function RoleProfilesManager({ refreshKey = 0, onChanged }) {
       setError(requestError.message || "No se pudo agregar el rol.");
     } finally {
       setAddingRole(false);
+    }
+  }
+
+  async function confirmPendingRole(person) {
+    const nextRole = resolveRoleValues[person.id] || "COLABORADOR";
+    setResolvingId(person.id);
+    setError("");
+    setNotice("");
+    try {
+      const result = await confirmarPerfilPorRol(person.id, nextRole);
+      setNotice(result.mensaje || "El rol provisional fue confirmado.");
+      setReload((value) => value + 1);
+      onChanged?.();
+    } catch (requestError) {
+      setError(requestError.message || "No se pudo confirmar el rol.");
+    } finally {
+      setResolvingId("");
     }
   }
 
@@ -486,6 +515,36 @@ export default function RoleProfilesManager({ refreshKey = 0, onChanged }) {
                       <small>{Number(person.totalInscripciones) === 1 ? "actividad" : "actividades"}</small>
                     </td>
                     <td data-label="¿Qué deseas hacer?">
+                      {person.rol === "POR_CONFIRMAR" ? (
+                        <div className="vec-role-profiles__actions">
+                          <label className="sr-only" htmlFor={`confirm-role-${person.id}`}>
+                            Rol confirmado para {person.nombres} {person.apellidos}
+                          </label>
+                          <select
+                            id={`confirm-role-${person.id}`}
+                            className="form-select"
+                            value={resolveRoleValues[person.id] || "COLABORADOR"}
+                            onChange={(event) => setResolveRoleValues((current) => ({
+                              ...current,
+                              [person.id]: event.target.value,
+                            }))}
+                            disabled={resolvingId === person.id}
+                          >
+                            {CONFIRMED_ROLES.map(([value, label]) => (
+                              <option value={value} key={value}>{label}</option>
+                            ))}
+                          </select>
+                          <button
+                            className="btn btn-primary btn-sm"
+                            type="button"
+                            onClick={() => confirmPendingRole(person)}
+                            disabled={resolvingId === person.id}
+                          >
+                            <i className={`fas ${resolvingId === person.id ? "fa-spinner fa-spin" : "fa-circle-check"}`} aria-hidden="true"></i>
+                            Confirmar rol
+                          </button>
+                        </div>
+                      ) : (
                       <div className="vec-role-profiles__actions">
                         {availableRolesFor(person).length > 0 && (
                           <button
@@ -533,7 +592,8 @@ export default function RoleProfilesManager({ refreshKey = 0, onChanged }) {
                           <span>{person.tieneRolEstudiante ? "Quitar rol" : "Borrar persona"}</span>
                         </button>
                       </div>
-                      {Number(person.totalInscripciones) > 0 && (
+                      )}
+                      {person.rol !== "POR_CONFIRMAR" && Number(person.totalInscripciones) > 0 && (
                         <small className="vec-role-profiles__delete-hint">
                           <i className="fas fa-circle-info" aria-hidden="true"></i>
                           {person.tieneRolEstudiante
@@ -549,7 +609,15 @@ export default function RoleProfilesManager({ refreshKey = 0, onChanged }) {
               </tbody>
             </table>
           </div>
-          {profiles.length === 500 && <p className="vec-role-profiles__limit">Se muestran hasta 500 perfiles. Usa la búsqueda para encontrar otros.</p>}
+          {!search.trim() ? (
+            <p className="vec-role-profiles__limit">
+              Se muestran los primeros 5 perfiles. Usa el buscador para encontrar a las demás personas.
+            </p>
+          ) : profiles.length === 500 ? (
+            <p className="vec-role-profiles__limit">
+              Se muestran hasta 500 coincidencias. Refina la búsqueda para encontrar a la persona que buscas.
+            </p>
+          ) : null}
         </>
       )}
 

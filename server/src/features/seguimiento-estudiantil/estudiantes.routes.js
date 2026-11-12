@@ -596,7 +596,7 @@ router.get("/:id/timeline", async (req, res, next) => {
     if (!estudiante || estudiante.multiple) {
       return res.json([]);
     }
-    if (req.user.rol === "directivo" && !directivoPuedeVerEstudiante(req.user, estudiante)) {
+    if (!directivoPuedeVerEstudiante(req.user, estudiante)) {
       return res.status(403).json({ error: "No tiene acceso a la información de este estudiante." });
     }
     const codigo = estudiante.codigo || req.params.id;

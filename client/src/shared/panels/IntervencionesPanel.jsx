@@ -35,7 +35,23 @@ const listEstudiantes = () => apiFetch("/estudiantes");
 const listTiposIntervencion = () => apiFetch("/intervenciones/tipos");
 
 const DRAFT_KEY = "SAT_UNICESMAG_DRAFT_INTERVENCION";
-const ESTADO_INICIAL = { codigoEstudiante: "", tipoIntervencion: "", motivo: "", resumenAcuerdo: "", esSensibleVBG: false };
+
+function obtenerFechaHoy() {
+  const hoy = new Date();
+  const year = hoy.getFullYear();
+  const month = String(hoy.getMonth() + 1).padStart(2, "0");
+  const day = String(hoy.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+const ESTADO_INICIAL = {
+  codigoEstudiante: "",
+  tipoIntervencion: "",
+  fechaManual: obtenerFechaHoy(),
+  motivo: "",
+  resumenAcuerdo: "",
+  esSensibleVBG: false
+};
 
 function leerBorrador() {
   try {
@@ -290,24 +306,47 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
               </div>
             )}
 
-            <div className="form-group">
-              <label className="form-label" htmlFor="intervencion-tipo">
-                Tipo de Intervención
-              </label>
-              <select
-                id="intervencion-tipo"
-                className="form-select"
-                required
-                value={form.tipoIntervencion || ""}
-                onChange={(e) => setForm({ ...form, tipoIntervencion: e.target.value })}
-              >
-                <option value="">-- Seleccione el tipo --</option>
-                {tipos.map((t) => (
-                  <option key={t.id} value={t.nombre}>
-                    {t.nombre}
-                  </option>
-                ))}
-              </select>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gap: "1rem",
+                marginBottom: "1rem"
+              }}
+            >
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" htmlFor="intervencion-tipo">
+                  Tipo de Intervención
+                </label>
+                <select
+                  id="intervencion-tipo"
+                  className="form-select"
+                  required
+                  value={form.tipoIntervencion || ""}
+                  onChange={(e) => setForm({ ...form, tipoIntervencion: e.target.value })}
+                >
+                  <option value="">-- Seleccione el tipo --</option>
+                  {tipos.map((t) => (
+                    <option key={t.id} value={t.nombre}>
+                      {t.nombre}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" htmlFor="intervencion-fecha">
+                  Fecha de la Intervención (Manual)
+                </label>
+                <input
+                  type="date"
+                  id="intervencion-fecha"
+                  className="form-control"
+                  required
+                  value={form.fechaManual}
+                  onChange={(e) => setForm({ ...form, fechaManual: e.target.value })}
+                />
+              </div>
             </div>
 
             <div className="form-group">
@@ -459,15 +498,15 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
                         </div>
                       </div>
 
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, fontSize: "0.75rem", color: "var(--text-muted)", margin: "4px 0" }}>
-                        <span>
-                          <i className="far fa-clock"></i> Atención: {formatDateTime(i.fecha)}
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 14, fontSize: "0.78rem", color: "var(--text-muted)", margin: "6px 0" }}>
+                        <span title="Fecha real de la intervención (ingresada manualmente)" style={{ color: "#002855", fontWeight: 600 }}>
+                          <i className="far fa-calendar-alt" style={{ marginRight: 4, color: "#E06D53" }}></i> Atención (Manual): {formatDateTime(i.fecha)}
+                        </span>
+                        <span title="Fecha y hora en que se guardó en el sistema" style={{ color: "#64748b" }}>
+                          <i className="fas fa-desktop" style={{ marginRight: 4 }}></i> Sistema: {formatDateTime(i.fechaRegistro)}
                         </span>
                         <span>
-                          <i className="fas fa-clipboard-check"></i> Registro: {formatDateTime(i.fechaRegistro)}
-                        </span>
-                        <span>
-                          <i className="fas fa-tag"></i> {i.tipoIntervencion || "—"}
+                          <i className="fas fa-tag" style={{ marginRight: 4 }}></i> {i.tipoIntervencion || "—"}
                         </span>
                       </div>
 
@@ -569,7 +608,18 @@ export default function IntervencionesPanel({ codigoEstudiante = null, nombreEst
                         <br />
                         <small className="text-muted">{i.cargoAtendio}</small>
                       </td>
-                      <td>{formatDateTime(i.fecha)}</td>
+                      <td>
+                        <div title="Fecha de atención (manual)" style={{ fontWeight: 600, color: "#002855" }}>
+                          <i className="far fa-calendar-alt" style={{ marginRight: 4, color: "#E06D53" }}></i>
+                          {formatDateTime(i.fecha)}
+                        </div>
+                        {i.fechaRegistro && (
+                          <div style={{ fontSize: "0.7rem", color: "#64748b", marginTop: "2px" }} title="Fecha y hora de registro en el sistema">
+                            <i className="fas fa-desktop" style={{ marginRight: 3, fontSize: "0.68rem" }}></i>
+                            Sistema: {formatDateTime(i.fechaRegistro)}
+                          </div>
+                        )}
+                      </td>
                       <td>
                         {i.tipoIntervencion || <span className="text-muted">—</span>}
                         {i.esSensibleVBG && (

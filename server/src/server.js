@@ -9,6 +9,7 @@ dotenv.config();
 import { createApp } from "./app.js";
 import { setupTables } from "./shared/db/setup_tables.js";
 import { iniciarSincronizadorAutomatico } from "./shared/services/autoSyncScheduler.js";
+import { iniciarLimpiezaActividadesCanceladas } from "./features/actividades/limpiezaActividadesCanceladas.js";
 
 const PORT = process.env.PORT || 4000;
 const app = createApp();
@@ -19,4 +20,5 @@ app.listen(PORT, () => {
   console.log(`[OK] API SAT-UNICESMAG escuchando en http://localhost:${PORT}`);
   // Iniciar servicio de sincronización automática en segundo plano (cada 30 min y por detección de cambios)
   iniciarSincronizadorAutomatico(30);
+  iniciarLimpiezaActividadesCanceladas();
 });

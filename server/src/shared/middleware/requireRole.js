@@ -18,9 +18,9 @@ import { rolesParaModulo } from "../security/permisosModulos.js";
 import { query } from "../db/pool.js";
 
 function normalizarRol(rol) {
-  if (!rol) return "admin";
+  if (!rol) return "sin_rol";
   const r = String(rol).toLowerCase().trim();
-  if (r === "administrador" || r === "coordinador") return "admin";
+  if (r === "administrador" || r === "coordinador" || r === "admin") return "admin";
   if (r === "docente" || r === "docente_permanencia") return "directivo";
   if (r === "profesional_asistencial") return "profesional";
   return r;
@@ -66,7 +66,7 @@ export async function identifyUser(req, res, next) {
               u.correo_institucional AS email,
               COALESCE(
                 LOWER(r.nombre),
-                CASE WHEN doc_u.id_docentes IS NOT NULL THEN 'profesional' ELSE 'admin' END
+                CASE WHEN doc_u.id_docentes IS NOT NULL THEN 'profesional' ELSE 'funcionario' END
               ) AS rol,
               COALESCE(u.cargo, doc_u.tipo_vinculo, 'Funcionario Institucional') AS cargo,
               d.nombre AS dependencia,
@@ -129,7 +129,7 @@ export async function identifyUser(req, res, next) {
     }
   }
 
-  // 2. Fallback temporal por header x-user-id
+  // 2. Fallback por header x-user-id validado contra sat.usuarios en BD
   if (legacyUserId) {
     try {
       const { rows: userRows } = await query(`

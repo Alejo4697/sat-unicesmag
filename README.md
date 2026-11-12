@@ -209,7 +209,11 @@ por-dispositivo, como el borrador de intervenciones):
   estudiantes, usuarios o docentes. La migración
   `server/src/features/actividades/administracion_actividades.sql` extiende
   `sat.actividades_vec` y crea su auditoría; se aplica con
-  `npm --prefix server run db:actividades`. Los perfiles de colaboradores,
+  `npm --prefix server run db:actividades`. La misma migración prepara la
+  limpieza automática diaria de actividades canceladas: las elimina de forma
+  permanente, junto con sus registros asociados, después de 30 días. Las
+  actividades que ya estaban canceladas al aplicar la migración empiezan ese
+  plazo desde la fecha de aplicación. Los perfiles de colaboradores,
   egresados y externos se mantienen en tablas separadas vinculadas a
   `sat.participantes_vec`; los docentes se reconocen desde `sat.docentes` y los
   roles institucionales activos, y `db:actividades` los registra como perfiles
@@ -224,14 +228,21 @@ por-dispositivo, como el borrador de intervenciones):
   relaciona encabezados flexibles sin exigir una plantilla fija y permite
   asignar manualmente las columnas si el sistema no reconoce sus nombres.
   Se usa un único rol para todo el archivo.
+  El rol `reporte_actividades` tiene acceso de solo lectura al Resumen,
+  consulta de actividades, asistencia, apoyos y reportes; no puede crear,
+  modificar o eliminar registros, inscribir participantes ni confirmar
+  asistencia. La API bloquea también sus solicitudes de escritura.
   La selección de filas controla exactamente qué personas se guardan. Esta
   carga crea o vincula perfiles VEC en sus tablas de rol sin inscribir personas
   en actividades; antes de agregar un rol a una persona ya registrada solicita
   confirmación explícita. Los roles repetidos y los conflictos de exclusividad
-  de Externo se omiten. Los docentes se actualizan con la sincronización
-  institucional existente, que también actualiza estudiantes, matrículas,
-  facultades, notas y apoyos. Los egresados no se importan desde Excel ni se
-  sincronizan hasta configurar una vista institucional de origen. El mismo
+  de Externo se omiten. El botón de sincronización de Usuario y parámetros
+  sincroniza docentes y estudiantes con la sincronización institucional existente
+  (incluye matrículas, facultades, notas y apoyos) y actualiza egresados desde
+  `public.vista_egresados`: agrupa filas por identificación, registra o vincula
+  personas y perfiles VEC sin inscribirlas
+  en actividades, completa datos vacíos sin sobrescribir los existentes y omite
+  conflictos con el rol Externo. El mismo
   Resumen ofrece una lista consultable por rol
   (Egresado, Colaborador o Externo), con búsqueda por nombre, documento o
   correo y acciones para editar o eliminar perfiles. La ficha permite actualizar
@@ -413,3 +424,72 @@ si hace falta un valor por defecto, que sea uno de desarrollo inofensivo.
 
 Si prefieres correrlos por separado: `npm run dev:server` y
 `npm run dev:client` en dos terminales.
+
+
+---
+
+## Despliegue y Empaquetado con Docker
+
+El sistema está completamente empaquetado para despliegue contenerizado mediante **Docker** y **Docker Compose**, integrando Base de Datos (PostgreSQL 16), Servidor Backend (Node.js 20 Express) y Frontend de alto rendimiento (Nginx + React SPA).
+
+### Arquitectura de Contenedores
+
+| Servicio | Contenedor | Imagen Base | Puerto Expuesto | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| **`db`** | `sat-unicesmag-db` | `postgres:16-alpine` | `5432:5432` | Base de datos PostgreSQL con volumen persistente (`sat_postgres_data`). |
+| **`server`** | `sat-unicesmag-api` | `node:20-alpine` | `4000:4000` | API REST Express, servicios de sincronización y envío de correo SMTP. |
+| **`client`** | `sat-unicesmag-web` | `nginx:alpine` | `80:80`, `5173:80` | Frontend estático compilado con compresión Gzip y Proxy Inverso `/api/`. |
+
+---
+
+### Pasos Rápidos de Despliegue
+
+1. **Crear archivo de variables de entorno:**
+   ```bash
+   cp .env.docker.example .env
+   ```
+   *(Ajusta contraseñas o credenciales SMTP de ser necesario en `.env`)*
+
+2. **Compilar y levantar todos los contenedores en segundo plano:**
+   ```bash
+   docker compose up -d --build
+   ```
+
+3. **Acceder a la aplicación:**
+   - **Frontend Web:** Abre en tu navegador `http://localhost` o `http://localhost:5173`
+   - **API Backend:** `http://localhost:4000/api/health`
+   - **Base de Datos:** `localhost:5432` (Usuario: `sat_admin`)
+
+---
+
+### Comandos Útiles de Administración en Docker
+
+- **Ver el estado de los contenedores:**
+  ```bash
+  docker compose ps
+  ```
+
+- **Monitorear los registros (logs) en tiempo real:**
+  ```bash
+  docker compose logs -f
+  # O solo del servidor:
+  docker compose logs -f server
+  ```
+
+- **Ejecutar migraciones o semillas de base de datos dentro del contenedor:**
+  ```bash
+  docker compose exec server npm run db:seed
+  docker compose exec server npm run db:matriz
+  docker compose exec server npm run db:permisos
+  ```
+
+- **Detener los servicios sin borrar datos:**
+  ```bash
+  docker compose down
+  ```
+
+- **Detener y reiniciar reconstruyendo imágenes limpias:**
+  ```bash
+  docker compose down
+  docker compose up -d --build
+  ```

@@ -24,12 +24,6 @@ export function getParticipantes({ limite = 100, busqueda = "" } = {}) {
   return apiFetch(`/actividades/participantes?${params.toString()}`);
 }
 
-export function sincronizarPerfilesInstitucionales() {
-  return apiFetch("/actividades/participantes/sincronizacion-institucional", {
-    method: "POST",
-  });
-}
-
 export function eliminarPersonaParticipanteDefinitivamente(
   idPerfil,
   confirmarIdentificacion,
@@ -270,6 +264,16 @@ export function actualizarPerfilPorRol(id, perfil) {
     {
       method: "PUT",
       body: perfil,
+    },
+  );
+}
+
+export function confirmarPerfilPorRol(id, rol) {
+  return apiFetch(
+    `/actividades/participantes/perfiles/roles/${encodeURIComponent(id)}/confirmar`,
+    {
+      method: "PUT",
+      body: { rol },
     },
   );
 }

@@ -27,7 +27,18 @@ export function createApp() {
   const app = express();
 
   app.use(
-    cors({ origin: process.env.CLIENT_ORIGIN || "http://localhost:5173" }),
+    cors({
+      origin: true, // Permite dinámicamente cualquier origen (localhost, IPs de red local, túneles como loca.lt)
+      credentials: true,
+      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      allowedHeaders: [
+        "Content-Type",
+        "Authorization",
+        "x-user-id",
+        "Bypass-Tunnel-Reminder",
+        "bypass-tunnel-reminder"
+      ]
+    }),
   );
   app.use(express.json({ limit: "2mb" }));
 

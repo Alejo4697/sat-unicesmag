@@ -184,7 +184,7 @@ export default function EstudianteLoginPage() {
         codigo: codigoCompleto,
       });
 
-      iniciarSesionComo(resp.usuario);
+      iniciarSesionComo(resp.usuario, resp.token);
       navigate("/estudiante/portal");
     } catch (err) {
       setError(err.message || "Código inválido o expirado.");

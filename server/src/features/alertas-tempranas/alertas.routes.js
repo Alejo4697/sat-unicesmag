@@ -67,6 +67,7 @@ router.get("/", async (req, res, next) => {
           nivelRiesgo: r.fallas >= 12 ? "Alto" : "Medio",
           descripcion: `Acumula ${r.fallas} inasistencias en la asignatura "${r.materia}" en el periodo 2026-1.`,
           fechaCreacion: r.actualizado_en ? new Date(r.actualizado_en).toISOString() : new Date().toISOString(),
+          fechaRegistro: r.actualizado_en ? new Date(r.actualizado_en).toISOString() : new Date().toISOString(),
           creador: "Sistema de Alertas Tempranas (Automático)",
           estado: "Abierta",
           esVBG: false
@@ -174,6 +175,7 @@ router.post("/", async (req, res, next) => {
         }
         return new Date().toISOString();
       })(),
+      fechaRegistro: new Date().toISOString(),
       creador: `${req.user.nombre} (${req.user.cargo})`,
       estado: "Abierta",
       esVBG: tipo.includes("VBG") || tipo.includes("Género")

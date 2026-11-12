@@ -28,6 +28,7 @@ import { Router } from "express";
 import { MOCK_DATA } from "../../shared/data/mockData.js";
 import { identifyUser, requireModule } from "../../shared/middleware/requireRole.js";
 import { sanitizarIntervencion } from "../../shared/security/vbg.js";
+import { esUsuarioRestringidoAPrograma, coincidePrograma } from "../../shared/security/alcanceDirectivo.js";
 
 const router = Router();
 
@@ -52,17 +53,26 @@ function datosEstudiante(estudiante, codigo) {
  * Construye el predicado de filtrado a partir del query string.
  * Una fila sin estudiante identificable solo pasa si no hay filtros.
  */
-function filtroDesdeQuery(query) {
+function filtroDesdeQuery(query, user) {
   const periodo = (query.periodo || TODOS).trim();
-  const programa = (query.programa || TODOS).trim();
+  let programa = (query.programa || TODOS).trim();
   const semestre = (query.semestre || TODOS).trim();
   const nivelRiesgo = (query.nivelRiesgo || TODOS).trim();
+
+  const esRestringido = esUsuarioRestringidoAPrograma(user);
+  if (esRestringido && user?.programa) {
+    programa = user.programa;
+  }
+
   const hayFiltros = !!(periodo || programa || semestre || nivelRiesgo);
 
   return (estudiante) => {
     if (!estudiante) return !hayFiltros;
+    if (esRestringido && user?.programa && !coincidePrograma(estudiante.programa, user.programa)) {
+      return false;
+    }
     if (periodo && estudiante.periodo !== periodo) return false;
-    if (programa && estudiante.programa !== programa) return false;
+    if (programa && !coincidePrograma(estudiante.programa, programa)) return false;
     if (semestre && String(estudiante.semestre) !== semestre) return false;
     if (nivelRiesgo && estudiante.riesgoGlobal !== nivelRiesgo) return false;
     return true;
@@ -83,9 +93,14 @@ router.get("/", (req, res) => {
 // Opciones reales de la barra de filtros (antes estaban quemadas en el JSX).
 router.get("/filtros", (req, res) => {
   const est = MOCK_DATA.estudiantes;
+  const esRestringido = esUsuarioRestringidoAPrograma(req.user);
+  const programasDisponibles = esRestringido && req.user?.programa
+    ? [req.user.programa]
+    : unicos(est.map((e) => e.programa)).sort();
+
   res.json({
     periodos: unicos(est.map((e) => e.periodo)).sort().reverse(),
-    programas: unicos(est.map((e) => e.programa)).sort(),
+    programas: programasDisponibles,
     semestres: unicos(est.map((e) => e.semestre)).sort((a, b) => a - b),
     nivelesRiesgo: ["Muy Alto", "Alto", "Medio", "Bajo"].filter((n) =>
       est.some((e) => e.riesgoGlobal === n)
@@ -94,7 +109,7 @@ router.get("/filtros", (req, res) => {
 });
 
 router.get("/snies", (req, res) => {
-  const pasa = filtroDesdeQuery(req.query);
+  const pasa = filtroDesdeQuery(req.query, req.user);
   const filas = MOCK_DATA.estudiantes.filter(pasa).map((e) => ({
     codigoIES: 1728,
     periodo: e.periodo,
@@ -113,7 +128,7 @@ router.get("/snies", (req, res) => {
 });
 
 router.get("/intervenciones", (req, res) => {
-  const pasa = filtroDesdeQuery(req.query);
+  const pasa = filtroDesdeQuery(req.query, req.user);
   const filas = MOCK_DATA.intervenciones
     .map((i) => ({ i, e: estudiantePorCodigo(i.codigoEstudiante) }))
     .filter(({ e }) => pasa(e))
@@ -136,7 +151,7 @@ router.get("/intervenciones", (req, res) => {
 });
 
 router.get("/remisiones", (req, res) => {
-  const pasa = filtroDesdeQuery(req.query);
+  const pasa = filtroDesdeQuery(req.query, req.user);
   const filas = MOCK_DATA.remisiones
     .map((r) => ({ r, e: estudiantePorCodigo(r.codigoEstudiante) }))
     .filter(({ e }) => pasa(e))

@@ -12,6 +12,7 @@
 import { Router } from "express";
 import crypto from "crypto";
 import { query } from "../../shared/db/pool.js";
+import { identifyUser } from "../../shared/middleware/requireRole.js";
 import { enviarCorreoOtp } from "../../shared/services/emailService.js";
 import { INSTRUMENTO_ITEMS, DIM_NOMBRES, evaluarInstrumento } from "../caracterizacion/instrumento.js";
 import { MOCK_DATA } from "../../shared/data/mockData.js";
@@ -447,9 +448,42 @@ router.post("/verificar-otp", async (req, res, next) => {
       cargo: "Estudiante Activo"
     };
 
+    // 4. Generar token criptográfico y registrar en sat.sesiones
+    const rawToken = crypto.randomBytes(32).toString("hex");
+    const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+    const expiraEn = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 horas
+
+    const ip = req.ip || req.socket?.remoteAddress || null;
+    const userAgent = req.headers["user-agent"] || "SAT Portal Estudiante";
+
+    if (esUuid) {
+      try {
+        await query(`
+          INSERT INTO sat.sesiones (
+            id_estudiantes,
+            token_sesion,
+            ip_origen,
+            user_agent,
+            iniciada_en,
+            expirada_en,
+            ultimo_acceso_en
+          ) VALUES ($1, $2, $3, $4, NOW(), $5, NOW())
+        `, [
+          estudiante.id_estudiantes,
+          tokenHash,
+          (ip === "::1" || ip === "127.0.0.1") ? "127.0.0.1" : (ip ? ip.split(",")[0].trim() : null),
+          userAgent,
+          expiraEn
+        ]);
+      } catch (sesErr) {
+        console.warn("No se pudo registrar la sesión del estudiante en BD:", sesErr.message);
+      }
+    }
+
     res.json({
       ok: true,
       mensaje: "Autenticación exitosa.",
+      token: rawToken,
       usuario: usuarioEstudiante
     });
   } catch (err) {
@@ -460,8 +494,8 @@ router.post("/verificar-otp", async (req, res, next) => {
 // --------------------------------------------------------------------------
 // 3. GET /estado - Consultar elegibilidad y estado/resultado de encuesta para el estudiante
 // --------------------------------------------------------------------------
-router.get("/estado", async (req, res, next) => {
-  const userId = req.headers["x-user-id"];
+router.get("/estado", identifyUser, async (req, res, next) => {
+  const userId = req.user?.id || req.user?.codigo || req.headers["x-user-id"];
   if (!userId) {
     return res.status(401).json({ error: "No autenticado. Inicie sesión nuevamente." });
   }
@@ -656,8 +690,8 @@ router.get("/estado", async (req, res, next) => {
 // --------------------------------------------------------------------------
 // 4. POST /guardar-encuesta - Guardar respuestas oficiales del estudiante
 // --------------------------------------------------------------------------
-router.post("/guardar-encuesta", async (req, res, next) => {
-  const userId = req.headers["x-user-id"];
+router.post("/guardar-encuesta", identifyUser, async (req, res, next) => {
+  const userId = req.user?.id || req.user?.codigo || req.headers["x-user-id"];
   const { respuestas } = req.body;
 
   if (!userId) {

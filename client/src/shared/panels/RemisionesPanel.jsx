@@ -19,7 +19,7 @@
      1) Tipo de apoyo (Apoyo 1..5)
      2) Servicio / proyecto, agrupado por programa
      -> la oficina y el profesional responsable los deduce el servidor.
-   La opción "Otra área (remisión directa)" solo lista las áreas activas que
+   La opción "Remisión directa a áreas VEC" solo lista las áreas activas que
    no tienen rutas en la matriz (p. ej. Consultorios Jurídicos).
    ========================================================================== */
 
@@ -28,6 +28,7 @@ import { useSearchParams } from "react-router-dom";
 import { apiFetch } from "../api/client.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { riskBadgeClass } from "../utils/risk.js";
+import { formatDateTime } from "../utils/formatDateTime.js";
 
 const listRemisiones = () => apiFetch("/remisiones");
 const crearRemision = (data) => apiFetch("/remisiones", { method: "POST", body: data });
@@ -42,12 +43,21 @@ const listRutasRemision = () => apiFetch("/remisiones/rutas");
 
 const DIRECTA = "directa";
 
+function obtenerFechaHoy() {
+  const hoy = new Date();
+  const year = hoy.getFullYear();
+  const month = String(hoy.getMonth() + 1).padStart(2, "0");
+  const day = String(hoy.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 const ESTADO_INICIAL_FORM = {
   codigoEstudiante: "",
   tipoApoyo: "",
   idRuta: "",
   areaDestino: "",
   nivelRiesgo: "Medio",
+  fechaManual: obtenerFechaHoy(),
   motivoRemision: ""
 };
 
@@ -233,6 +243,7 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
         codigoEstudiante: codigo,
         nivelRiesgo: form.nivelRiesgo,
         motivoRemision: form.motivoRemision,
+        fechaManual: form.fechaManual,
         ...(esDirecta ? { areaDestino: form.areaDestino } : { idRuta: form.idRuta })
       };
       const nueva = await crearRemision(payload);
@@ -586,7 +597,7 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
                     Apoyo {t.numero}: {t.nombre}
                   </option>
                 ))}
-                {areasDirectas.length > 0 && <option value={DIRECTA}>Otra área (remisión directa)</option>}
+                {areasDirectas.length > 0 && <option value={DIRECTA}>Remisión directa a áreas VEC</option>}
               </select>
             </div>
 
@@ -653,22 +664,45 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
               </div>
             )}
 
-            <div className="form-group">
-              <label className="form-label" htmlFor="remision-riesgo">
-                Nivel de Riesgo del Caso
-              </label>
-              <select
-                id="remision-riesgo"
-                className="form-select"
-                required
-                value={form.nivelRiesgo}
-                onChange={(e) => setForm({ ...form, nivelRiesgo: e.target.value })}
-              >
-                <option value="Medio">Medio</option>
-                <option value="Alto">Alto (Escalamiento en 48h hábiles)</option>
-                <option value="Muy Alto">Muy Alto (Atención Prioritaria)</option>
-                <option value="Bajo">Bajo</option>
-              </select>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gap: "1rem",
+                marginBottom: "1rem"
+              }}
+            >
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" htmlFor="remision-riesgo">
+                  Nivel de Riesgo del Caso
+                </label>
+                <select
+                  id="remision-riesgo"
+                  className="form-select"
+                  required
+                  value={form.nivelRiesgo}
+                  onChange={(e) => setForm({ ...form, nivelRiesgo: e.target.value })}
+                >
+                  <option value="Medio">Medio</option>
+                  <option value="Alto">Alto (Escalamiento en 48h hábiles)</option>
+                  <option value="Muy Alto">Muy Alto (Atención Prioritaria)</option>
+                  <option value="Bajo">Bajo</option>
+                </select>
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" htmlFor="remision-fecha">
+                  Fecha de la Remisión (Manual)
+                </label>
+                <input
+                  type="date"
+                  id="remision-fecha"
+                  className="form-control"
+                  required
+                  value={form.fechaManual}
+                  onChange={(e) => setForm({ ...form, fechaManual: e.target.value })}
+                />
+              </div>
             </div>
 
             <div className="form-group">
@@ -797,6 +831,18 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
                         <span><i className="fas fa-barcode"></i> Cód: <strong>{r.codigoEstudiante}</strong></span>
                         {r.documentoEstudiante && (
                           <span><i className="fas fa-id-card"></i> Doc: <strong>{r.documentoEstudiante}</strong></span>
+                        )}
+                        {r.fechaRemision && (
+                          <span title="Fecha de la remisión (manual)" style={{ color: "#002855", fontWeight: 600 }}>
+                            <i className="far fa-calendar-alt" style={{ color: "#E06D53", marginRight: 3 }}></i>
+                            Remisión: {formatDateTime(r.fechaRemision)}
+                          </span>
+                        )}
+                        {r.fechaRegistro && (
+                          <span title="Fecha y hora de registro en el sistema" style={{ color: "#64748b" }}>
+                            <i className="fas fa-desktop" style={{ marginRight: 3 }}></i>
+                            Sistema: {formatDateTime(r.fechaRegistro)}
+                          </span>
                         )}
                       </div>
                       {r.programaEstudiante && (
@@ -939,6 +985,21 @@ export default function RemisionesPanel({ codigoEstudiante = null, nombreEstudia
                 <strong style={{ color: "#002855" }}>{modalRemision.estado || "Generada"}</strong>. Solo la persona o área receptora tiene permisos para modificar el estado y registrar recomendaciones de retorno al aula.
               </div>
             )}
+
+            <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", fontSize: "0.83rem", color: "#64748b", marginBottom: "0.5rem" }}>
+              {modalRemision.fechaRemision && (
+                <span title="Fecha real de la remisión (manual)">
+                  <i className="far fa-calendar-alt" style={{ marginRight: 4, color: "#E06D53" }}></i>
+                  <strong style={{ color: "#002855" }}>Remisión (Manual):</strong> {formatDateTime(modalRemision.fechaRemision)}
+                </span>
+              )}
+              {modalRemision.fechaRegistro && (
+                <span title="Fecha y hora de registro en el sistema">
+                  <i className="fas fa-desktop" style={{ marginRight: 4 }}></i>
+                  <strong>Sistema:</strong> {formatDateTime(modalRemision.fechaRegistro)}
+                </span>
+              )}
+            </div>
 
             {modalRemision.tipoApoyo && (
               <p style={{ fontSize: "0.83rem", marginBottom: "0.5rem" }}>

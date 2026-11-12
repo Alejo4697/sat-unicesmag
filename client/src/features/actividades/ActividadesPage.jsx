@@ -5,18 +5,24 @@ import DashboardView from "./DashboardView.jsx";
 import ActividadesAdminView from "./ActividadesAdminView.jsx";
 import NewParticipantView from "./NewParticipantView.jsx";
 import SectionPlaceholder from "./SectionPlaceholder.jsx";
+import { useAuth } from "../../shared/context/AuthContext.jsx";
 
 const VALID_SECTIONS = new Set(["dashboard", "actividades", "nuevo", "apoyos", "registros", "carga-realizadas"]);
 
 export default function ActividadesPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const requestedSection = searchParams.get("vista");
-  const activeSection = VALID_SECTIONS.has(requestedSection) ? requestedSection : "dashboard";
+  const esReporteActividades = String(user?.rol || "").toLowerCase() === "reporte_actividades";
+  const activeSection = VALID_SECTIONS.has(requestedSection)
+    && !(esReporteActividades && ["nuevo", "carga-realizadas"].includes(requestedSection))
+    ? requestedSection
+    : "dashboard";
   const sectionTitle = activeSection === "dashboard"
     ? "Resumen"
     : activeSection === "actividades"
-      ? "Administrar actividades"
+      ? esReporteActividades ? "Consultar actividades" : "Administrar actividades"
       : activeSection === "nuevo"
       ? "Registrar participante"
       : activeSection === "apoyos"
@@ -34,7 +40,7 @@ export default function ActividadesPage() {
       {activeSection === "dashboard"
         ? <DashboardView />
         : activeSection === "actividades"
-          ? <ActividadesAdminView />
+          ? <ActividadesAdminView readOnly={esReporteActividades} />
         : activeSection === "nuevo"
           ? <NewParticipantView
             onCancel={() => navigate("/actividades?vista=dashboard", { replace: true })}

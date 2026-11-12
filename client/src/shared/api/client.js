@@ -6,7 +6,7 @@
    2. x-user-id (compatibilidad hacia atrás)
    ========================================================================== */
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000/api";
+const API_URL = import.meta.env.VITE_API_URL || "/api";
 export const ACTIVE_USER_KEY = "SAT_UNICESMAG_ACTIVE_USER";
 export const AUTH_TOKEN_KEY = "SAT_UNICESMAG_AUTH_TOKEN";
 
@@ -49,6 +49,7 @@ export async function apiFetch(path, options = {}) {
     ...options,
     headers: {
       "Content-Type": "application/json",
+      "Bypass-Tunnel-Reminder": "true",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(userId ? { "x-user-id": userId } : {}),
       ...options.headers
@@ -57,6 +58,11 @@ export async function apiFetch(path, options = {}) {
   });
 
   if (!res.ok) {
+    if (res.status === 401 && !path.startsWith("/auth/login") && !path.startsWith("/estudiante/login")) {
+      localStorage.removeItem(ACTIVE_USER_KEY);
+      localStorage.removeItem(AUTH_TOKEN_KEY);
+      window.dispatchEvent(new Event("sat:auth-expired"));
+    }
     const payload = await res.json().catch(() => ({}));
     throw new Error(payload.error || `Error ${res.status} en ${path}`);
   }
@@ -71,6 +77,7 @@ export async function apiDownload(path, options = {}) {
   const res = await fetchApi(`${API_URL}${path}`, {
     ...options,
     headers: {
+      "Bypass-Tunnel-Reminder": "true",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(userId ? { "x-user-id": userId } : {}),
       ...options.headers
@@ -79,6 +86,11 @@ export async function apiDownload(path, options = {}) {
   });
 
   if (!res.ok) {
+    if (res.status === 401 && !path.startsWith("/auth/login") && !path.startsWith("/estudiante/login")) {
+      localStorage.removeItem(ACTIVE_USER_KEY);
+      localStorage.removeItem(AUTH_TOKEN_KEY);
+      window.dispatchEvent(new Event("sat:auth-expired"));
+    }
     const payload = await res.json().catch(() => ({}));
     throw new Error(payload.error || `Error ${res.status} en ${path}`);
   }

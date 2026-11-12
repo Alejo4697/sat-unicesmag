@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import AttendanceSpreadsheetImport from "./AttendanceSpreadsheetImport.jsx";
 import {
-  exportarAsistentes,
   getActividadesDisponibles,
   getAsistentes,
   verificarAsistencia,
@@ -20,16 +19,8 @@ const ROL_LABELS = {
   ADMINISTRATIVO: "Administrativo",
   EGRESADO: "Egresado",
   EXTERNO: "Externo",
+  POR_CONFIRMAR: "Por confirmar",
 };
-function nombreArchivoActividad(value) {
-  const nombre = String(value || "actividad")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-  return `asistentes-${nombre || "actividad"}.xlsx`;
-}
 
 function normalizarBusqueda(value) {
   return String(value || "")
@@ -61,8 +52,6 @@ export default function AsistentesActividadTable() {
   const [verificandoIds, setVerificandoIds] = useState([]);
   const [cargandoActividades, setCargandoActividades] = useState(true);
   const [cargandoAsistentes, setCargandoAsistentes] = useState(false);
-  const [exportando, setExportando] = useState(false);
-  const [exportandoListaSimple, setExportandoListaSimple] = useState(false);
   const [error, setError] = useState("");
   const actividadSeleccionada = actividades.find((actividad) => actividad.id === actividadId);
   const asistenciasConfirmadas = asistentes.filter((item) => item.asistenciaEstado === "PRESENTE" || item.asistenciaVerificada).length;
@@ -192,81 +181,6 @@ export default function AsistentesActividadTable() {
     if (event.key === "Enter" && mostrarOpciones && opcionesVisibles[opcionActiva]) {
       event.preventDefault();
       seleccionarActividad(opcionesVisibles[opcionActiva]);
-    }
-  }
-
-  async function descargarExcel() {
-    setExportando(true);
-    setError("");
-    try {
-      const blob = await exportarAsistentes({
-        idActividad: actividadId,
-        idPeriodo: actividadSeleccionada?.idPeriodo,
-        fechaInicio: fechaCorta(actividadSeleccionada?.fechaInicio),
-        fechaFinalizacion: fechaCorta(actividadSeleccionada?.fechaFinalizacion),
-        busqueda: busquedaAsistente.trim() || undefined,
-      });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = nombreArchivoActividad(actividadSeleccionada?.actividad);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch (requestError) {
-      setError(requestError.message || "No se pudo generar el Excel de asistentes.");
-    } finally {
-      setExportando(false);
-    }
-  }
-
-  async function descargarListaSimple() {
-    setExportandoListaSimple(true);
-    setError("");
-    try {
-      const { default: ExcelJS } = await import("exceljs");
-      const workbook = new ExcelJS.Workbook();
-      const sheet = workbook.addWorksheet("Asistencia");
-      sheet.columns = [
-        { header: "Documento", key: "documento", width: 22 },
-        { header: "Nombre y apellidos", key: "nombre", width: 42 },
-        { header: "Asistió", key: "asistio", width: 24 },
-      ];
-      sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
-      sheet.getRow(1).fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: "FF002855" },
-      };
-      asistentes.forEach((asistente) => {
-        const estado = asistente.asistenciaEstado
-          || (asistente.asistenciaVerificada ? "PRESENTE" : "PENDIENTE");
-        sheet.addRow({
-          documento: asistente.identificacion || "",
-          nombre: asistente.apellidosNombres || "",
-          asistio: estado === "PRESENTE"
-            ? "Sí"
-            : estado === "AUSENTE"
-              ? "No"
-              : "Pendiente de confirmar",
-        });
-      });
-      sheet.autoFilter = { from: "A1", to: "C1" };
-      const buffer = await workbook.xlsx.writeBuffer();
-      const blob = new Blob([buffer], {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `asistencia-simple-${nombreArchivoActividad(actividadSeleccionada?.actividad).replace(/^asistentes-/, "")}`;
-      link.click();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch (requestError) {
-      setError(requestError.message || "No se pudo generar el Excel sencillo de asistencia.");
-    } finally {
-      setExportandoListaSimple(false);
     }
   }
 
@@ -530,26 +444,6 @@ export default function AsistentesActividadTable() {
                   actividadSeleccionada.programa,
                 ].filter(Boolean).join(" · ")}
               </p>
-            </div>
-            <div className="vec-attendance-export-actions">
-              <button
-                className="btn btn-outline"
-                type="button"
-                onClick={descargarListaSimple}
-                disabled={cargandoAsistentes || exportando || exportandoListaSimple}
-              >
-                <i className={`fas ${exportandoListaSimple ? "fa-spinner fa-spin" : "fa-file-excel"}`} aria-hidden="true"></i>
-                {exportandoListaSimple ? "Generando lista..." : "Excel sencillo de asistencia"}
-              </button>
-              <button
-                className="btn btn-primary"
-                type="button"
-                onClick={descargarExcel}
-                disabled={cargandoAsistentes || exportando || exportandoListaSimple}
-              >
-                <i className={`fas ${exportando ? "fa-spinner fa-spin" : "fa-file-excel"}`} aria-hidden="true"></i>
-                {exportando ? "Generando reporte..." : "Descargar reporte Excel"}
-              </button>
             </div>
           </div>
 
