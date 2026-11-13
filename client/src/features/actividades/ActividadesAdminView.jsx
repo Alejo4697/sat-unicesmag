@@ -19,6 +19,8 @@ const EMPTY_FORM = {
   idPeriodo: "",
   actividad: "",
   programaBienestar: "",
+  lineaAccion: "",
+  componente: "",
   subdivisionProgramas: [],
   apoyosPorModalidad: {},
   descripcion: "",
@@ -36,6 +38,7 @@ const EMPTY_FORM = {
   estrategiaPoliticaEducacionInclusiva: "",
   tipoActividadOtra: "",
 };
+const SIN_VALOR_CATALOGO = "__SIN_VALOR_CATALOGO__";
 const ESTADOS = ["PROGRAMADA", "EN_CURSO", "FINALIZADA", "CANCELADA"];
 const ETIQUETAS_ESTADO = {
   PROGRAMADA: "Programadas",
@@ -66,6 +69,66 @@ function normalizarCampus(value) {
         .filter(Boolean),
     ),
   ];
+}
+
+function normalizarValorCatalogo(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function claveCatalogo(value) {
+  return normalizarValorCatalogo(value).toLocaleLowerCase("es");
+}
+
+function valorCatalogoSeleccionado(value) {
+  return value === SIN_VALOR_CATALOGO ? "" : value;
+}
+
+function obtenerLineaAccionActividad(activity, programasBienestar) {
+  const lineaAccion = normalizarValorCatalogo(activity.lineaAccion);
+  if (lineaAccion) return lineaAccion;
+
+  const programa = normalizarValorCatalogo(
+    activity.programaBienestarReal || activity.programaBienestar,
+  );
+  const componente = normalizarValorCatalogo(
+    activity.componenteBienestarReal || activity.componenteBienestar,
+  );
+  const catalogo = programasBienestar.find(
+    (item) => claveCatalogo(item.programaCompleto) === claveCatalogo(programa),
+  ) || programasBienestar.find(
+    (item) =>
+      claveCatalogo(item.programa) === claveCatalogo(programa) &&
+      (!componente || claveCatalogo(item.componente) === claveCatalogo(componente)),
+  );
+  return normalizarValorCatalogo(catalogo?.lineaAccion);
+}
+
+function opcionesCatalogo(rows, field, valorActual, etiquetaSinValor) {
+  const opciones = new Map();
+  for (const row of rows) {
+    const value = normalizarValorCatalogo(row[field]);
+    const key = value ? claveCatalogo(value) : SIN_VALOR_CATALOGO;
+    if (!opciones.has(key)) {
+      opciones.set(key, {
+        value: value || SIN_VALOR_CATALOGO,
+        label: value || etiquetaSinValor,
+      });
+    }
+  }
+  const claveActual =
+    valorActual === SIN_VALOR_CATALOGO
+      ? SIN_VALOR_CATALOGO
+      : claveCatalogo(valorCatalogoSeleccionado(valorActual));
+  if (valorActual && !opciones.has(claveActual)) {
+    const value = valorCatalogoSeleccionado(valorActual);
+    opciones.set(claveActual, {
+      value: value || SIN_VALOR_CATALOGO,
+      label: value || etiquetaSinValor,
+    });
+  }
+  return [...opciones.values()].sort((first, second) =>
+    first.label.localeCompare(second.label, "es"),
+  );
 }
 
 function opcionesEstrategia(programas, field, valorActual) {
@@ -218,9 +281,28 @@ function Modal({ title, subtitle, onClose, children, wide = false }) {
 }
 
 function toForm(activity, programasBienestar, tiposApoyo) {
+  const programaBienestarNombre = Object.hasOwn(
+    activity,
+    "programaBienestarReal",
+  )
+    ? activity.programaBienestarReal || ""
+    : activity.programaBienestar || "";
   const programa = programasBienestar.find(
-    (item) => item.programaCompleto === activity.programaBienestar,
+    (item) => item.programaCompleto === programaBienestarNombre,
   );
+  const programaRelacionado =
+    programa ||
+    programasBienestar.find(
+      (item) =>
+        item.programa === (programa?.programa || programaBienestarNombre),
+    );
+  const lineaAccion =
+    normalizarValorCatalogo(programaRelacionado?.lineaAccion) ||
+    normalizarValorCatalogo(activity.lineaAccion);
+  const componente =
+    normalizarValorCatalogo(activity.componenteBienestarReal) ||
+    normalizarValorCatalogo(programaRelacionado?.componente) ||
+    normalizarValorCatalogo(activity.componenteBienestar);
   const subdivisionProgramas =
     Array.isArray(activity.variablesModalidades) &&
     activity.variablesModalidades.length
@@ -248,7 +330,9 @@ function toForm(activity, programasBienestar, tiposApoyo) {
     idEventoExistente: activity.id,
     idPeriodo: activity.idPeriodo,
     actividad: activity.actividad || "",
-    programaBienestar: programa?.programa || activity.programaBienestar || "",
+    programaBienestar: programa?.programa || programaBienestarNombre,
+    lineaAccion,
+    componente,
     subdivisionProgramas,
     apoyosPorModalidad,
     descripcion: activity.descripcion || "",
@@ -272,7 +356,7 @@ function toForm(activity, programasBienestar, tiposApoyo) {
   };
 }
 
-export default function ActividadesAdminView({ readOnly = false }) {
+export default function ActividadesAdminView({ readOnly = false, access }) {
   const location = useLocation();
   const navigate = useNavigate();
   const importacionRealizadas = location.state?.importacionRealizadas;
@@ -285,6 +369,7 @@ export default function ActividadesAdminView({ readOnly = false }) {
   const [tiposApoyo, setTiposApoyo] = useState([]);
   const [busqueda, setBusqueda] = useState("");
   const [filtroEstado, setFiltroEstado] = useState("");
+  const [filtroLineaAccion, setFiltroLineaAccion] = useState("");
   const [form, setForm] = useState(null);
   const [participantes, setParticipantes] = useState(null);
   const [historial, setHistorial] = useState(null);
@@ -312,6 +397,10 @@ export default function ActividadesAdminView({ readOnly = false }) {
   const [confirmacionEliminacion, setConfirmacionEliminacion] = useState(null);
   const [busquedaParticipante, setBusquedaParticipante] = useState("");
   const [buscandoPersonas, setBuscandoPersonas] = useState(false);
+  const puedeCrear = !readOnly && (access ? Boolean(access.puedeCrear) : true);
+  const puedeAdministrar =
+    !readOnly && (access ? Boolean(access.puedeAdministrar) : true);
+  const accesoRestringidoPorLinea = Boolean(access?.restringido);
 
   const cargarActividades = useCallback(async () => {
     const rows = await getActividades({ busqueda });
@@ -398,6 +487,29 @@ export default function ActividadesAdminView({ readOnly = false }) {
     setForm((current) => ({ ...current, [name]: value }));
   }
 
+  function updateFiltroClasificacion(name, value) {
+    setForm((current) => {
+      const next = { ...current, [name]: value };
+      if (name === "lineaAccion") {
+        next.componente = "";
+        next.programaBienestar = "";
+      } else if (name === "componente") {
+        next.programaBienestar = "";
+      }
+      next.subdivisionProgramas = [];
+      next.apoyosPorModalidad = {};
+      Object.assign(
+        next,
+        estrategiasAutocompletadas(
+          programasBienestar,
+          "",
+          [],
+        ),
+      );
+      return next;
+    });
+  }
+
   function updateModalidades(value) {
     setForm((current) => ({
       ...current,
@@ -414,29 +526,54 @@ export default function ActividadesAdminView({ readOnly = false }) {
         return [programaCompleto, support?.id || ""];
       })),
       ...estrategiasAutocompletadas(
-        programasBienestar,
-        current.programaBienestar,
+        filasPorComponente,
+        valorCatalogoSeleccionado(current.programaBienestar),
         value,
       ),
     }));
   }
 
-  const programasDelGrupo = programasBienestar.filter(
-    (item) => item.programa === form?.programaBienestar,
+  const opcionesLineaAccion = accesoRestringidoPorLinea
+    ? (access.lineasAccion || []).map((linea) => ({
+        value: linea,
+        label: linea,
+      }))
+    : opcionesCatalogo(
+        programasBienestar,
+        "lineaAccion",
+        form?.lineaAccion,
+        "Sin línea de acción",
+      );
+  const lineaAccionSeleccionada = valorCatalogoSeleccionado(
+    form?.lineaAccion || "",
   );
-  const opcionesProgramasBienestar = [
-    ...new Map(
-      programasBienestar
-        .filter((item) => item.programa)
-        .map((item) => [
-          item.programa,
-          {
-            value: item.programa,
-            label: item.programa,
-          },
-        ]),
-    ).values(),
-  ].sort((a, b) => a.label.localeCompare(b.label, "es"));
+  const filasPorLineaAccion = programasBienestar.filter(
+    (item) => claveCatalogo(item.lineaAccion) === claveCatalogo(lineaAccionSeleccionada),
+  );
+  const opcionesComponentesCatalogo = opcionesCatalogo(
+    filasPorLineaAccion,
+    "componente",
+    form?.componente,
+    "Sin componente",
+  );
+  const componenteSeleccionado = valorCatalogoSeleccionado(
+    form?.componente || "",
+  );
+  const filasPorComponente = filasPorLineaAccion.filter(
+    (item) => claveCatalogo(item.componente) === claveCatalogo(componenteSeleccionado),
+  );
+  const opcionesProgramasBienestar = opcionesCatalogo(
+    filasPorComponente,
+    "programa",
+    form?.programaBienestar,
+    "Sin programa",
+  );
+  const programaBienestarSeleccionado = valorCatalogoSeleccionado(
+    form?.programaBienestar || "",
+  );
+  const programasDelGrupo = filasPorComponente.filter(
+    (item) => item.programa === programaBienestarSeleccionado,
+  );
   const subdivisionesPrograma = programasDelGrupo
     .filter((item) => item.subdivision)
     .sort((a, b) => a.subdivision.localeCompare(b.subdivision, "es"));
@@ -500,11 +637,32 @@ export default function ActividadesAdminView({ readOnly = false }) {
       ),
     ],
   ];
+  const actividadesFiltradasPorLinea = filtroLineaAccion
+    ? actividades.filter(
+        (activity) =>
+          claveCatalogo(
+            obtenerLineaAccionActividad(activity, programasBienestar),
+          ) === claveCatalogo(filtroLineaAccion),
+      )
+    : actividades;
+  const opcionesLineasAccion = accesoRestringidoPorLinea
+    ? (access.lineasAccion || []).map((linea) => ({
+        value: linea,
+        label: linea,
+      }))
+    : opcionesCatalogo(
+        programasBienestar,
+        "lineaAccion",
+        filtroLineaAccion,
+        "Sin línea de acción",
+      );
   const actividadesPorEstado = ESTADOS.map((estado) => ({
     estado,
     etiqueta: ETIQUETAS_ESTADO[estado],
-    total: actividades.filter((activity) => activity.estado === estado).length,
-    actividades: actividades.filter(
+    total: actividadesFiltradasPorLinea.filter(
+      (activity) => activity.estado === estado,
+    ).length,
+    actividades: actividadesFiltradasPorLinea.filter(
       (activity) =>
         activity.estado === estado &&
         (!filtroEstado || activity.estado === filtroEstado),
@@ -556,6 +714,15 @@ export default function ActividadesAdminView({ readOnly = false }) {
       );
       return;
     }
+    if (
+      accesoRestringidoPorLinea &&
+      !(access.lineasAccion || []).some(
+        (linea) => claveCatalogo(linea) === claveCatalogo(form.lineaAccion),
+      )
+    ) {
+      setError("Selecciona una de las líneas de acción asignadas a tu cuenta.");
+      return;
+    }
     if (form.fechaFinalizacion < form.fechaInicio) {
       setError("La fecha final no puede ser anterior a la fecha inicial.");
       return;
@@ -589,10 +756,16 @@ export default function ActividadesAdminView({ readOnly = false }) {
     }
     setGuardando(true);
     let saved = false;
+    const actividadParaGuardar = {
+      ...form,
+      lineaAccion: valorCatalogoSeleccionado(form.lineaAccion || ""),
+      componente: valorCatalogoSeleccionado(form.componente || ""),
+      programaBienestar: programaBienestarSeleccionado,
+    };
     try {
       if (form.idEventoExistente)
-        await actualizarActividad(form.idEventoExistente, form);
-      else await crearActividad(form);
+        await actualizarActividad(form.idEventoExistente, actividadParaGuardar);
+      else await crearActividad(actividadParaGuardar);
       saved = true;
       setMensaje(
         form.idEventoExistente
@@ -900,14 +1073,25 @@ export default function ActividadesAdminView({ readOnly = false }) {
             <p className="activity-admin__subtitle">
               {readOnly
                 ? "Consulta las actividades registradas y revisa sus datos y participantes."
+                : !puedeAdministrar
+                  ? "Consulta las actividades de tus líneas y crea nuevas."
                 : "Organiza, consulta y administra las actividades registradas."}
             </p>
           </div>
-          {!readOnly && (
+          {puedeCrear && (
             <button
               className="btn btn-primary"
               type="button"
-              onClick={() => setForm({ ...EMPTY_FORM })}
+              onClick={() =>
+                setForm({
+                  ...EMPTY_FORM,
+                  lineaAccion:
+                    accesoRestringidoPorLinea &&
+                    access.lineasAccion.length === 1
+                      ? access.lineasAccion[0]
+                      : "",
+                })
+              }
             >
               <i className="fas fa-plus" aria-hidden="true"></i> Crear actividad
             </button>
@@ -953,6 +1137,27 @@ export default function ActividadesAdminView({ readOnly = false }) {
               ))}
             </select>
           </div>
+          <div className="activity-toolbar__status">
+            <label className="form-label" htmlFor="activity-action-line-filter">
+              Línea de acción
+            </label>
+            <select
+              className="form-select"
+              id="activity-action-line-filter"
+              value={filtroLineaAccion}
+              onChange={(event) => {
+                setFiltroLineaAccion(event.target.value);
+                setActividadesSeleccionadas(new Set());
+              }}
+            >
+              <option value="">Todas las líneas de acción</option>
+              {opcionesLineasAccion.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="activity-toolbar__actions">
             <p className="activity-toolbar__result-count" role="status">
               {actividadesVisibles.length}{" "}
@@ -960,7 +1165,7 @@ export default function ActividadesAdminView({ readOnly = false }) {
                 ? "actividad encontrada"
                 : "actividades encontradas"}
             </p>
-            <button
+            {puedeAdministrar && <button
               className={`btn btn-sm activity-multiple-select${modoSeleccionMultiple ? " activity-multiple-select--active" : ""}`}
               type="button"
               onClick={toggleModoSeleccionMultiple}
@@ -974,10 +1179,10 @@ export default function ActividadesAdminView({ readOnly = false }) {
               {modoSeleccionMultiple
                 ? "Salir de selección"
                 : "Selección múltiple"}
-            </button>
+            </button>}
           </div>
         </div>
-        {!readOnly && modoSeleccionMultiple &&
+        {puedeAdministrar && modoSeleccionMultiple &&
           !cargando &&
           actividadesVisibles.length > 0 && (
             <div className="activity-bulk-toolbar">
@@ -997,7 +1202,7 @@ export default function ActividadesAdminView({ readOnly = false }) {
               <span className="activity-bulk-toolbar__summary" role="status">
                 {actividadesSeleccionadasVisibles.length} seleccionadas
               </span>
-              {!readOnly && <button
+              {puedeAdministrar && <button
                 className="btn btn-danger btn-sm activity-bulk-toolbar__delete"
                 type="button"
                 onClick={() => {
@@ -1078,7 +1283,7 @@ export default function ActividadesAdminView({ readOnly = false }) {
                 <span className="activity-section-heading__eyebrow">VISTA GENERAL</span>
                 <h3>Actividades por estado</h3>
               </div>
-              <p>Selecciona un estado para filtrar la lista.</p>
+              <p>Selecciona un estado o una línea de acción para filtrar la lista.</p>
             </div>
             <div
               className="activity-overview"
@@ -1157,6 +1362,8 @@ export default function ActividadesAdminView({ readOnly = false }) {
                 ? "No se encontraron actividades con esa búsqueda."
                 : filtroEstado
                   ? `No hay actividades ${ETIQUETAS_ESTADO[filtroEstado].toLowerCase()}.`
+                  : filtroLineaAccion
+                    ? "No se encontraron actividades para esa línea de acción."
                   : "Cuando registres actividades, aparecerán organizadas aquí por estado."}
             </span>
           </div>
@@ -1168,8 +1375,10 @@ export default function ActividadesAdminView({ readOnly = false }) {
                 key={grupo.estado}
                 open={
                   Boolean(busqueda.trim()) ||
+                  Boolean(filtroLineaAccion) ||
                   (Boolean(filtroEstado) && filtroEstado === grupo.estado) ||
                   (!filtroEstado &&
+                    !filtroLineaAccion &&
                     !busqueda.trim() &&
                     ["PROGRAMADA", "EN_CURSO"].includes(grupo.estado))
                 }
@@ -1206,7 +1415,7 @@ export default function ActividadesAdminView({ readOnly = false }) {
                           key={activity.id}
                         >
                           <div className="activity-card__top">
-                            {!readOnly && modoSeleccionMultiple && (
+                            {puedeAdministrar && modoSeleccionMultiple && (
                               <label className="activity-card__select">
                                 <input
                                   type="checkbox"
@@ -1268,7 +1477,7 @@ export default function ActividadesAdminView({ readOnly = false }) {
 
                           <details className="activity-card__more">
                             <summary>
-                              <span>{readOnly ? "Ver detalles" : "Ver detalles y acciones"}</span>
+                              <span>{puedeAdministrar ? "Ver detalles y acciones" : "Ver detalles"}</span>
                               <i
                                 className="fas fa-chevron-down"
                                 aria-hidden="true"
@@ -1368,7 +1577,7 @@ export default function ActividadesAdminView({ readOnly = false }) {
 
                             <div className="activity-card__footer">
                               <div className="activity-card__actions">
-                                <button
+                                {!accesoRestringidoPorLinea && <button
                                   className="btn btn-outline btn-sm activity-card__download"
                                   type="button"
                                   onClick={() =>
@@ -1385,8 +1594,8 @@ export default function ActividadesAdminView({ readOnly = false }) {
                                   {exportandoActividadId === activity.id
                                     ? "Generando Excel..."
                                     : "Excel asistencia"}
-                                </button>
-                                {!readOnly && <label className="activity-card__status-control">
+                                </button>}
+                                {puedeAdministrar && <label className="activity-card__status-control">
                                   <span className="sr-only">
                                     Cambiar estado de {activity.actividad}
                                   </span>
@@ -1407,7 +1616,7 @@ export default function ActividadesAdminView({ readOnly = false }) {
                                     ))}
                                   </select>
                                 </label>}
-                                {!readOnly && <button
+                                {puedeAdministrar && <button
                                   className="btn btn-outline btn-sm"
                                   type="button"
                                   onClick={() =>
@@ -1416,7 +1625,7 @@ export default function ActividadesAdminView({ readOnly = false }) {
                                 >
                                   Editar
                                 </button>}
-                                {!readOnly && <button
+                                {puedeAdministrar && <button
                                   className="btn btn-danger btn-sm activity-card__delete"
                                   type="button"
                                   onClick={() => deleteActivity(activity)}
@@ -1449,7 +1658,7 @@ export default function ActividadesAdminView({ readOnly = false }) {
         )}
       </section>
 
-      <section className="card activity-people">
+      {!accesoRestringidoPorLinea && <section className="card activity-people">
         <div className="activity-people__header">
           <div>
             <span className="activity-admin__eyebrow">CONSULTA</span>
@@ -1544,7 +1753,7 @@ export default function ActividadesAdminView({ readOnly = false }) {
             </table>
           </div>
         )}
-      </section>
+      </section>}
 
       {form && !readOnly && (
         <Modal
@@ -1566,7 +1775,8 @@ export default function ActividadesAdminView({ readOnly = false }) {
                     <span>
                       <h3>Información general</h3>
                       <p>
-                        Identifica la actividad y el programa al que pertenece.
+                        Define la actividad, su clasificación institucional y,
+                        si aplica, su programa de Bienestar.
                       </p>
                     </span>
                   </div>
@@ -1609,44 +1819,108 @@ export default function ActividadesAdminView({ readOnly = false }) {
                       />
                     </div>
                     <div className="form-group activity-form-field--wide activity-general-field">
-                      <label className="form-label" htmlFor="activity-program">
-                        Programa general de Bienestar{" "}
-                        <span className="activity-form-optional">Opcional</span>
+                      <label className="form-label" htmlFor="activity-action-line">
+                        Línea de acción
+                        {!accesoRestringidoPorLinea && (
+                          <span className="activity-form-optional">Opcional</span>
+                        )}
                       </label>
                       <p className="activity-program-hint">
-                        Elige el programa. Si tiene modalidades, podrás
-                        seleccionar una o varias y el sistema completará sus
-                        datos relacionados.
+                        Selecciona una línea de acción para filtrar sus
+                        componentes y programas de Bienestar.
                       </p>
                       <select
                         className="form-select"
-                        id="activity-program"
-                        value={form.programaBienestar}
+                        id="activity-action-line"
+                        value={form.lineaAccion}
+                        required={accesoRestringidoPorLinea}
                         onChange={(event) =>
-                          setForm((current) => {
-                            const programaBienestar = event.target.value;
-                            return {
-                              ...current,
-                              programaBienestar,
-                              subdivisionProgramas: [],
-                              apoyosPorModalidad: {},
-                              ...estrategiasAutocompletadas(
-                                programasBienestar,
-                                programaBienestar,
-                                [],
-                              ),
-                            };
-                          })
+                          updateFiltroClasificacion(
+                            "lineaAccion",
+                            event.target.value,
+                          )
                         }
                       >
-                        <option value="">No aplica</option>
-                        {opcionesProgramasBienestar.map((item) => (
+                        <option value="">Selecciona una línea de acción</option>
+                        {opcionesLineaAccion.map((item) => (
                           <option key={item.value} value={item.value}>
                             {item.label}
                           </option>
                         ))}
                       </select>
                     </div>
+                    {form.lineaAccion && (
+                      <div className="form-group activity-general-field">
+                        <label
+                          className="form-label"
+                          htmlFor="activity-catalog-component"
+                        >
+                          Componente
+                          <span className="activity-form-optional">
+                            Opcional
+                          </span>
+                        </label>
+                        <select
+                          className="form-select"
+                          id="activity-catalog-component"
+                          value={form.componente}
+                          onChange={(event) =>
+                            updateFiltroClasificacion(
+                              "componente",
+                              event.target.value,
+                            )
+                          }
+                        >
+                          <option value="">Selecciona un componente</option>
+                          {opcionesComponentesCatalogo.map((item) => (
+                            <option key={item.value} value={item.value}>
+                              {item.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    {form.componente && (
+                      <div className="form-group activity-general-field">
+                        <label
+                          className="form-label"
+                          htmlFor="activity-program"
+                        >
+                          Programa de Bienestar
+                          <span className="activity-form-optional">
+                            Opcional
+                          </span>
+                        </label>
+                        <select
+                          className="form-select"
+                          id="activity-program"
+                          value={form.programaBienestar}
+                          onChange={(event) =>
+                            setForm((current) => {
+                              const programaBienestar = event.target.value;
+                              return {
+                                ...current,
+                                programaBienestar,
+                                subdivisionProgramas: [],
+                                apoyosPorModalidad: {},
+                                ...estrategiasAutocompletadas(
+                                  filasPorComponente,
+                                  valorCatalogoSeleccionado(programaBienestar),
+                                  [],
+                                ),
+                              };
+                            })
+                          }
+                        >
+                          <option value="">Selecciona un programa</option>
+                          {opcionesProgramasBienestar.map((item) => (
+                            <option key={item.value} value={item.value}>
+                              {item.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                     {subdivisionesPrograma.length > 0 && (
                       <div
                         className="form-group activity-form-field--wide activity-modalities-field"
@@ -2114,7 +2388,7 @@ export default function ActividadesAdminView({ readOnly = false }) {
         </Modal>
       )}
 
-      {confirmacionEliminacionMasiva && !readOnly && (
+      {confirmacionEliminacionMasiva && puedeAdministrar && (
         <Modal
           title="Eliminar actividades seleccionadas"
           subtitle="Confirma el alcance antes de continuar."
@@ -2242,7 +2516,7 @@ export default function ActividadesAdminView({ readOnly = false }) {
                 {errorEliminacionInscripcion}
               </div>
             )}
-            {confirmacionEliminacion && !readOnly && (
+            {confirmacionEliminacion && puedeAdministrar && (
               <div className="activity-delete-confirm" role="alert">
                 <span className="activity-delete-confirm__icon">
                   <i
@@ -2526,9 +2800,9 @@ export default function ActividadesAdminView({ readOnly = false }) {
                                 </div>
                               )}
                             </td>
-                            <td data-label={readOnly ? "Historial" : "Administrar"}>
+                            <td data-label={accesoRestringidoPorLinea ? "Detalles" : readOnly ? "Historial" : "Administrar"}>
                               <div className="activity-participants-actions">
-                                <button
+                                {!accesoRestringidoPorLinea && <button
                                   className="btn btn-outline btn-sm"
                                   type="button"
                                   onClick={() => showHistory(row)}
@@ -2540,8 +2814,8 @@ export default function ActividadesAdminView({ readOnly = false }) {
                                     aria-hidden="true"
                                   ></i>
                                   <span>Historial</span>
-                                </button>
-                                {!readOnly && <button
+                                </button>}
+                                {puedeAdministrar && <button
                                   className="btn btn-outline btn-sm"
                                   type="button"
                                   onClick={() =>
@@ -2563,7 +2837,7 @@ export default function ActividadesAdminView({ readOnly = false }) {
                                   ></i>
                                   <span>Apoyo</span>
                                 </button>}
-                                {!readOnly && <button
+                                {puedeAdministrar && <button
                                   className="btn btn-danger btn-sm activity-participants-actions__delete"
                                   type="button"
                                   onClick={() =>
@@ -2592,7 +2866,7 @@ export default function ActividadesAdminView({ readOnly = false }) {
           </section>
         </Modal>
       )}
-      {edicionApoyo && !readOnly && (
+      {edicionApoyo && puedeAdministrar && (
         <Modal
           title="Corregir tipo de apoyo"
           onClose={() => setEdicionApoyo(null)}

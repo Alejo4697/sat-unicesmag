@@ -8,14 +8,21 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../shared/context/AuthContext.jsx";
-import { login, solicitarRecuperacionPassword, restablecerPasswordConCodigo } from "./api.js";
+import {
+  login,
+  solicitarRecuperacionPassword,
+  restablecerPasswordConCodigo,
+} from "./api.js";
 
 /**
  * Determina la vista principal asignada según el rol y cargo oficial del usuario.
  */
 function rutaPorRol(usuario) {
   const rol = typeof usuario === "string" ? usuario : usuario?.rol;
-  const cargo = String(usuario?.cargo || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const cargo = String(usuario?.cargo || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 
   if (
     rol === "admin" ||
@@ -29,7 +36,11 @@ function rutaPorRol(usuario) {
   }
   if (rol === "profesional") {
     // Los docentes acompañantes van al tablero de permanencia; los profesionales de salud/psicología a remisiones
-    return (cargo.includes("docente") || cargo.includes("acompana") || cargo.includes("tiempo completo") || cargo.includes("medio tiempo") || cargo.includes("catedra"))
+    return cargo.includes("docente") ||
+      cargo.includes("acompana") ||
+      cargo.includes("tiempo completo") ||
+      cargo.includes("medio tiempo") ||
+      cargo.includes("catedra")
       ? "/dashboard"
       : "/remisiones";
   }
@@ -74,7 +85,9 @@ export default function LoginPage() {
     const identificador = email.trim();
 
     if (!identificador || !password) {
-      setError("Por favor ingrese su correo institucional o cédula y su contraseña.");
+      setError(
+        "Por favor ingrese su correo institucional o cédula y su contraseña.",
+      );
       return;
     }
 
@@ -88,7 +101,9 @@ export default function LoginPage() {
       const token = resp.token || null;
 
       if (!usuario || !usuario.rol) {
-        throw new Error("No se pudo determinar el rol asignado en la base de datos.");
+        throw new Error(
+          "No se pudo determinar el rol asignado en la base de datos.",
+        );
       }
 
       // 2. Almacenamiento seguro de sesión
@@ -97,9 +112,11 @@ export default function LoginPage() {
       // 3. Redirección estricta a la vista correspondiente
       const destino = rutaPorRol(usuario);
       navigate(destino, { replace: true });
-
     } catch (err) {
-      setError(err.message || "Credenciales incorrectas. Verifique su correo o cédula y contraseña.");
+      setError(
+        err.message ||
+          "Credenciales incorrectas. Verifique su correo o cédula y contraseña.",
+      );
     } finally {
       setEnviando(false);
     }
@@ -118,9 +135,13 @@ export default function LoginPage() {
     try {
       const resp = await solicitarRecuperacionPassword(correo);
       setPasoRecuperar(2);
-      setMensajeExito(resp.message || `Código de recuperación enviado a ${correo}.`);
+      setMensajeExito(
+        resp.message || `Código de recuperación enviado a ${correo}.`,
+      );
     } catch (err) {
-      setErrorRecuperar(err.message || "No se pudo enviar el código de recuperación.");
+      setErrorRecuperar(
+        err.message || "No se pudo enviar el código de recuperación.",
+      );
     } finally {
       setEnviandoRecuperar(false);
     }
@@ -134,11 +155,15 @@ export default function LoginPage() {
       return;
     }
     if (nuevaPassword.length < 8) {
-      setErrorRecuperar("La nueva contraseña debe tener al menos 8 caracteres.");
+      setErrorRecuperar(
+        "La nueva contraseña debe tener al menos 8 caracteres.",
+      );
       return;
     }
     if (nuevaPassword !== confirmarPassword) {
-      setErrorRecuperar("Las contraseñas no coinciden. Por favor verifíquelas.");
+      setErrorRecuperar(
+        "Las contraseñas no coinciden. Por favor verifíquelas.",
+      );
       return;
     }
     setErrorRecuperar("");
@@ -147,7 +172,7 @@ export default function LoginPage() {
       const resp = await restablecerPasswordConCodigo({
         email: emailRecuperar.trim(),
         codigo,
-        nuevoPassword: nuevaPassword
+        nuevoPassword: nuevaPassword,
       });
       setModoRecuperar(false);
       setPasoRecuperar(1);
@@ -156,7 +181,10 @@ export default function LoginPage() {
       setCodigoRecuperar("");
       setNuevaPassword("");
       setConfirmarPassword("");
-      setMensajeExito(resp.message || "¡Contraseña actualizada exitosamente en la base de datos! Ya puede iniciar sesión con su nueva clave.");
+      setMensajeExito(
+        resp.message ||
+          "¡Contraseña actualizada exitosamente en la base de datos! Ya puede iniciar sesión con su nueva clave.",
+      );
     } catch (err) {
       setErrorRecuperar(err.message || "Error al actualizar la contraseña.");
     } finally {
@@ -171,23 +199,47 @@ export default function LoginPage() {
       <div className="login-container" style={{ maxWidth: "460px" }}>
         <div className="login-card" style={{ padding: "2.25rem 2rem" }}>
           {/* Encabezado Institucional */}
-          <div className="login-header" style={{ marginBottom: "1.5rem", textAlign: "center" }}>
-            <div className="login-logo-container" style={{ marginBottom: "0.75rem" }}>
+          <div
+            className="login-header"
+            style={{ marginBottom: "1.5rem", textAlign: "center" }}
+          >
+            <div
+              className="login-logo-container"
+              style={{ marginBottom: "0.75rem" }}
+            >
               <img
                 src="/img/escudo_unicesmag.png"
                 alt="Escudo Universidad CESMAG"
                 className="login-escudo"
               />
             </div>
-            <h1 className="login-title" style={{ fontSize: "1.35rem", fontWeight: "800", color: "#002855" }}>
+            <h1
+              className="login-title"
+              style={{
+                fontSize: "1.35rem",
+                fontWeight: "800",
+                color: "#002855",
+              }}
+            >
               SAT-UNICESMAG
             </h1>
-            <p className="login-subtitle" style={{ fontSize: "0.85rem", color: "#64748b" }}>
+            <p
+              className="login-subtitle"
+              style={{ fontSize: "0.85rem", color: "#64748b" }}
+            >
               Sistema de Alertas Tempranas y Acompañamiento Integral
             </p>
 
             {/* Alternador de portal */}
-            <div style={{ display: "flex", background: "#f1f5f9", padding: "4px", borderRadius: "8px", marginTop: "1rem" }}>
+            <div
+              style={{
+                display: "flex",
+                background: "#f1f5f9",
+                padding: "4px",
+                borderRadius: "8px",
+                marginTop: "1rem",
+              }}
+            >
               <button
                 type="button"
                 style={{
@@ -200,11 +252,14 @@ export default function LoginPage() {
                   fontWeight: "700",
                   fontSize: "0.825rem",
                   boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
-                  cursor: "default"
+                  cursor: "default",
                 }}
               >
-                <i className="fas fa-id-badge" style={{ marginRight: "6px", color: "#002855" }}></i>
-                Funcionarios y Docentes
+                <i
+                  className="fas fa-id-badge"
+                  style={{ marginRight: "6px", color: "#002855" }}
+                ></i>
+                Colaboradores
               </button>
               <button
                 type="button"
@@ -222,7 +277,7 @@ export default function LoginPage() {
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  gap: "6px"
+                  gap: "6px",
                 }}
               >
                 <i className="fas fa-graduation-cap"></i>
@@ -232,16 +287,57 @@ export default function LoginPage() {
           </div>
 
           {mensajeExito && !modoRecuperar && (
-            <div style={{ background: "#ecfdf5", border: "1px solid #a7f3d0", color: "#065f46", borderRadius: "8px", padding: "0.75rem 1rem", marginBottom: "1.25rem", fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "8px" }}>
-              <i className="fas fa-circle-check" style={{ color: "#10b981", fontSize: "1rem" }}></i>
+            <div
+              style={{
+                background: "#ecfdf5",
+                border: "1px solid #a7f3d0",
+                color: "#065f46",
+                borderRadius: "8px",
+                padding: "0.75rem 1rem",
+                marginBottom: "1.25rem",
+                fontSize: "0.85rem",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+              }}
+            >
+              <i
+                className="fas fa-circle-check"
+                style={{ color: "#10b981", fontSize: "1rem" }}
+              ></i>
               <span>{mensajeExito}</span>
             </div>
           )}
 
           {modoRecuperar ? (
-            <div className="login-recovery-box" style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "1.5rem" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
-                <h2 style={{ fontSize: "1.1rem", fontWeight: "700", color: "#002855", margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
+            <div
+              className="login-recovery-box"
+              style={{
+                background: "#f8fafc",
+                border: "1px solid #e2e8f0",
+                borderRadius: "10px",
+                padding: "1.5rem",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: "1rem",
+                }}
+              >
+                <h2
+                  style={{
+                    fontSize: "1.1rem",
+                    fontWeight: "700",
+                    color: "#002855",
+                    margin: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                  }}
+                >
                   <i className="fas fa-key" style={{ color: "#0284c7" }}></i>
                   Recuperar Contraseña
                 </h2>
@@ -251,7 +347,13 @@ export default function LoginPage() {
                     setModoRecuperar(false);
                     setErrorRecuperar("");
                   }}
-                  style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: "0.85rem" }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#64748b",
+                    cursor: "pointer",
+                    fontSize: "0.85rem",
+                  }}
                   title="Cerrar y volver al inicio de sesión"
                 >
                   <i className="fas fa-xmark"></i>
@@ -259,7 +361,10 @@ export default function LoginPage() {
               </div>
 
               {errorRecuperar && (
-                <div className="login-error-alert" style={{ marginBottom: "1rem" }}>
+                <div
+                  className="login-error-alert"
+                  style={{ marginBottom: "1rem" }}
+                >
                   <i className="fas fa-triangle-exclamation"></i>
                   <span>{errorRecuperar}</span>
                 </div>
@@ -267,13 +372,28 @@ export default function LoginPage() {
 
               {pasoRecuperar === 1 ? (
                 <form onSubmit={handleSolicitarCodigo}>
-                  <p style={{ fontSize: "0.825rem", color: "#475569", lineHeight: 1.5, marginBottom: "1rem" }}>
-                    Ingresa tu correo institucional. El sistema validará tu cuenta y te enviará un código de seguridad para definir tu nueva contraseña.
+                  <p
+                    style={{
+                      fontSize: "0.825rem",
+                      color: "#475569",
+                      lineHeight: 1.5,
+                      marginBottom: "1rem",
+                    }}
+                  >
+                    Ingresa tu correo institucional. El sistema validará tu
+                    cuenta y te enviará un código de seguridad para definir tu
+                    nueva contraseña.
                   </p>
 
-                  <div className="login-form-group" style={{ marginBottom: "1.25rem" }}>
+                  <div
+                    className="login-form-group"
+                    style={{ marginBottom: "1.25rem" }}
+                  >
                     <label htmlFor="recovery-email" className="login-label">
-                      <i className="fas fa-envelope" style={{ color: "#002855" }}></i>
+                      <i
+                        className="fas fa-envelope"
+                        style={{ color: "#002855" }}
+                      ></i>
                       Correo Institucional Registrado
                     </label>
                     <div className="login-input-wrapper">
@@ -294,7 +414,12 @@ export default function LoginPage() {
                     type="submit"
                     className="login-btn-submit"
                     disabled={enviandoRecuperar}
-                    style={{ width: "100%", padding: "0.75rem", fontWeight: "700", marginBottom: "0.75rem" }}
+                    style={{
+                      width: "100%",
+                      padding: "0.75rem",
+                      fontWeight: "700",
+                      marginBottom: "0.75rem",
+                    }}
                   >
                     {enviandoRecuperar ? (
                       <>
@@ -304,7 +429,10 @@ export default function LoginPage() {
                     ) : (
                       <>
                         <span>Enviar Código de Recuperación</span>
-                        <i className="fas fa-paper-plane" style={{ marginLeft: "8px" }}></i>
+                        <i
+                          className="fas fa-paper-plane"
+                          style={{ marginLeft: "8px" }}
+                        ></i>
                       </>
                     )}
                   </button>
@@ -313,22 +441,50 @@ export default function LoginPage() {
                     type="button"
                     onClick={() => setModoRecuperar(false)}
                     className="btn btn-outline"
-                    style={{ width: "100%", padding: "0.6rem", fontSize: "0.825rem" }}
+                    style={{
+                      width: "100%",
+                      padding: "0.6rem",
+                      fontSize: "0.825rem",
+                    }}
                   >
-                    <i className="fas fa-arrow-left" style={{ marginRight: "6px" }}></i>
+                    <i
+                      className="fas fa-arrow-left"
+                      style={{ marginRight: "6px" }}
+                    ></i>
                     Regresar al Inicio de Sesión
                   </button>
                 </form>
               ) : (
                 <form onSubmit={handleRestablecerPassword}>
-                  <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "0.65rem 0.85rem", marginBottom: "1rem", fontSize: "0.8rem", color: "#1e40af", lineHeight: 1.4 }}>
-                    <i className="fas fa-circle-info" style={{ marginRight: 5 }}></i>
-                    Hemos enviado un código de 6 dígitos a <strong>{emailRecuperar}</strong>.
+                  <div
+                    style={{
+                      background: "#eff6ff",
+                      border: "1px solid #bfdbfe",
+                      borderRadius: 8,
+                      padding: "0.65rem 0.85rem",
+                      marginBottom: "1rem",
+                      fontSize: "0.8rem",
+                      color: "#1e40af",
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    <i
+                      className="fas fa-circle-info"
+                      style={{ marginRight: 5 }}
+                    ></i>
+                    Hemos enviado un código de 6 dígitos a{" "}
+                    <strong>{emailRecuperar}</strong>.
                   </div>
 
-                  <div className="login-form-group" style={{ marginBottom: "1rem" }}>
+                  <div
+                    className="login-form-group"
+                    style={{ marginBottom: "1rem" }}
+                  >
                     <label htmlFor="recovery-code" className="login-label">
-                      <i className="fas fa-shield-halved" style={{ color: "#002855" }}></i>
+                      <i
+                        className="fas fa-shield-halved"
+                        style={{ color: "#002855" }}
+                      ></i>
                       Código de 6 Dígitos
                     </label>
                     <div className="login-input-wrapper">
@@ -339,17 +495,34 @@ export default function LoginPage() {
                         maxLength={6}
                         autoFocus
                         className="login-input"
-                        style={{ letterSpacing: "6px", textAlign: "center", fontSize: "1.2rem", fontWeight: "700", fontFamily: "monospace" }}
+                        style={{
+                          letterSpacing: "6px",
+                          textAlign: "center",
+                          fontSize: "1.2rem",
+                          fontWeight: "700",
+                          fontFamily: "monospace",
+                        }}
                         value={codigoRecuperar}
-                        onChange={(e) => setCodigoRecuperar(e.target.value.replace(/\D/g, ""))}
+                        onChange={(e) =>
+                          setCodigoRecuperar(e.target.value.replace(/\D/g, ""))
+                        }
                         placeholder="000000"
                       />
                     </div>
                   </div>
 
-                  <div className="login-form-group" style={{ marginBottom: "1rem" }}>
-                    <label htmlFor="recovery-new-password" className="login-label">
-                      <i className="fas fa-lock" style={{ color: "#002855" }}></i>
+                  <div
+                    className="login-form-group"
+                    style={{ marginBottom: "1rem" }}
+                  >
+                    <label
+                      htmlFor="recovery-new-password"
+                      className="login-label"
+                    >
+                      <i
+                        className="fas fa-lock"
+                        style={{ color: "#002855" }}
+                      ></i>
                       Nueva Contraseña (mínimo 8 caracteres)
                     </label>
                     <div className="login-input-wrapper">
@@ -366,17 +539,30 @@ export default function LoginPage() {
                       <button
                         type="button"
                         className="login-password-toggle"
-                        onClick={() => setNuevaPasswordVisible(!nuevaPasswordVisible)}
+                        onClick={() =>
+                          setNuevaPasswordVisible(!nuevaPasswordVisible)
+                        }
                         tabIndex={-1}
                       >
-                        <i className={`fas ${nuevaPasswordVisible ? "fa-eye-slash" : "fa-eye"}`}></i>
+                        <i
+                          className={`fas ${nuevaPasswordVisible ? "fa-eye-slash" : "fa-eye"}`}
+                        ></i>
                       </button>
                     </div>
                   </div>
 
-                  <div className="login-form-group" style={{ marginBottom: "1.25rem" }}>
-                    <label htmlFor="recovery-confirm-password" className="login-label">
-                      <i className="fas fa-check-double" style={{ color: "#002855" }}></i>
+                  <div
+                    className="login-form-group"
+                    style={{ marginBottom: "1.25rem" }}
+                  >
+                    <label
+                      htmlFor="recovery-confirm-password"
+                      className="login-label"
+                    >
+                      <i
+                        className="fas fa-check-double"
+                        style={{ color: "#002855" }}
+                      ></i>
                       Confirmar Nueva Contraseña
                     </label>
                     <div className="login-input-wrapper">
@@ -397,7 +583,12 @@ export default function LoginPage() {
                     type="submit"
                     className="login-btn-submit"
                     disabled={enviandoRecuperar}
-                    style={{ width: "100%", padding: "0.75rem", fontWeight: "700", marginBottom: "0.75rem" }}
+                    style={{
+                      width: "100%",
+                      padding: "0.75rem",
+                      fontWeight: "700",
+                      marginBottom: "0.75rem",
+                    }}
                   >
                     {enviandoRecuperar ? (
                       <>
@@ -407,23 +598,46 @@ export default function LoginPage() {
                     ) : (
                       <>
                         <span>Actualizar Contraseña y Guardar</span>
-                        <i className="fas fa-check" style={{ marginLeft: "8px" }}></i>
+                        <i
+                          className="fas fa-check"
+                          style={{ marginLeft: "8px" }}
+                        ></i>
                       </>
                     )}
                   </button>
 
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: "8px",
+                    }}
+                  >
                     <button
                       type="button"
                       onClick={() => setPasoRecuperar(1)}
-                      style={{ background: "none", border: "none", color: "#0284c7", fontSize: "0.8rem", cursor: "pointer", padding: "4px" }}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        color: "#0284c7",
+                        fontSize: "0.8rem",
+                        cursor: "pointer",
+                        padding: "4px",
+                      }}
                     >
                       <i className="fas fa-redo"></i> Solicitar otro código
                     </button>
                     <button
                       type="button"
                       onClick={() => setModoRecuperar(false)}
-                      style={{ background: "none", border: "none", color: "#64748b", fontSize: "0.8rem", cursor: "pointer", padding: "4px" }}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        color: "#64748b",
+                        fontSize: "0.8rem",
+                        cursor: "pointer",
+                        padding: "4px",
+                      }}
                     >
                       Cancelar
                     </button>
@@ -432,126 +646,165 @@ export default function LoginPage() {
               )}
             </div>
           ) : (
-          /* Formulario de Login */
-          <form onSubmit={handleSubmit} className="login-form">
-            {error && (
-              <div className="login-error-alert" style={{ marginBottom: "1.25rem" }}>
-                <i className="fas fa-triangle-exclamation"></i>
-                <span>{error}</span>
-              </div>
-            )}
-
-            {/* Campo: Correo Institucional o Cédula */}
-            <div className="login-form-group" style={{ marginBottom: "1.25rem" }}>
-              <label htmlFor="login-email" className="login-label">
-                <i className="fas fa-id-card-clip" style={{ color: "#002855" }}></i>
-                Correo Institucional o Cédula
-              </label>
-              <div className="login-input-wrapper">
-                <input
-                  id="login-email"
-                  type="text"
-                  required
-                  autoFocus
-                  autoComplete="username"
-                  className="login-input"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="usuario@unicesmag.edu.co o cédula"
-                />
-              </div>
-            </div>
-
-            {/* Campo: Contraseña */}
-            <div className="login-form-group" style={{ marginBottom: "1.5rem" }}>
-              <label htmlFor="login-password" className="login-label">
-                <i className="fas fa-lock" style={{ color: "#002855" }}></i>
-                Contraseña
-              </label>
-              <div className="login-input-wrapper">
-                <input
-                  id="login-password"
-                  type={passwordVisible ? "text" : "password"}
-                  required
-                  autoComplete="current-password"
-                  className="login-input"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Ingrese su contraseña"
-                />
-                <button
-                  type="button"
-                  className="login-password-toggle"
-                  onClick={() => setPasswordVisible(!passwordVisible)}
-                  title={passwordVisible ? "Ocultar contraseña" : "Ver contraseña"}
-                  tabIndex={-1}
+            /* Formulario de Login */
+            <form onSubmit={handleSubmit} className="login-form">
+              {error && (
+                <div
+                  className="login-error-alert"
+                  style={{ marginBottom: "1.25rem" }}
                 >
-                  <i className={`fas ${passwordVisible ? "fa-eye-slash" : "fa-eye"}`}></i>
-                </button>
-              </div>
-              <div style={{ marginTop: "8px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "6px" }}>
-                <div style={{ fontSize: "0.75rem", color: "#64748b", display: "flex", alignItems: "center", gap: "5px" }}>
-                  <i className="fas fa-key text-primary"></i>
-                  <span>Clave inicial: <code>cesmag2026*</code></span>
+                  <i className="fas fa-triangle-exclamation"></i>
+                  <span>{error}</span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setModoRecuperar(true);
-                    setPasoRecuperar(1);
-                    setErrorRecuperar("");
-                    setMensajeExito("");
-                    setEmailRecuperar(email.trim());
-                  }}
+              )}
+
+              {/* Campo: Correo Institucional o Cédula */}
+              <div
+                className="login-form-group"
+                style={{ marginBottom: "1.25rem" }}
+              >
+                <label htmlFor="login-email" className="login-label">
+                  <i
+                    className="fas fa-id-card-clip"
+                    style={{ color: "#002855" }}
+                  ></i>
+                  Correo Institucional o Cédula
+                </label>
+                <div className="login-input-wrapper">
+                  <input
+                    id="login-email"
+                    type="text"
+                    required
+                    autoFocus
+                    autoComplete="username"
+                    className="login-input"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="usuario@unicesmag.edu.co o cédula"
+                  />
+                </div>
+              </div>
+
+              {/* Campo: Contraseña */}
+              <div
+                className="login-form-group"
+                style={{ marginBottom: "1.5rem" }}
+              >
+                <label htmlFor="login-password" className="login-label">
+                  <i className="fas fa-lock" style={{ color: "#002855" }}></i>
+                  Contraseña
+                </label>
+                <div className="login-input-wrapper">
+                  <input
+                    id="login-password"
+                    type={passwordVisible ? "text" : "password"}
+                    required
+                    autoComplete="current-password"
+                    className="login-input"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Ingrese su contraseña"
+                  />
+                  <button
+                    type="button"
+                    className="login-password-toggle"
+                    onClick={() => setPasswordVisible(!passwordVisible)}
+                    title={
+                      passwordVisible ? "Ocultar contraseña" : "Ver contraseña"
+                    }
+                    tabIndex={-1}
+                  >
+                    <i
+                      className={`fas ${passwordVisible ? "fa-eye-slash" : "fa-eye"}`}
+                    ></i>
+                  </button>
+                </div>
+                <div
                   style={{
-                    background: "none",
-                    border: "none",
-                    color: "#0284c7",
-                    fontSize: "0.78rem",
-                    fontWeight: "600",
-                    cursor: "pointer",
-                    textDecoration: "underline",
-                    padding: 0
+                    marginTop: "8px",
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    alignItems: "center",
                   }}
                 >
-                  ¿Olvidaste tu contraseña?
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModoRecuperar(true);
+                      setPasoRecuperar(1);
+                      setErrorRecuperar("");
+                      setMensajeExito("");
+                      setEmailRecuperar(email.trim());
+                    }}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: "#0284c7",
+                      fontSize: "0.78rem",
+                      fontWeight: "600",
+                      cursor: "pointer",
+                      textDecoration: "underline",
+                      padding: 0,
+                    }}
+                  >
+                    ¿Olvidaste tu contraseña?
+                  </button>
+                </div>
               </div>
-            </div>
 
-            {/* Botón de Ingreso */}
-            <button
-              type="submit"
-              className="login-btn-submit"
-              disabled={enviando}
-              style={{ width: "100%", padding: "0.75rem", fontWeight: "700" }}
-            >
-              {enviando ? (
-                <>
-                  <i className="fas fa-spinner fa-spin"></i>
-                  <span>Validando en base de datos...</span>
-                </>
-              ) : (
-                <>
-                  <span>Ingresar al Sistema</span>
-                  <i className="fas fa-arrow-right-to-bracket" style={{ marginLeft: "8px" }}></i>
-                </>
-              )}
-            </button>
-          </form>
+              {/* Botón de Ingreso */}
+              <button
+                type="submit"
+                className="login-btn-submit"
+                disabled={enviando}
+                style={{ width: "100%", padding: "0.75rem", fontWeight: "700" }}
+              >
+                {enviando ? (
+                  <>
+                    <i className="fas fa-spinner fa-spin"></i>
+                    <span>Validando en base de datos...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Ingresar al Sistema</span>
+                    <i
+                      className="fas fa-arrow-right-to-bracket"
+                      style={{ marginLeft: "8px" }}
+                    ></i>
+                  </>
+                )}
+              </button>
+            </form>
           )}
 
           {/* Aviso de Confidencialidad y Seguridad */}
-          <div className="login-security-notice" style={{ marginTop: "1.5rem" }}>
+          <div
+            className="login-security-notice"
+            style={{ marginTop: "1.5rem" }}
+          >
             <i className="fas fa-shield-halved"></i>
-            <span>Acceso controlado por RBAC y secreto profesional según perfil institucional</span>
+            <span>
+              Acceso controlado por RBAC y secreto profesional según perfil
+              institucional
+            </span>
           </div>
 
           {/* Footer Institucional */}
-          <div className="login-footer" style={{ marginTop: "1.25rem", textAlign: "center" }}>
+          <div
+            className="login-footer"
+            style={{ marginTop: "1.25rem", textAlign: "center" }}
+          >
             <span>Universidad CESMAG • San Juan de Pasto</span>
-            <span style={{ display: "block", marginTop: "0.25rem", fontSize: "0.725rem", color: "#64748b" }}>
-              Vicerrectoría de Evangelización de las Culturas • Permanencia Estudiantil
+            <span
+              style={{
+                display: "block",
+                marginTop: "0.25rem",
+                fontSize: "0.725rem",
+                color: "#64748b",
+              }}
+            >
+              Vicerrectoría para la Evangelización de las Culturas • Permanencia
+              Estudiantil
             </span>
           </div>
         </div>

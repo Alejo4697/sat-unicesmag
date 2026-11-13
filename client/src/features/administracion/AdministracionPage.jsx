@@ -45,6 +45,45 @@ const ROLE_LABELS = {
 
 const FORM_USUARIO_INICIAL = { nombre: "", email: "", rol: "profesional", cargo: "Docente Acompañante", programa: "Todos" };
 
+const DEFAULT_UMBRALES_ETAPAS = [
+  {
+    etapa: "INICIAL",
+    nombre: "Inicial",
+    semestres: "Semestres 1, 2, 3",
+    semestre_min: 1,
+    semestre_max: 3,
+    niveles: [
+      { nivel: "BAJO", puntaje_min: 23, puntaje_max: 83, color_hex: "#10B981" },
+      { nivel: "MEDIO", puntaje_min: 84, puntaje_max: 90, color_hex: "#F59E0B" },
+      { nivel: "ALTO", puntaje_min: 91, puntaje_max: 112, color_hex: "#EF4444" }
+    ]
+  },
+  {
+    etapa: "MEDIO",
+    nombre: "Medio",
+    semestres: "Semestres 4, 5, 6",
+    semestre_min: 4,
+    semestre_max: 6,
+    niveles: [
+      { nivel: "BAJO", puntaje_min: 23, puntaje_max: 81, color_hex: "#10B981" },
+      { nivel: "MEDIO", puntaje_min: 82, puntaje_max: 87, color_hex: "#F59E0B" },
+      { nivel: "ALTO", puntaje_min: 88, puntaje_max: 112, color_hex: "#EF4444" }
+    ]
+  },
+  {
+    etapa: "AVANZADO",
+    nombre: "Avanzado",
+    semestres: "Semestres 7, 8, 9",
+    semestre_min: 7,
+    semestre_max: 9,
+    niveles: [
+      { nivel: "BAJO", puntaje_min: 23, puntaje_max: 72, color_hex: "#10B981" },
+      { nivel: "MEDIO", puntaje_min: 73, puntaje_max: 87, color_hex: "#F59E0B" },
+      { nivel: "ALTO", puntaje_min: 88, puntaje_max: 112, color_hex: "#EF4444" }
+    ]
+  }
+];
+
 export default function AdministracionPage() {
   const [usuarios, setUsuarios] = useState([]);
   const [busqueda, setBusqueda] = useState("");
@@ -52,7 +91,8 @@ export default function AdministracionPage() {
   const [buscando, setBuscando] = useState(false);
 
   const [matriz, setMatriz] = useState(null);
-  const [umbrales, setUmbrales] = useState({ alto: 10, medio: 6 });
+  const [umbralesEtapas, setUmbralesEtapas] = useState(DEFAULT_UMBRALES_ETAPAS);
+  const [guardandoUmbrales, setGuardandoUmbrales] = useState(false);
   const [estadoSync, setEstadoSync] = useState(null);
   const [programas, setProgramas] = useState([]);
   const [catalogoCargos, setCatalogoCargos] = useState({ administrativo: [], profesional: [], directivo: [] });
@@ -94,7 +134,9 @@ export default function AdministracionPage() {
       .then(([u, m, um, sync, progs, cargos]) => {
         setUsuarios(u);
         setMatriz(m);
-        setUmbrales(um);
+        if (um?.etapas && Array.isArray(um.etapas) && um.etapas.length > 0) {
+          setUmbralesEtapas(um.etapas);
+        }
         setEstadoSync(sync);
         setProgramas(progs || []);
         if (cargos) setCatalogoCargos(cargos);
@@ -154,7 +196,7 @@ export default function AdministracionPage() {
   async function handleSincronizar() {
     setSincronizando(true);
     setError("");
-    setMensaje("Conectando con prod18sep2 y sincronizando estudiantes, docentes y egresados... Por favor espere.");
+    setMensaje("Conectando con prod18sep2 y sincronizando estudiantes, docentes, egresados y administrativos... Por favor espere.");
     try {
       const res = await sincronizarAcademico();
       const [uActualizados, syncActualizado] = await Promise.all([
@@ -287,14 +329,28 @@ export default function AdministracionPage() {
     }
   }
 
+  function handleNivelChange(etapaIdx, nivelIdx, field, val) {
+    const num = val === "" ? "" : Number(val);
+    setUmbralesEtapas((prev) => {
+      const copy = JSON.parse(JSON.stringify(prev));
+      copy[etapaIdx].niveles[nivelIdx][field] = num;
+      return copy;
+    });
+  }
+
   async function handleUmbrales(e) {
-    e.preventDefault();
+    if (e && e.preventDefault) e.preventDefault();
+    setGuardandoUmbrales(true);
     try {
-      const actualizados = await actualizarUmbralesRiesgo(umbrales);
-      setUmbrales(actualizados);
-      avisar(`Parámetros de semaforización actualizados (Alto >= ${actualizados.alto}, Medio >= ${actualizados.medio}).`);
+      const actualizados = await actualizarUmbralesRiesgo({ etapas: umbralesEtapas });
+      if (actualizados?.etapas && Array.isArray(actualizados.etapas) && actualizados.etapas.length > 0) {
+        setUmbralesEtapas(actualizados.etapas);
+      }
+      avisar("Umbrales institucionales de riesgo y permanencia actualizados exitosamente.");
     } catch (err) {
-      setError(err.message);
+      setError(err.message || "Error al actualizar los umbrales de riesgo.");
+    } finally {
+      setGuardandoUmbrales(false);
     }
   }
 
@@ -326,7 +382,7 @@ export default function AdministracionPage() {
               </span>
             </div>
             <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "4px 0 10px" }}>
-              Sincroniza estudiantes, docentes, egresados, facultades, matrículas activas, notas y estados académicos desde las bases institucionales.
+              Sincroniza estudiantes, docentes, egresados y administrativos, además de facultades, matrículas activas, notas y estados académicos desde las bases institucionales.
             </p>
 
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10, fontSize: "0.8rem" }}>
@@ -338,6 +394,9 @@ export default function AdministracionPage() {
               </div>
               <div style={{ background: "var(--surface-card)", padding: "4px 10px", borderRadius: 6, border: "1px solid var(--border-color)" }}>
                 <strong><i className="fas fa-user-graduate text-muted"></i> Egresados:</strong> {Number(estadoSync?.metricas?.total_egresados || 0).toLocaleString()}
+              </div>
+              <div style={{ background: "var(--surface-card)", padding: "4px 10px", borderRadius: 6, border: "1px solid var(--border-color)" }}>
+                <strong><i className="fas fa-user-gear text-muted"></i> Administrativos:</strong> {Number(estadoSync?.metricas?.total_administrativos || 0).toLocaleString()}
               </div>
               <div style={{ background: "var(--surface-card)", padding: "4px 10px", borderRadius: 6, border: "1px solid var(--border-color)" }}>
                 <strong><i className="fas fa-university text-muted"></i> Facultades:</strong> {estadoSync?.metricas?.total_facultades ? Number(estadoSync.metricas.total_facultades).toLocaleString() : "7"}
@@ -429,7 +488,8 @@ export default function AdministracionPage() {
               { id: "todos", label: "Todos", icon: "fa-list" },
               { id: "usuarios", label: "Con Acceso", icon: "fa-user-check" },
               { id: "docentes", label: "Docentes", icon: "fa-chalkboard-teacher" },
-              { id: "estudiantes", label: "Estudiantes", icon: "fa-user-graduate" }
+              { id: "estudiantes", label: "Estudiantes", icon: "fa-user-graduate" },
+              { id: "administrativos", label: "Administrativos", icon: "fa-user-tie" }
             ].map((t) => (
               <button
                 key={t.id}
@@ -495,7 +555,7 @@ export default function AdministracionPage() {
                               fontWeight: 700
                             }}
                           >
-                            <i className={`fas ${u.tipo_registro === "docente" ? "fa-chalkboard-user" : (u.tipo_registro === "estudiante" ? "fa-graduation-cap" : "fa-user")}`}></i>
+                            <i className={`fas ${u.tipo_registro === "docente" ? "fa-chalkboard-user" : (u.tipo_registro === "estudiante" ? "fa-graduation-cap" : (u.tipo_registro === "administrativo" ? "fa-user-tie" : "fa-user"))}`}></i>
                           </div>
                           <div>
                             <strong>{u.nombre}</strong>
@@ -514,7 +574,7 @@ export default function AdministracionPage() {
                             </span>
                           )}
                           <span className="badge" style={{ fontSize: "0.65rem", marginTop: 2, background: "#f1f5f9", color: "#475569" }}>
-                            {u.tipo_registro === "docente" ? "Docente Sincronizado" : (u.tipo_registro === "estudiante" ? "Estudiante" : "Usuario SAT")}
+                            {u.tipo_registro === "docente" ? "Docente Sincronizado" : (u.tipo_registro === "estudiante" ? "Estudiante" : (u.tipo_registro === "administrativo" ? "Administrativo" : "Usuario SAT"))}
                           </span>
                         </div>
                       </td>
@@ -626,111 +686,220 @@ export default function AdministracionPage() {
         </div>
       </div>
 
-      {/* Grid Inferior: Formulario de Creación Rápida y Umbrales */}
-      <div className="dashboard-grid" style={{ marginBottom: "1.5rem" }}>
-        <div className="card" style={{ gridColumn: "span 6" }}>
-          <div className="card-header">
-            <h3 className="card-title">Crear Nuevo Usuario Directo</h3>
-          </div>
-
-          <form onSubmit={handleCrearUsuario}>
-            <div className="form-group">
-              <label className="form-label" htmlFor="usr-nombre">Nombres y Apellidos</label>
-              <input
-                id="usr-nombre"
-                className="form-control"
-                placeholder="Ej: Lic. Juan Fernando Pérez"
-                required
-                value={formUsuario.nombre}
-                onChange={(e) => setFormUsuario({ ...formUsuario, nombre: e.target.value })}
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label" htmlFor="usr-email">Correo Institucional</label>
-              <input
-                id="usr-email"
-                type="email"
-                className="form-control"
-                placeholder="usuario@unicesmag.edu.co"
-                required
-                value={formUsuario.email}
-                onChange={(e) => setFormUsuario({ ...formUsuario, email: e.target.value })}
-              />
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <div className="form-group">
-                <label className="form-label" htmlFor="usr-rol">Rol Institucional</label>
-                <select
-                  id="usr-rol"
-                  className="form-select"
-                  value={formUsuario.rol}
-                  onChange={(e) => setFormUsuario({ ...formUsuario, rol: e.target.value })}
-                >
-                  <option value="admin">1. Rol Administrativo</option>
-                  <option value="profesional">2. Rol Profesionales</option>
-                  <option value="directivo">3. Rol Directivos</option>
-                  <option value="reporte_actividades">4. Rol Reporte de Actividades</option>
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label" htmlFor="usr-cargo">Cargo / Perfil</label>
-                <input
-                  id="usr-cargo"
-                  className="form-control"
-                  placeholder="Ej: Docente Acompañante"
-                  required
-                  value={formUsuario.cargo}
-                  onChange={(e) => setFormUsuario({ ...formUsuario, cargo: e.target.value })}
-                />
-              </div>
-            </div>
-
-            <button type="submit" className="btn btn-primary" style={{ width: "100%", marginTop: 10 }}>
-              <i className="fas fa-floppy-disk"></i> Guardar y Crear Acceso
-            </button>
-          </form>
+      {/* Grid Inferior: Formulario de Creación Rápida de Usuario */}
+      <div className="card" style={{ marginBottom: "1.5rem" }}>
+        <div className="card-header">
+          <h3 className="card-title" style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <i className="fas fa-user-plus" style={{ color: "#2563eb" }}></i>
+            Crear Nuevo Usuario Directo
+          </h3>
         </div>
 
-        <div className="card" style={{ gridColumn: "span 6" }}>
-          <div className="card-header">
-            <h3 className="card-title">Configuración de Umbrales de Riesgo</h3>
+        <form onSubmit={handleCrearUsuario} style={{ maxWidth: "800px" }}>
+          <div className="form-group">
+            <label className="form-label" htmlFor="usr-nombre">Nombres y Apellidos</label>
+            <input
+              id="usr-nombre"
+              className="form-control"
+              placeholder="Ej: Lic. Juan Fernando Pérez"
+              required
+              value={formUsuario.nombre}
+              onChange={(e) => setFormUsuario({ ...formUsuario, nombre: e.target.value })}
+            />
           </div>
-          <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "0 0 1rem" }}>
-            Define las bandas de puntuación del semáforo de riesgo para alertas tempranas en la escala de 1 a 15.
-          </p>
 
-          <form onSubmit={handleUmbrales} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.25rem", alignItems: "flex-end" }}>
-            <div>
-              <label className="form-label">Puntaje Mínimo Riesgo Alto</label>
+          <div className="form-group">
+            <label className="form-label" htmlFor="usr-email">Correo Institucional</label>
+            <input
+              id="usr-email"
+              type="email"
+              className="form-control"
+              placeholder="usuario@unicesmag.edu.co"
+              required
+              value={formUsuario.email}
+              onChange={(e) => setFormUsuario({ ...formUsuario, email: e.target.value })}
+            />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div className="form-group">
+              <label className="form-label" htmlFor="usr-rol">Rol Institucional</label>
+              <select
+                id="usr-rol"
+                className="form-select"
+                value={formUsuario.rol}
+                onChange={(e) => setFormUsuario({ ...formUsuario, rol: e.target.value })}
+              >
+                <option value="admin">1. Rol Administrativo</option>
+                <option value="profesional">2. Rol Profesionales</option>
+                <option value="directivo">3. Rol Directivos</option>
+                <option value="reporte_actividades">4. Rol Reporte de Actividades</option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label" htmlFor="usr-cargo">Cargo / Perfil</label>
               <input
-                type="number"
+                id="usr-cargo"
                 className="form-control"
-                min={1}
-                max={15}
-                value={umbrales.alto}
-                onChange={(e) => setUmbrales({ ...umbrales, alto: Number(e.target.value) })}
+                placeholder="Ej: Docente Acompañante"
+                required
+                value={formUsuario.cargo}
+                onChange={(e) => setFormUsuario({ ...formUsuario, cargo: e.target.value })}
               />
             </div>
-            <div>
-              <label className="form-label">Puntaje Mínimo Riesgo Medio</label>
-              <input
-                type="number"
-                className="form-control"
-                min={1}
-                max={15}
-                value={umbrales.medio}
-                onChange={(e) => setUmbrales({ ...umbrales, medio: Number(e.target.value) })}
-              />
+          </div>
+
+          <button type="submit" className="btn btn-primary" style={{ marginTop: 10 }}>
+            <i className="fas fa-floppy-disk"></i> Guardar y Crear Acceso
+          </button>
+        </form>
+      </div>
+
+      {/* Configuración de Umbrales de Riesgo Institucional por Etapas */}
+      <div className="card" style={{ marginBottom: "1.5rem" }}>
+        <div
+          className="card-header"
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "0.75rem"
+          }}
+        >
+          <div>
+            <h3 className="card-title" style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <i className="fas fa-traffic-light" style={{ color: "#2563eb" }}></i>
+              Configuración de Umbrales de Riesgo Institucional
+            </h3>
+            <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: "0.25rem 0 0" }}>
+              Puntajes de semaforización de la encuesta de caracterización según la etapa formativa del estudiante.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleUmbrales}
+            className="btn btn-primary"
+            disabled={guardandoUmbrales}
+            style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem" }}
+          >
+            <i className={guardandoUmbrales ? "fas fa-spinner fa-spin" : "fas fa-check"}></i>
+            {guardandoUmbrales ? "Guardando..." : "Guardar Configuración de Umbrales"}
+          </button>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+            gap: "1.25rem",
+            marginTop: "1rem"
+          }}
+        >
+          {umbralesEtapas.map((etapaObj, etapaIdx) => (
+            <div
+              key={etapaObj.etapa || etapaIdx}
+              style={{
+                border: "1px solid var(--border-color, #e2e8f0)",
+                borderRadius: "8px",
+                overflow: "hidden",
+                background: "var(--card-bg, #ffffff)",
+                boxShadow: "0 1px 3px rgba(0,0,0,0.05)"
+              }}
+            >
+              <div
+                style={{
+                  padding: "0.75rem 1rem",
+                  background: "#f8fafc",
+                  borderBottom: "1px solid var(--border-color, #e2e8f0)",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center"
+                }}
+              >
+                <div>
+                  <h4 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 700, color: "#1e293b" }}>
+                    {etapaObj.nombre || etapaObj.etapa} — {etapaObj.semestres || `Semestres ${etapaObj.semestre_min} - ${etapaObj.semestre_max}`}
+                  </h4>
+                </div>
+                <span
+                  style={{
+                    fontSize: "0.75rem",
+                    fontWeight: 600,
+                    padding: "0.2rem 0.55rem",
+                    borderRadius: "9999px",
+                    background: "#e0e7ff",
+                    color: "#3730a3"
+                  }}
+                >
+                  Etapa {etapaObj.nombre || etapaObj.etapa}
+                </span>
+              </div>
+
+              <div style={{ padding: "0.75rem" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
+                  <thead>
+                    <tr style={{ borderBottom: "2px solid #e2e8f0", textAlign: "left" }}>
+                      <th style={{ padding: "0.5rem 0.4rem", fontWeight: 600, color: "#475569" }}>Nivel</th>
+                      <th style={{ padding: "0.5rem 0.4rem", fontWeight: 600, color: "#475569", width: "35%" }}>Puntaje mínimo</th>
+                      <th style={{ padding: "0.5rem 0.4rem", fontWeight: 600, color: "#475569", width: "35%" }}>Puntaje máximo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(etapaObj.niveles || []).map((nivelObj, nivelIdx) => {
+                      const nivelUpper = (nivelObj.nivel || "").toUpperCase();
+                      const colorBadge =
+                        nivelUpper === "BAJO"
+                          ? { bg: "#dcfce7", text: "#166534", border: "#86efac" }
+                          : nivelUpper === "MEDIO"
+                          ? { bg: "#fef3c7", text: "#92400e", border: "#fde68a" }
+                          : { bg: "#fee2e2", text: "#991b1b", border: "#fca5a5" };
+
+                      return (
+                        <tr key={nivelObj.id || nivelObj.nivel || nivelIdx} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                          <td style={{ padding: "0.5rem 0.4rem" }}>
+                            <span
+                              style={{
+                                display: "inline-block",
+                                padding: "0.2rem 0.5rem",
+                                borderRadius: "4px",
+                                fontWeight: 700,
+                                fontSize: "0.75rem",
+                                background: colorBadge.bg,
+                                color: colorBadge.text,
+                                border: `1px solid ${colorBadge.border}`
+                              }}
+                            >
+                              {nivelUpper}
+                            </span>
+                          </td>
+                          <td style={{ padding: "0.5rem 0.4rem" }}>
+                            <input
+                              type="number"
+                              className="form-control"
+                              style={{ padding: "0.35rem 0.5rem", fontSize: "0.85rem", height: "auto" }}
+                              value={nivelObj.puntaje_min ?? ""}
+                              onChange={(e) => handleNivelChange(etapaIdx, nivelIdx, "puntaje_min", e.target.value)}
+                            />
+                          </td>
+                          <td style={{ padding: "0.5rem 0.4rem" }}>
+                            <input
+                              type="number"
+                              className="form-control"
+                              style={{ padding: "0.35rem 0.5rem", fontSize: "0.85rem", height: "auto" }}
+                              value={nivelObj.puntaje_max ?? ""}
+                              onChange={(e) => handleNivelChange(etapaIdx, nivelIdx, "puntaje_max", e.target.value)}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
-            <div style={{ gridColumn: "span 2" }}>
-              <button type="submit" className="btn btn-primary" style={{ width: "100%" }}>
-                <i className="fas fa-check"></i> Actualizar Umbrales de Riesgo
-              </button>
-            </div>
-          </form>
+          ))}
         </div>
       </div>
 

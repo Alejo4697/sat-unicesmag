@@ -7,6 +7,7 @@ import {
   requireRole,
 } from "../../shared/middleware/requireRole.js";
 import { sincronizarEgresadosInstitucionales } from "./egresadosSync.js";
+import { sincronizarAdministrativosInstitucionales } from "./administrativosSync.js";
 import { ejecutarSincronizacion } from "../../shared/services/syncService.js";
 import { generarExcelAsistentes } from "./excelAsistentes.js";
 
@@ -45,6 +46,292 @@ function normalizarTipoParticipante(tipo) {
   const normalized = String(tipo || "").trim().toUpperCase();
   return normalized === "DOCENTE" ? "COLABORADOR" : normalized;
 }
+
+function normalizarLineaAccion(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase("es");
+}
+
+async function resolverAccesoActividades(user) {
+  const rol = String(user?.rol || "").toLowerCase();
+  const puedeAdministrarPorRol = ROLES_GESTION_ACTIVIDADES.has(rol);
+  let configuracion = null;
+
+  if (UUID_PATTERN.test(String(user?.id || ""))) {
+    const { rows } = await query(
+      `SELECT lineas_accion AS "lineasAccion",
+              acceso_global AS "accesoGlobal"
+       FROM sat.actividades_vec_permisos_linea_accion
+       WHERE id_usuarios = $1`,
+      [user.id],
+    );
+    configuracion = rows[0] || null;
+  }
+
+  if (!configuracion) {
+    return {
+      restringido: false,
+      lineasAccion: [],
+      puedeCrear: puedeAdministrarPorRol,
+      puedeAdministrar: puedeAdministrarPorRol,
+      accesoGlobal: true,
+    };
+  }
+
+  const lineasAccion = Array.isArray(configuracion.lineasAccion)
+    ? configuracion.lineasAccion.filter((linea) => String(linea || "").trim())
+    : [];
+  const accesoGlobal = Boolean(configuracion.accesoGlobal);
+  return {
+    restringido: !accesoGlobal,
+    lineasAccion,
+    puedeCrear: true,
+    puedeAdministrar: true,
+    moduloCompleto: true,
+    accesoGlobal,
+  };
+}
+
+async function actividadDentroDelAlcance(id, access) {
+  const { rows } = await query(
+    `SELECT ${EXPRESION_LINEA_ACTIVIDAD} AS "lineaAccion"
+     FROM sat.actividades_vec a
+     LEFT JOIN sat.catalogo_actividades_vec cat
+       ON cat.id_catalogo_actividades_vec = a.id_catalogo_actividades_vec
+      AND cat.tipo_registro = 'ACTIVIDAD'
+     LEFT JOIN sat.programas_bienestar pb
+       ON pb.id_programas_bienestar = a.id_programas_bienestar
+     LEFT JOIN sat.componentes_bienestar cb
+       ON cb.id_componentes_bienestar = pb.id_componentes_bienestar
+     LEFT JOIN sat.lineas_accion la
+       ON la.id_lineas_accion = cb.id_lineas_accion
+     WHERE a.id_actividades_vec = $1`,
+    [id],
+  );
+  const linea = normalizarLineaAccion(rows[0]?.lineaAccion);
+  const lineasPermitidas = new Set(
+    access.lineasAccion.map(normalizarLineaAccion),
+  );
+  return Boolean(linea && lineasPermitidas.has(linea));
+}
+
+async function inscripcionDentroDelAlcance(id, access) {
+  const { rows } = await query(
+    `SELECT ${EXPRESION_LINEA_ACTIVIDAD} AS "lineaAccion"
+     FROM sat.actividades_vec_participantes avp
+     JOIN sat.actividades_vec a
+       ON a.id_actividades_vec = avp.id_actividades_vec
+     LEFT JOIN sat.catalogo_actividades_vec cat
+       ON cat.id_catalogo_actividades_vec = a.id_catalogo_actividades_vec
+      AND cat.tipo_registro = 'ACTIVIDAD'
+     LEFT JOIN sat.programas_bienestar pb
+       ON pb.id_programas_bienestar = a.id_programas_bienestar
+     LEFT JOIN sat.componentes_bienestar cb
+       ON cb.id_componentes_bienestar = pb.id_componentes_bienestar
+     LEFT JOIN sat.lineas_accion la
+       ON la.id_lineas_accion = cb.id_lineas_accion
+     WHERE avp.id_actividades_vec_participantes = $1`,
+    [id],
+  );
+  const linea = normalizarLineaAccion(rows[0]?.lineaAccion);
+  return access.lineasAccion.some(
+    (permitida) => normalizarLineaAccion(permitida) === linea,
+  );
+}
+
+async function catalogoDentroDelAlcance(id, access) {
+  const { rows } = await query(
+    `SELECT COALESCE(
+              NULLIF(BTRIM(cat.linea_accion), ''),
+              NULLIF(BTRIM(bienestar.linea_accion), '')
+            ) AS "lineaAccion"
+     FROM sat.catalogo_actividades_vec cat
+     LEFT JOIN sat.catalogo_bienestar_actividades bienestar
+       ON translate(LOWER(BTRIM(bienestar.programa)), 'áéíóúüñ', 'aeiouun')
+        = translate(LOWER(BTRIM(cat.programa)), 'áéíóúüñ', 'aeiouun')
+     WHERE cat.id_catalogo_actividades_vec = $1
+       AND cat.tipo_registro = 'ACTIVIDAD'`,
+    [id],
+  );
+  const linea = normalizarLineaAccion(rows[0]?.lineaAccion);
+  return access.lineasAccion.some(
+    (permitida) => normalizarLineaAccion(permitida) === linea,
+  );
+}
+
+async function controlarAlcanceActividades(req, res, next) {
+  try {
+    const access = await resolverAccesoActividades(req.user);
+    req.activityAccess = access;
+
+    if (!access.restringido) {
+      if (
+        !access.moduloCompleto &&
+        req.user?.rol === "reporte_actividades" &&
+        ["POST", "PUT", "PATCH", "DELETE"].includes(req.method)
+      ) {
+        return res.status(403).json({
+          error: "El rol Reporte de Actividades solo tiene permisos de consulta.",
+        });
+      }
+      return next();
+    }
+
+    const rutasLectura = new Set([
+      "/acceso-lineas",
+      "/actividades-disponibles",
+      "/apoyos/todos",
+      "/buscar",
+      "/catalogo-maestro",
+      "/catalogos-estudiante",
+      "/eventos",
+      "/eventos-proximos",
+      "/exportar-asistentes",
+      "/personas/buscar",
+      "/registros-estudiante",
+      "/resumen",
+      "/asistentes",
+      "/sesiones",
+    ]);
+    if (req.method === "GET" && rutasLectura.has(req.path)) {
+      const idActividad = String(req.query.idActividad || "").trim();
+      if (
+        ["/asistentes", "/sesiones", "/exportar-asistentes"].includes(req.path) &&
+        (!UUID_PATTERN.test(idActividad) ||
+          !(await actividadDentroDelAlcance(idActividad, access)))
+      ) {
+        return res.status(404).json({ error: "Actividad no encontrada." });
+      }
+      return next();
+    }
+
+    const actividadMatch = req.path.match(
+      /^\/eventos\/([^/]+)(?:\/participantes(?:\/exportar)?|\/estado)?$/,
+    );
+    if (
+      actividadMatch &&
+      ["GET", "PUT", "PATCH", "DELETE"].includes(req.method) &&
+      UUID_PATTERN.test(actividadMatch[1])
+    ) {
+      if (await actividadDentroDelAlcance(actividadMatch[1], access)) {
+        return next();
+      }
+      return res.status(404).json({ error: "Actividad no encontrada." });
+    }
+
+    if (req.method === "POST" && req.path === "/eventos/eliminar-lote") {
+      const ids = req.body?.ids;
+      if (
+        Array.isArray(ids) &&
+        ids.length > 0 &&
+        ids.length <= 250 &&
+        ids.every((id) => UUID_PATTERN.test(String(id || ""))) &&
+        (await Promise.all(
+          ids.map((id) => actividadDentroDelAlcance(String(id), access)),
+        )).every(Boolean)
+      ) {
+        return next();
+      }
+      return res.status(404).json({ error: "Una o más actividades no existen." });
+    }
+
+    const inscripcionMatch =
+      req.path.match(/^\/inscripciones\/([^/]+)(?:\/apoyo)?$/);
+    if (
+      inscripcionMatch &&
+      ["DELETE", "PATCH"].includes(req.method) &&
+      UUID_PATTERN.test(inscripcionMatch[1])
+    ) {
+      if (await inscripcionDentroDelAlcance(inscripcionMatch[1], access)) {
+        return next();
+      }
+      return res.status(404).json({ error: "Inscripción no encontrada." });
+    }
+
+    if (req.method === "POST" && req.path === "/eventos" && access.puedeCrear) {
+      return next();
+    }
+
+    if (
+      req.method === "POST" &&
+      ["/asistencia/verificar", "/registro-actividad/validar-masivo",
+        "/registro-actividad/masivo",
+        "/registro-actividad/masivo/registrar-no-encontrado"].includes(req.path)
+    ) {
+      const idActividad = String(req.body?.idActividad || "").trim();
+      if (
+        UUID_PATTERN.test(idActividad) &&
+        await actividadDentroDelAlcance(idActividad, access)
+      ) {
+        return next();
+      }
+      return res.status(404).json({ error: "Actividad no encontrada." });
+    }
+
+    if (
+      req.method === "POST" &&
+      ["/registro-actividad", "/registro-estudiante"].includes(req.path)
+    ) {
+      const activity = req.body?.actividad || {};
+      if (activity.idEventoExistente) {
+        if (
+          UUID_PATTERN.test(String(activity.idEventoExistente)) &&
+          await actividadDentroDelAlcance(activity.idEventoExistente, access)
+        ) {
+          return next();
+        }
+        return res.status(404).json({ error: "Actividad no encontrada." });
+      }
+      const idCatalogo = String(activity.idCatalogoActividad || "").trim();
+      if (
+        UUID_PATTERN.test(idCatalogo) &&
+        await catalogoDentroDelAlcance(idCatalogo, access)
+      ) {
+        return next();
+      }
+      return res.status(403).json({
+        error: "Selecciona una actividad de una de tus líneas asignadas.",
+      });
+    }
+
+    if (
+      req.method === "POST" &&
+      ["/importar-realizadas/previsualizar",
+        "/importar-realizadas/confirmar"].includes(req.path)
+    ) {
+      return next();
+    }
+
+    return res.status(403).json({
+      error: "No tienes permisos para consultar o modificar este recurso de actividades.",
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+function requireRoleOrLineaAccion(...roles) {
+  const requireConfiguredRole = requireRole(...roles);
+  return (req, res, next) => {
+    if (req.activityAccess?.moduloCompleto) return next();
+    return requireConfiguredRole(req, res, next);
+  };
+}
+
+function validarLineasImportacion(input, access) {
+  if (!access.restringido) return null;
+  const lineasPermitidas = new Set(
+    access.lineasAccion.map(normalizarLineaAccion),
+  );
+  const actividadFueraDeAlcance = input.activities.find(
+    (activity) => !lineasPermitidas.has(normalizarLineaAccion(activity.actionLine)),
+  );
+  return actividadFueraDeAlcance
+    ? "Todas las actividades del archivo deben pertenecer a tus líneas asignadas."
+    : null;
+}
 const TIPOS_DOCUMENTO_PARTICIPANTE = new Set([
   "CC",
   "TI",
@@ -77,6 +364,13 @@ const MAX_IDENTIFICACION_LENGTH = 64;
 const NUMERO_TIPO_BENEFICIOS_ECONOMICOS = 1;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ROLES_GESTION_ACTIVIDADES = new Set([
+  "admin",
+  "administrador",
+  "coordinador",
+]);
+const EXPRESION_LINEA_ACTIVIDAD =
+  "COALESCE(NULLIF(BTRIM(cat.linea_accion), ''), NULLIF(BTRIM(la.nombre), ''))";
 const HOJA_REGISTRO_MANUAL = "REGISTRO MANUAL";
 const UBICACIONES_ACTIVIDAD = new Set([
   "Campus Centro",
@@ -637,16 +931,10 @@ function asistentesSinIdPersona(asistentes) {
 }
 
 router.use(identifyUser, requireModule("actividades"));
-router.use((req, res, next) => {
-  if (
-    req.user?.rol === "reporte_actividades"
-    && ["POST", "PUT", "PATCH", "DELETE"].includes(req.method)
-  ) {
-    return res.status(403).json({
-      error: "El rol Reporte de Actividades solo tiene permisos de consulta.",
-    });
-  }
-  next();
+router.use(controlarAlcanceActividades);
+
+router.get("/acceso-lineas", (req, res) => {
+  res.json(req.activityAccess);
 });
 
 router.post(
@@ -657,6 +945,7 @@ router.post(
       ok: false,
       institucional: { ok: false },
       egresados: { ok: false },
+      administrativos: { ok: false },
     };
 
     try {
@@ -665,6 +954,9 @@ router.post(
         ok: true,
         docentes: institucional.docentes,
         estudiantes: institucional.estudiantes,
+        perfilesEstudiantes: institucional.perfilesEstudiantes,
+        estudiantesSinPersona: institucional.estudiantesSinPersona,
+        estudiantesConflictoExterno: institucional.estudiantesConflictoExterno,
         matriculas: institucional.matriculas,
         facultades: institucional.facultades,
         calificaciones: institucional.calificaciones,
@@ -689,15 +981,32 @@ router.post(
       resultado.egresados = { ok: false, error: error.message };
     }
 
-    resultado.ok = resultado.institucional.ok && resultado.egresados.ok;
+    try {
+      resultado.administrativos = {
+        ok: true,
+        ...await sincronizarAdministrativosInstitucionales(
+          (client, participante) => guardarPerfilDeActividad(client, participante),
+        ),
+      };
+    } catch (error) {
+      console.error("[Sincronización de perfiles] Falló la sincronización de administrativos:", error);
+      resultado.administrativos = { ok: false, error: error.message };
+    }
+
+    resultado.ok =
+      resultado.institucional.ok &&
+      resultado.egresados.ok &&
+      resultado.administrativos.ok;
     resultado.mensaje = resultado.ok
-      ? `Sincronización completada: ${resultado.institucional.docentes || 0} docentes, ${resultado.institucional.estudiantes || 0} estudiantes y ${resultado.egresados.egresadosUnicos} egresados únicos procesados.`
+      ? `Sincronización completada: ${resultado.institucional.perfilesEstudiantes || 0} perfiles de estudiante conectados a Actividades (${resultado.institucional.estudiantesConflictoExterno || 0} omitidos por rol Externo; ${resultado.institucional.estudiantesSinPersona || 0} sin persona), ${resultado.institucional.docentes || 0} docentes, ${resultado.egresados.egresadosUnicos} egresados y ${resultado.administrativos.administrativosUnicos} administrativos únicos procesados.`
       : [
         "Sincronización incompleta.",
         !resultado.institucional.ok && `Docentes y estudiantes: ${resultado.institucional.error}`,
         !resultado.egresados.ok && `Egresados: ${resultado.egresados.error}`,
-        resultado.institucional.ok && `Docentes y estudiantes: ${resultado.institucional.docentes || 0} docentes y ${resultado.institucional.estudiantes || 0} estudiantes procesados.`,
+        !resultado.administrativos.ok && `Administrativos: ${resultado.administrativos.error}`,
+        resultado.institucional.ok && `Actividades: ${resultado.institucional.perfilesEstudiantes || 0} perfiles de estudiante vinculados; ${resultado.institucional.estudiantesSinPersona || 0} sin persona y ${resultado.institucional.estudiantesConflictoExterno || 0} omitidos por rol Externo. Docentes: ${resultado.institucional.docentes || 0}.`,
         resultado.egresados.ok && `Egresados: ${resultado.egresados.egresadosUnicos} únicos; ${resultado.egresados.perfilesCreados} perfiles nuevos, ${resultado.egresados.perfilesYaExistentes} existentes y ${resultado.egresados.conflictosExternos} omitidos por rol Externo.`,
+        resultado.administrativos.ok && `Administrativos: ${resultado.administrativos.administrativosUnicos} únicos; ${resultado.administrativos.perfilesCreados} perfiles nuevos, ${resultado.administrativos.perfilesYaExistentes} existentes y ${resultado.administrativos.conflictosExternos} omitidos por rol Externo.`,
       ].filter(Boolean).join(" "),
     res.json(resultado);
   },
@@ -747,6 +1056,12 @@ router.post(
 );
 
 router.get("/actividades-disponibles", async (req, res, next) => {
+  const filtroLinea = req.activityAccess.restringido
+    ? `AND LOWER(BTRIM(${EXPRESION_LINEA_ACTIVIDAD})) = ANY($1::text[])`
+    : "";
+  const parametros = req.activityAccess.restringido
+    ? [req.activityAccess.lineasAccion.map(normalizarLineaAccion)]
+    : [];
   try {
     const { rows } = await query(
       `SELECT a.id_actividades_vec AS id,
@@ -756,7 +1071,7 @@ router.get("/actividades-disponibles", async (req, res, next) => {
              COALESCE(cat.proyecto, a.proyecto) AS proyecto,
              COALESCE(cat.programa, pb.nombre) AS programa,
              COALESCE(cat.componente, cb.nombre) AS componente,
-             cat.linea_accion AS "lineaAccion",
+             ${EXPRESION_LINEA_ACTIVIDAD} AS "lineaAccion",
              COALESCE(cat.hoja_origen, 'Registro manual') AS "hojaOrigen",
              a.id_periodos_academicos AS "idPeriodo",
              pa.nombre AS periodo,
@@ -785,17 +1100,21 @@ router.get("/actividades-disponibles", async (req, res, next) => {
          ON pb.id_programas_bienestar = a.id_programas_bienestar
        LEFT JOIN sat.componentes_bienestar cb
          ON cb.id_componentes_bienestar = pb.id_componentes_bienestar
+       LEFT JOIN sat.lineas_accion la
+         ON la.id_lineas_accion = cb.id_lineas_accion
        LEFT JOIN sat.actividades_vec_participantes avp
          ON avp.id_actividades_vec = a.id_actividades_vec
        LEFT JOIN sat.apoyos_actividades_vec ta
          ON ta.id_tipos_apoyo = avp.id_tipos_apoyo
        WHERE a.estado <> 'CANCELADA'
+         ${filtroLinea}
        GROUP BY a.id_actividades_vec, cat.actividad, a.actividad, cat.descripcion,
                 a.descripcion_actividad, cat.tipo_actividad, a.tipo_actividad,
                 cat.proyecto, a.proyecto, cat.programa, pb.nombre, cat.componente,
-                cb.nombre, cat.linea_accion, cat.hoja_origen, a.id_periodos_academicos,
+                cb.nombre, cat.linea_accion, la.nombre, cat.hoja_origen, a.id_periodos_academicos,
                 pa.nombre, a.fecha_inicio, a.fecha_finalizacion, a.estado
        ORDER BY actividad, pa.nombre, a.fecha_inicio, a.fecha_finalizacion`,
+      parametros,
     );
     res.json(rows);
   } catch (err) {
@@ -803,7 +1122,13 @@ router.get("/actividades-disponibles", async (req, res, next) => {
   }
 });
 
-router.get("/eventos-proximos", async (_req, res, next) => {
+router.get("/eventos-proximos", async (req, res, next) => {
+  const filtroLinea = req.activityAccess.restringido
+    ? `AND LOWER(BTRIM(${EXPRESION_LINEA_ACTIVIDAD})) = ANY($1::text[])`
+    : "";
+  const parametros = req.activityAccess.restringido
+    ? [req.activityAccess.lineasAccion.map(normalizarLineaAccion)]
+    : [];
   try {
     const { rows } = await query(
       `SELECT (ARRAY_AGG(a.id_actividades_vec ORDER BY a.creado_en, a.id_actividades_vec))[1] AS id,
@@ -818,7 +1143,7 @@ router.get("/eventos-proximos", async (_req, res, next) => {
                          ORDER BY a.creado_en, a.id_actividades_vec))[1]) AS proyecto,
               COALESCE(cat.programa, pb.nombre) AS "programaBienestar",
               COALESCE(cat.componente, cb.nombre) AS componente,
-              cat.linea_accion AS "lineaAccion",
+              ${EXPRESION_LINEA_ACTIVIDAD} AS "lineaAccion",
               cat.hoja_origen AS "hojaOrigen",
               a.fecha_inicio AS "fechaInicio",
               a.fecha_finalizacion AS "fechaFinalizacion",
@@ -853,6 +1178,8 @@ router.get("/eventos-proximos", async (_req, res, next) => {
          ON pb.id_programas_bienestar = a.id_programas_bienestar
        LEFT JOIN sat.componentes_bienestar cb
          ON cb.id_componentes_bienestar = pb.id_componentes_bienestar
+       LEFT JOIN sat.lineas_accion la
+         ON la.id_lineas_accion = cb.id_lineas_accion
        LEFT JOIN sat.actividades_vec_participantes avp
          ON avp.id_actividades_vec = a.id_actividades_vec
        LEFT JOIN sat.actividades_vec_modalidades modalidad
@@ -861,13 +1188,15 @@ router.get("/eventos-proximos", async (_req, res, next) => {
          ON apoyo.id_tipos_apoyo = modalidad.id_tipos_apoyo
         AND apoyo.activo = true
        WHERE a.estado IN ('PROGRAMADA', 'EN_CURSO')
+         ${filtroLinea}
        GROUP BY cat.id_catalogo_actividades_vec, a.id_periodos_academicos, pa.nombre,
                 COALESCE(cat.actividad, a.actividad),
                 COALESCE(cat.descripcion, a.descripcion_actividad),
                 cat.proyecto, COALESCE(cat.programa, pb.nombre),
-                COALESCE(cat.componente, cb.nombre), cat.linea_accion, cat.hoja_origen, a.estado,
+                COALESCE(cat.componente, cb.nombre), cat.linea_accion, la.nombre, cat.hoja_origen, a.estado,
                 a.fecha_inicio, a.fecha_finalizacion, a.variables_modalidades
        ORDER BY a.fecha_inicio, a.fecha_finalizacion, actividad`,
+      parametros,
     );
     const modalidadesPorPrograma = new Map(
       listarProgramasBienestar().map((item) => [item.programaCompleto, item]),
@@ -915,6 +1244,13 @@ router.get("/eventos", async (req, res, next) => {
       error: "La lista de actividades solicitada no es válida.",
     });
   }
+  const params = [estado, busqueda, ids];
+  const filtroLinea = req.activityAccess.restringido
+    ? `AND LOWER(BTRIM(${EXPRESION_LINEA_ACTIVIDAD})) = ANY($4::text[])`
+    : "";
+  if (req.activityAccess.restringido) {
+    params.push(req.activityAccess.lineasAccion.map(normalizarLineaAccion));
+  }
   try {
     const { rows } = await query(
       `SELECT a.id_actividades_vec AS id,
@@ -924,7 +1260,10 @@ router.get("/eventos", async (req, res, next) => {
               COALESCE(cat.actividad, a.actividad) AS actividad,
               COALESCE(a.descripcion_actividad, cat.descripcion) AS descripcion,
               COALESCE(cat.programa, pb.nombre) AS "programaBienestar",
+              pb.nombre AS "programaBienestarReal",
+              ${EXPRESION_LINEA_ACTIVIDAD} AS "lineaAccion",
               COALESCE(cat.componente, cb.nombre) AS "componenteBienestar",
+              cb.nombre AS "componenteBienestarReal",
               COALESCE(cat.proyecto, a.proyecto) AS proyecto,
               COALESCE(cat.tipo_actividad, a.tipo_actividad) AS "tipoActividad",
               a.modalidad,
@@ -976,6 +1315,8 @@ router.get("/eventos", async (req, res, next) => {
          ON pb.id_programas_bienestar = a.id_programas_bienestar
        LEFT JOIN sat.componentes_bienestar cb
          ON cb.id_componentes_bienestar = pb.id_componentes_bienestar
+       LEFT JOIN sat.lineas_accion la
+         ON la.id_lineas_accion = cb.id_lineas_accion
        LEFT JOIN sat.actividades_vec_participantes avp
          ON avp.id_actividades_vec = a.id_actividades_vec
        LEFT JOIN sat.actividades_vec_modalidades avm
@@ -1001,12 +1342,13 @@ router.get("/eventos", async (req, res, next) => {
                    ' '
                  ) ILIKE '%' || $2 || '%')
          AND (cardinality($3::uuid[]) = 0 OR a.id_actividades_vec = ANY($3::uuid[]))
+         ${filtroLinea}
        GROUP BY a.id_actividades_vec, pa.nombre, cat.actividad, cat.descripcion,
-                cat.programa, pb.nombre, cat.componente, cb.nombre,
-                cat.proyecto, cat.tipo_actividad, a.variables_modalidades
+                cat.programa, pb.nombre, cat.componente, cat.linea_accion, cb.nombre,
+                la.nombre, cat.proyecto, cat.tipo_actividad, a.variables_modalidades
        ORDER BY a.fecha_inicio DESC, a.creado_en DESC
        LIMIT 500`,
-      [estado, busqueda, ids],
+      params,
     );
     res.json(
       rows.map((row) => ({
@@ -1021,41 +1363,87 @@ router.get("/eventos", async (req, res, next) => {
   }
 });
 
-router.post(
-  "/eventos",
-  requireRole("admin", "coordinador", "administrador"),
-  async (req, res, next) => {
-    const activity = normalizarActividad(req.body || {});
-    const invalid = validarActividad(activity, {
-      requiereNombre: true,
+router.post("/eventos", async (req, res, next) => {
+  const access = req.activityAccess;
+  if (!access.puedeCrear) {
+    return res.status(403).json({
+      error: "No tienes permisos para crear actividades.",
     });
-    if (invalid) return res.status(400).json({ error: invalid });
-    let client;
-    try {
-      client = await pool.connect();
-      await client.query("BEGIN");
-      const event = await crearActividadTransaccion(
-        client,
-        activity,
-        req.user?.id,
-      );
-      await client.query("COMMIT");
-      res.status(201).json(event);
-    } catch (err) {
-      if (client) await client.query("ROLLBACK").catch(() => {});
-      enviarErrorBaseDatos(err, res, next);
-    } finally {
-      client?.release();
+  }
+  const activity = normalizarActividad(req.body || {});
+  const invalid = validarActividad(activity, {
+    requiereNombre: true,
+  });
+  if (invalid) return res.status(400).json({ error: invalid });
+
+  const lineasPermitidas = new Set(
+    access.lineasAccion.map(normalizarLineaAccion),
+  );
+  const lineaSeleccionada = normalizarLineaAccion(activity.lineaAccion);
+  if (
+    access.restringido &&
+    (!lineaSeleccionada || !lineasPermitidas.has(lineaSeleccionada))
+  ) {
+    return res.status(access.lineasAccion.length ? 403 : 400).json({
+      error: access.lineasAccion.length
+        ? "La línea de acción seleccionada no está asignada a tu cuenta."
+        : "Tu cuenta no tiene líneas de acción asignadas.",
+    });
+  }
+
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query("BEGIN");
+    if (access.restringido && activity.programaBienestar) {
+      const programa = await obtenerProgramaBienestar(client, activity);
+      let lineaPrograma = programa.lineaAccion;
+      if (programa.idProgramaBienestar) {
+        const { rows } = await client.query(
+          `SELECT la.nombre AS "lineaAccion"
+           FROM sat.programas_bienestar pb
+           JOIN sat.componentes_bienestar cb
+             ON cb.id_componentes_bienestar = pb.id_componentes_bienestar
+           JOIN sat.lineas_accion la
+             ON la.id_lineas_accion = cb.id_lineas_accion
+           WHERE pb.id_programas_bienestar = $1`,
+          [programa.idProgramaBienestar],
+        );
+        lineaPrograma = rows[0]?.lineaAccion || lineaPrograma;
+      }
+      if (
+        lineaPrograma &&
+        normalizarLineaAccion(lineaPrograma) !== lineaSeleccionada
+      ) {
+        throw Object.assign(
+          new Error("El programa seleccionado no corresponde a tu línea de acción."),
+          { status: 403 },
+        );
+      }
     }
-  },
-);
+    const event = await crearActividadTransaccion(
+      client,
+      activity,
+      req.user?.id,
+    );
+    await client.query("COMMIT");
+    res.status(201).json(event);
+  } catch (err) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    enviarErrorBaseDatos(err, res, next);
+  } finally {
+    client?.release();
+  }
+});
 
 router.post(
   "/importar-realizadas/previsualizar",
-  requireRole("admin", "coordinador", "administrador"),
+  requireRoleOrLineaAccion("admin", "coordinador", "administrador"),
   async (req, res, next) => {
     const input = normalizarPayloadImportacion(req.body);
     if (input.error) return res.status(400).json({ error: input.error });
+    const errorAlcance = validarLineasImportacion(input, req.activityAccess);
+    if (errorAlcance) return res.status(403).json({ error: errorAlcance });
     let client;
     try {
       client = await pool.connect();
@@ -1071,10 +1459,12 @@ router.post(
 
 router.post(
   "/importar-realizadas/confirmar",
-  requireRole("admin", "coordinador", "administrador"),
+  requireRoleOrLineaAccion("admin", "coordinador", "administrador"),
   async (req, res, next) => {
     const input = normalizarPayloadImportacion(req.body);
     if (input.error) return res.status(400).json({ error: input.error });
+    const errorAlcance = validarLineasImportacion(input, req.activityAccess);
+    if (errorAlcance) return res.status(403).json({ error: errorAlcance });
     let client;
     try {
       client = await pool.connect();
@@ -1300,7 +1690,7 @@ router.post(
 
 router.put(
   "/eventos/:id",
-  requireRole("admin", "coordinador", "administrador"),
+  requireRoleOrLineaAccion("admin", "coordinador", "administrador"),
   async (req, res, next) => {
     if (!UUID_PATTERN.test(String(req.params.id || "")))
       return res
@@ -1309,6 +1699,18 @@ router.put(
     const activity = normalizarActividad(req.body || {});
     const invalid = validarActividad(activity, { requiereNombre: true });
     if (invalid) return res.status(400).json({ error: invalid });
+    const access = req.activityAccess;
+    const lineaSeleccionada = normalizarLineaAccion(activity.lineaAccion);
+    if (
+      access.restringido &&
+      !access.lineasAccion.some(
+        (linea) => normalizarLineaAccion(linea) === lineaSeleccionada,
+      )
+    ) {
+      return res.status(403).json({
+        error: "La línea de acción seleccionada no está asignada a tu cuenta.",
+      });
+    }
     if (
       activity.idEventoExistente &&
       activity.idEventoExistente !== req.params.id
@@ -1322,6 +1724,32 @@ router.put(
     try {
       client = await pool.connect();
       await client.query("BEGIN");
+      if (access.restringido && activity.programaBienestar) {
+        const programa = await obtenerProgramaBienestar(client, activity);
+        let lineaPrograma = programa.lineaAccion;
+        if (programa.idProgramaBienestar) {
+          const { rows } = await client.query(
+            `SELECT la.nombre AS "lineaAccion"
+             FROM sat.programas_bienestar pb
+             JOIN sat.componentes_bienestar cb
+               ON cb.id_componentes_bienestar = pb.id_componentes_bienestar
+             JOIN sat.lineas_accion la
+               ON la.id_lineas_accion = cb.id_lineas_accion
+             WHERE pb.id_programas_bienestar = $1`,
+            [programa.idProgramaBienestar],
+          );
+          lineaPrograma = rows[0]?.lineaAccion || lineaPrograma;
+        }
+        if (
+          lineaPrograma &&
+          normalizarLineaAccion(lineaPrograma) !== lineaSeleccionada
+        ) {
+          throw Object.assign(
+            new Error("El programa seleccionado no corresponde a tu línea de acción."),
+            { status: 403 },
+          );
+        }
+      }
       const catalog = await obtenerCatalogoActividadManual(client, activity);
       const { rows } = await client.query(
         `UPDATE sat.actividades_vec SET
@@ -1390,7 +1818,7 @@ router.put(
 
 router.patch(
   "/eventos/:id/estado",
-  requireRole("admin", "coordinador", "administrador"),
+  requireRoleOrLineaAccion("admin", "coordinador", "administrador"),
   async (req, res, next) => {
     const id = String(req.params.id || "");
     const estado = String(req.body?.estado || "")
@@ -1444,7 +1872,7 @@ router.patch(
 
 router.post(
   "/eventos/eliminar-lote",
-  requireRole("admin", "coordinador", "administrador"),
+  requireRoleOrLineaAccion("admin", "coordinador", "administrador"),
   async (req, res, next) => {
     const rawIds = req.body?.ids;
     if (
@@ -1521,7 +1949,7 @@ router.post(
 
 router.delete(
   "/eventos/:id",
-  requireRole("admin", "coordinador", "administrador"),
+  requireRoleOrLineaAccion("admin", "coordinador", "administrador"),
   async (req, res, next) => {
     const id = String(req.params.id || "");
     if (!UUID_PATTERN.test(id))
@@ -1600,7 +2028,7 @@ router.get("/eventos/:id/participantes", async (req, res, next) => {
 
 router.get(
   "/eventos/:id/participantes/exportar",
-  requireRole("admin", "coordinador", "administrador"),
+  requireRoleOrLineaAccion("admin", "coordinador", "administrador"),
   async (req, res, next) => {
     const id = String(req.params.id || "");
     if (!UUID_PATTERN.test(id)) {
@@ -1673,7 +2101,7 @@ router.get(
 
 router.delete(
   "/inscripciones/:id",
-  requireRole("admin", "coordinador", "administrador"),
+  requireRoleOrLineaAccion("admin", "coordinador", "administrador"),
   async (req, res, next) => {
     const id = String(req.params.id || "");
     if (!UUID_PATTERN.test(id))
@@ -1825,7 +2253,7 @@ router.delete(
 
 router.patch(
   "/inscripciones/:id/apoyo",
-  requireRole("admin", "coordinador", "administrador"),
+  requireRoleOrLineaAccion("admin", "coordinador", "administrador"),
   async (req, res, next) => {
     const id = String(req.params.id || "");
     const idTipoApoyo = String(req.body?.idTipoApoyo || "").trim() || null;
@@ -1987,7 +2415,7 @@ router.get("/sesiones", async (req, res, next) => {
 
 router.post(
   "/asistencia/verificar",
-  requireRole("admin", "coordinador", "administrador"),
+  requireRoleOrLineaAccion("admin", "coordinador", "administrador"),
   async (req, res, next) => {
     const filters = normalizarFiltrosAsistentes(req.body || {});
     if (filters.error) return res.status(400).json({ error: filters.error });
@@ -2175,6 +2603,18 @@ router.get("/exportar-asistentes", async (req, res, next) => {
 });
 
 router.get("/catalogo-maestro", async (req, res, next) => {
+  const filtroLinea = req.activityAccess.restringido
+    ? `AND LOWER(BTRIM(COALESCE(
+         NULLIF(BTRIM(cat.linea_accion), ''),
+         NULLIF(BTRIM(bienestar.linea_accion), '')
+       ))) = ANY($2::text[])`
+    : "";
+  const parametros = [
+    HOJA_REGISTRO_MANUAL,
+    ...(req.activityAccess.restringido
+      ? [req.activityAccess.lineasAccion.map(normalizarLineaAccion)]
+      : []),
+  ];
   try {
     const { rows } = await query(
       `SELECT cat.id_catalogo_actividades_vec AS id,
@@ -2220,9 +2660,10 @@ router.get("/catalogo-maestro", async (req, res, next) => {
        ) apoyo_excel ON true
        WHERE cat.tipo_registro = 'ACTIVIDAD'
          AND cat.hoja_origen <> $1
+         ${filtroLinea}
        ORDER BY cat.linea_accion NULLS LAST, cat.componente NULLS LAST,
                 cat.programa NULLS LAST, cat.proyecto NULLS LAST, cat.actividad`,
-      [HOJA_REGISTRO_MANUAL],
+      parametros,
     );
     const ordenProgramas = new Map(
       catalogoBienestarFuente.map((item, index) => [item.programa, index]),
@@ -2312,7 +2753,16 @@ router.get("/catalogos-estudiante", async (req, res, next) => {
       generos: generos.rows.map((row) => row.valor),
       etnias: etnias.rows.map((row) => row.valor),
       municipios: municipios.rows.map((row) => row.valor),
-      programasBienestar: listarProgramasBienestar(),
+      programasBienestar: listarProgramasBienestar().filter(
+        (programa) =>
+          !req.activityAccess.restringido ||
+          req.activityAccess.lineasAccion.some(
+            (linea) =>
+              normalizarLineaAccion(linea) ===
+              normalizarLineaAccion(programa.lineaAccion),
+          ),
+      ),
+      lineasAccion: req.activityAccess.lineasAccion,
     });
   } catch (err) {
     enviarErrorBaseDatos(err, res, next);
@@ -2332,6 +2782,10 @@ router.get("/apoyos/todos", async (req, res, next) => {
     ? Math.max(requestedPage, 1)
     : 1;
   const limite = 50;
+  const access = req.activityAccess;
+  const lineasPermitidas = access.restringido
+    ? access.lineasAccion.map(normalizarLineaAccion)
+    : null;
 
   try {
     if (idTipoApoyo) {
@@ -2347,7 +2801,9 @@ router.get("/apoyos/todos", async (req, res, next) => {
     }
 
     const [financieros, actividades, sinTipoApoyo] = await Promise.all([
-      query(
+      access.restringido
+        ? Promise.resolve({ rows: [] })
+        : query(
         `SELECT e.id_estudiantes::text AS id,
                 e.id_personas::text AS "idPersona",
                 COALESCE(per.numero_identificacion, e.numero_documento) AS identificacion,
@@ -2412,6 +2868,12 @@ router.get("/apoyos/todos", async (req, res, next) => {
          LEFT JOIN sat.catalogo_actividades_vec cat
            ON cat.id_catalogo_actividades_vec = a.id_catalogo_actividades_vec
           AND cat.tipo_registro = 'ACTIVIDAD'
+         LEFT JOIN sat.programas_bienestar pb
+           ON pb.id_programas_bienestar = a.id_programas_bienestar
+         LEFT JOIN sat.componentes_bienestar cb
+           ON cb.id_componentes_bienestar = pb.id_componentes_bienestar
+         LEFT JOIN sat.lineas_accion la
+           ON la.id_lineas_accion = cb.id_lineas_accion
          LEFT JOIN LATERAL (
            SELECT r.id_tipos_apoyo
            FROM sat.rutas_remision r
@@ -2443,17 +2905,31 @@ router.get("/apoyos/todos", async (req, res, next) => {
            LIMIT 1
          ) m ON TRUE
          WHERE ($1::uuid IS NULL OR COALESCE(avp.id_tipos_apoyo, ruta.id_tipos_apoyo) = $1)
+           AND ($2::text[] IS NULL OR LOWER(BTRIM(${EXPRESION_LINEA_ACTIVIDAD})) = ANY($2::text[]))
          ORDER BY apellidos, nombres, identificacion, apoyo`,
-        [idTipoApoyo],
+        [idTipoApoyo, lineasPermitidas],
       ),
       query(
         `SELECT COUNT(*)::int AS total
          FROM sat.actividades_vec_participantes avp
-         WHERE avp.id_tipos_apoyo IS NULL`,
+         JOIN sat.actividades_vec a
+           ON a.id_actividades_vec = avp.id_actividades_vec
+         LEFT JOIN sat.catalogo_actividades_vec cat
+           ON cat.id_catalogo_actividades_vec = a.id_catalogo_actividades_vec
+          AND cat.tipo_registro = 'ACTIVIDAD'
+         LEFT JOIN sat.programas_bienestar pb
+           ON pb.id_programas_bienestar = a.id_programas_bienestar
+         LEFT JOIN sat.componentes_bienestar cb
+           ON cb.id_componentes_bienestar = pb.id_componentes_bienestar
+         LEFT JOIN sat.lineas_accion la
+           ON la.id_lineas_accion = cb.id_lineas_accion
+         WHERE avp.id_tipos_apoyo IS NULL
+           AND ($1::text[] IS NULL OR LOWER(BTRIM(${EXPRESION_LINEA_ACTIVIDAD})) = ANY($1::text[]))`,
+        [lineasPermitidas],
       ),
     ]);
 
-    const rutas = idTipoApoyo
+    const rutas = idTipoApoyo && !access.restringido
       ? await query(
           `SELECT r.id_rutas_remision AS id,
                 r.nombre,
@@ -2750,6 +3226,15 @@ router.get("/registros-estudiante", async (req, res, next) => {
   const limit = Number.isInteger(limitRequested)
     ? Math.min(Math.max(limitRequested, 1), 100)
     : 50;
+  const filtroLinea = req.activityAccess.restringido
+    ? `AND LOWER(BTRIM(${EXPRESION_LINEA_ACTIVIDAD})) = ANY($2::text[])`
+    : "";
+  const parametros = [
+    limit,
+    ...(req.activityAccess.restringido
+      ? [req.activityAccess.lineasAccion.map(normalizarLineaAccion)]
+      : []),
+  ];
   try {
     const { rows } = await query(
       `SELECT a.id_actividades_vec AS id,
@@ -2763,7 +3248,7 @@ router.get("/registros-estudiante", async (req, res, next) => {
                                p.primer_apellido, p.segundo_apellido)) AS estudiante,
               COALESCE(cat.programa, pb.nombre) AS programa_bienestar,
               cat.componente,
-              cat.linea_accion AS linea_accion
+              ${EXPRESION_LINEA_ACTIVIDAD} AS linea_accion
        FROM sat.actividades_vec a
        JOIN sat.periodos_academicos pa
          ON pa.id_periodos_academicos = a.id_periodos_academicos
@@ -2778,9 +3263,15 @@ router.get("/registros-estudiante", async (req, res, next) => {
         AND cat.tipo_registro = 'ACTIVIDAD'
        LEFT JOIN sat.programas_bienestar pb
          ON pb.id_programas_bienestar = a.id_programas_bienestar
+       LEFT JOIN sat.componentes_bienestar cb
+         ON cb.id_componentes_bienestar = pb.id_componentes_bienestar
+       LEFT JOIN sat.lineas_accion la
+         ON la.id_lineas_accion = cb.id_lineas_accion
+       WHERE TRUE
+         ${filtroLinea}
        ORDER BY a.creado_en DESC
        LIMIT $1`,
-      [limit],
+      parametros,
     );
     res.json(rows);
   } catch (err) {
@@ -2789,9 +3280,27 @@ router.get("/registros-estudiante", async (req, res, next) => {
 });
 
 router.get("/resumen", async (req, res, next) => {
+  const lineasPermitidas = req.activityAccess.restringido
+    ? req.activityAccess.lineasAccion.map(normalizarLineaAccion)
+    : null;
   try {
     const { rows } = await query(
-      `SELECT COUNT(DISTINCT pv.id_personas)::int AS total_participantes,
+      `WITH actividades_scope AS (
+         SELECT a.id_actividades_vec
+         FROM sat.actividades_vec a
+         LEFT JOIN sat.catalogo_actividades_vec cat
+           ON cat.id_catalogo_actividades_vec = a.id_catalogo_actividades_vec
+          AND cat.tipo_registro = 'ACTIVIDAD'
+         LEFT JOIN sat.programas_bienestar pb
+           ON pb.id_programas_bienestar = a.id_programas_bienestar
+         LEFT JOIN sat.componentes_bienestar cb
+           ON cb.id_componentes_bienestar = pb.id_componentes_bienestar
+         LEFT JOIN sat.lineas_accion la
+           ON la.id_lineas_accion = cb.id_lineas_accion
+         WHERE $1::text[] IS NULL
+            OR LOWER(BTRIM(${EXPRESION_LINEA_ACTIVIDAD})) = ANY($1::text[])
+       )
+       SELECT COUNT(DISTINCT pv.id_personas)::int AS total_participantes,
               COUNT(DISTINCT pv.id_personas)
                 FILTER (WHERE pv.tipo_participante = 'ESTUDIANTE')::int AS estudiantes,
               COUNT(DISTINCT pv.id_personas)
@@ -2802,12 +3311,13 @@ router.get("/resumen", async (req, res, next) => {
                 FILTER (WHERE pv.tipo_participante = 'EGRESADO')::int AS egresados,
               COUNT(DISTINCT pv.id_personas)
                 FILTER (WHERE pv.tipo_participante = 'EXTERNO')::int AS externos,
-              (SELECT COUNT(*)::int FROM sat.actividades_vec) AS total_actividades
+              (SELECT COUNT(*)::int FROM actividades_scope) AS total_actividades
        FROM sat.actividades_vec_participantes avp
-       JOIN sat.actividades_vec a
+       JOIN actividades_scope a
          ON a.id_actividades_vec = avp.id_actividades_vec
        JOIN sat.participantes_vec pv
          ON pv.id_participantes_vec = avp.id_participantes_vec`,
+      [lineasPermitidas],
     );
     res.json(rows[0]);
   } catch (err) {
@@ -5940,6 +6450,9 @@ async function guardarModalidadesActividad(
 
 async function obtenerCatalogoActividadManual(client, activity) {
   const bienestar = await obtenerProgramaBienestar(client, activity);
+  const programaCatalogo = bienestar.programa;
+  const componenteCatalogo = activity.componente || bienestar.componente;
+  const lineaAccionCatalogo = activity.lineaAccion || bienestar.lineaAccion;
   await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
     HOJA_REGISTRO_MANUAL,
   ]);
@@ -5960,11 +6473,11 @@ async function obtenerCatalogoActividadManual(client, activity) {
     [
       HOJA_REGISTRO_MANUAL,
       activity.nombreActividad,
-      bienestar.programa,
+      programaCatalogo,
       activity.proyecto || null,
       activity.tipoActividad || null,
-      activity.componente || null,
-      activity.lineaAccion || null,
+      componenteCatalogo,
+      lineaAccionCatalogo,
     ],
   );
   if (rows[0]) return completarCatalogoManual(rows[0], bienestar, activity);
@@ -5987,9 +6500,9 @@ async function obtenerCatalogoActividadManual(client, activity) {
       activity.nombreActividad,
       activity.tipoActividad,
       activity.proyecto || activity.nombreActividad,
-      bienestar.programa,
-      activity.componente || bienestar.componente,
-      activity.lineaAccion || bienestar.lineaAccion,
+      programaCatalogo,
+      componenteCatalogo,
+      lineaAccionCatalogo,
     ],
   ));
   return completarCatalogoManual(rows[0], bienestar, activity);

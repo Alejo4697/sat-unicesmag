@@ -5249,7 +5249,7 @@
 
 .activity-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(180px, 230px) auto;
+  grid-template-columns: minmax(0, 1fr) repeat(2, minmax(170px, 220px)) auto;
   gap: 0.9rem;
   align-items: end;
   margin-bottom: 1.1rem;
@@ -8449,165 +8449,6 @@
   font-weight: 700;
 }
 
-.vec-profile-import__controls .vec-profile-import__role-control {
-  gap: 0.5rem;
-  padding: 0.75rem 0.9rem;
-  color: #173b63;
-  background: linear-gradient(135deg, #f0f6ff, #f8fbff);
-  border: 1px solid #bed4f0;
-  border-radius: 10px;
-  box-shadow: 0 2px 8px rgb(23 59 99 / 6%);
-  font-size: 0.78rem;
-}
-
-.vec-profile-import__role-control > span {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  font-size: 0.82rem;
-  font-weight: 800;
-}
-
-.vec-profile-import__role-control > span i {
-  color: #9e1b32;
-}
-
-.vec-profile-import__controls .vec-profile-import__role-control .form-select {
-  min-height: 3rem;
-  border-color: #9bb9df;
-  border-radius: 8px;
-  color: #173b63;
-  font-size: 0.95rem;
-  font-weight: 750;
-}
-
-.vec-profile-import__role-control small {
-  color: #5a6f88;
-  font-size: 0.7rem;
-  font-weight: 500;
-  line-height: 1.4;
-}
-
-.vec-profile-import__manual-entry {
-  position: relative;
-  display: grid;
-  gap: 0.85rem;
-  overflow: hidden;
-  padding: 1rem;
-  background:
-    radial-gradient(ellipse at top right, rgb(91 33 182 / 7%), transparent 48%),
-    linear-gradient(135deg, var(--profile-role-soft, #f7faff), #fff 78%);
-  border: 1px solid var(--profile-role-border, #cbd9e9);
-  border-left: 4px solid var(--profile-role-color, var(--brand-primary));
-  border-radius: 12px;
-  box-shadow: 0 5px 16px rgb(91 33 182 / 8%);
-}
-
-.vec-profile-import__manual-entry-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  color: var(--profile-role-color, var(--brand-primary));
-}
-
-.vec-profile-import__manual-entry-heading div {
-  display: grid;
-  gap: 0.25rem;
-}
-
-.vec-profile-import__manual-entry-heading strong {
-  font-size: 0.85rem;
-  font-weight: 800;
-}
-
-.vec-profile-import__manual-entry-heading span {
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  line-height: 1.45;
-}
-
-.vec-profile-import__manual-entry-heading > i {
-  display: grid;
-  width: 2.5rem;
-  height: 2.5rem;
-  flex: 0 0 auto;
-  place-items: center;
-  color: var(--profile-role-color, var(--brand-primary));
-  background: var(--profile-role-soft, var(--brand-primary-50));
-  border: 1px solid var(--profile-role-border, var(--brand-primary-100));
-  border-radius: 10px;
-}
-
-.vec-profile-import__manual-entry-fields {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
-  gap: 0.75rem;
-}
-
-.vec-profile-import__manual-entry-fields label {
-  display: grid;
-  min-width: 0;
-  gap: 0.4rem;
-  margin: 0;
-  color: #44345f;
-  font-size: 0.7rem;
-  font-weight: 750;
-}
-
-.vec-profile-import__manual-entry-fields .form-control {
-  min-height: 2.65rem;
-  padding-inline: 0.75rem;
-  background: #fff;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  color: #17324d;
-  font-size: 0.8rem;
-  transition: border-color 150ms ease, box-shadow 150ms ease;
-}
-
-.vec-profile-import__manual-entry-fields .form-control::placeholder {
-  color: #94a3b8;
-}
-
-.vec-profile-import__manual-entry-fields .form-control:focus {
-  border-color: var(--profile-role-color, var(--brand-primary));
-  box-shadow: 0 0 0 3px rgb(91 33 182 / 15%);
-  outline: none;
-}
-
-.vec-profile-import__manual-entry > .btn {
-  justify-self: start;
-  min-height: 2.55rem;
-  padding: 0.55rem 1rem;
-  color: #fff;
-  background: var(--profile-role-color, var(--brand-primary));
-  border: 1px solid var(--profile-role-color, var(--brand-primary));
-  border-radius: 8px;
-  box-shadow: 0 3px 8px rgb(91 33 182 / 18%);
-  font-size: 0.76rem;
-  font-weight: 750;
-  transition: transform 150ms ease, box-shadow 150ms ease, background 150ms ease;
-}
-
-.vec-profile-import__manual-entry > .btn:hover:not(:disabled) {
-  background: var(--profile-role-color, var(--brand-primary));
-  filter: brightness(0.9);
-  box-shadow: 0 5px 12px rgb(91 33 182 / 24%);
-  transform: translateY(-1px);
-}
-
-.vec-profile-import__manual-entry > .btn:focus-visible {
-  outline: 3px solid rgb(91 33 182 / 28%);
-  outline-offset: 2px;
-}
-
-.vec-profile-import__manual-entry > .btn:disabled {
-  cursor: wait;
-  opacity: 0.72;
-}
-
-.vec-profile-import__controls .form-select,
 .vec-profile-import__mapping .form-select,
 .vec-profile-import__mapping .form-control {
   min-height: 2.35rem;
@@ -10541,21 +10382,6 @@
 .vec-profile-import__workspace .vec-profile-import__instructions h3 i,
 .vec-profile-import__workspace .vec-profile-import__steps li::marker {
   color: var(--profile-role-color, #164e7a);
-}
-
-.vec-profile-import__workspace .vec-profile-import__role-control {
-  color: var(--profile-role-color, #173b63);
-  background: linear-gradient(135deg, var(--profile-role-soft, #f0f6ff), #fff);
-  border-color: var(--profile-role-border, #bed4f0);
-}
-
-.vec-profile-import__workspace .vec-profile-import__role-control > span i {
-  color: var(--profile-role-color, #9e1b32);
-}
-
-.vec-profile-import__workspace .vec-profile-import__role-control .form-select {
-  color: var(--profile-role-color, #173b63);
-  border-color: var(--profile-role-border, #9bb9df);
 }
 
 .vec-profile-import__workspace .vec-profile-import__file input {

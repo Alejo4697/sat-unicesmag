@@ -63,7 +63,12 @@ router.get("/usuarios", async (req, res, next) => {
   const tipo = String(req.query.tipo || "todos").toLowerCase();
 
   try {
-    if (!q && tipo !== "docentes" && tipo !== "estudiantes") {
+    if (
+      !q &&
+      tipo !== "docentes" &&
+      tipo !== "estudiantes" &&
+      tipo !== "administrativos"
+    ) {
       const { rows } = await query(
         `${USUARIO_SELECT_ENHANCED} WHERE u.eliminado_en IS NULL ORDER BY u.creado_en DESC`
       );
@@ -182,6 +187,92 @@ router.get("/usuarios", async (req, res, next) => {
         if (docTrim) docsVistos.add(docTrim);
         if (mailTrim) correosVistos.add(mailTrim);
         resultados.push(est);
+      }
+    }
+
+    // 4. Buscar perfiles administrativos registrados para Actividades VEC
+    if ((q && tipo === "todos") || tipo === "administrativos") {
+      const { rows: administrativosRows } = await query(
+        `SELECT COALESCE(u.id_usuarios::text, 'adm_' || pv.id_participantes_vec::text) AS id,
+                u.id_usuarios,
+                COALESCE(
+                  NULLIF(BTRIM(CONCAT_WS(' ', u.nombres, u.apellidos)), ''),
+                  NULLIF(BTRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido)), '')
+                ) AS nombre,
+                COALESCE(
+                  NULLIF(BTRIM(u.nombres), ''),
+                  NULLIF(BTRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre)), '')
+                ) AS nombres,
+                COALESCE(
+                  NULLIF(BTRIM(u.apellidos), ''),
+                  NULLIF(BTRIM(CONCAT_WS(' ', p.primer_apellido, p.segundo_apellido)), '')
+                ) AS apellidos,
+                COALESCE(
+                  NULLIF(BTRIM(u.correo_institucional), ''),
+                  NULLIF(BTRIM(p.correo_institucional), ''),
+                  NULLIF(BTRIM(p.correo_electronico), '')
+                ) AS email,
+                p.numero_identificacion AS documento,
+                COALESCE(NULLIF(BTRIM(pv.codigo), ''), p.numero_identificacion) AS codigo,
+                COALESCE((
+                  SELECT r.nombre
+                  FROM sat.usuarios_roles ur
+                  JOIN sat.roles r ON r.id_roles = ur.id_roles
+                  WHERE ur.id_usuarios = u.id_usuarios
+                  ORDER BY ur.asignado_en NULLS LAST
+                  LIMIT 1
+                ), 'Administrativo') AS rol,
+                COALESCE(NULLIF(BTRIM(u.cargo), ''), NULLIF(BTRIM(pv.cargo), ''), 'Administrativo') AS cargo,
+                'Todos' AS programa,
+                NULL AS id_programa,
+                COALESCE(u.activo AND u.eliminado_en IS NULL, false) AS activo,
+                (u.id_usuarios IS NOT NULL AND u.eliminado_en IS NULL) AS tiene_cuenta,
+                'administrativo' AS tipo_registro
+         FROM sat.participantes_vec pv
+         JOIN sat.personas p ON p.id = pv.id_personas
+         LEFT JOIN LATERAL (
+           SELECT usuario.*
+           FROM sat.usuarios usuario
+           WHERE usuario.id_personas = p.id
+              OR usuario.numero_documento = p.numero_identificacion
+           ORDER BY (usuario.eliminado_en IS NULL) DESC,
+                    usuario.activo DESC,
+                    usuario.creado_en DESC
+           LIMIT 1
+         ) u ON true
+         WHERE pv.tipo_participante = 'ADMINISTRATIVO'
+           AND (
+             $1 = ''
+             OR p.numero_identificacion ILIKE $1
+             OR COALESCE(pv.codigo, '') ILIKE $1
+             OR COALESCE(u.correo_institucional, p.correo_institucional, p.correo_electronico, '') ILIKE $1
+             OR COALESCE(pv.cargo, '') ILIKE $1
+             OR COALESCE(pv.dependencia, '') ILIKE $1
+             OR BTRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido)) ILIKE $1
+             OR BTRIM(CONCAT_WS(' ', p.primer_apellido, p.segundo_apellido, p.primer_nombre, p.segundo_nombre)) ILIKE $1
+             OR COALESCE(u.nombres || ' ' || u.apellidos, '') ILIKE $1
+           )
+         ORDER BY nombre
+         LIMIT 500`,
+        [q ? paramQ : ""]
+      );
+
+      for (const administrativo of administrativosRows) {
+        const docTrim = administrativo.documento
+          ? String(administrativo.documento).trim()
+          : null;
+        const mailTrim = administrativo.email
+          ? String(administrativo.email).trim().toLowerCase()
+          : null;
+        if (
+          (docTrim && docsVistos.has(docTrim)) ||
+          (mailTrim && correosVistos.has(mailTrim))
+        ) {
+          continue;
+        }
+        if (docTrim) docsVistos.add(docTrim);
+        if (mailTrim) correosVistos.add(mailTrim);
+        resultados.push(administrativo);
       }
     }
 
@@ -486,6 +577,7 @@ router.get("/estado-sincronizacion", async (req, res, next) => {
         (SELECT COUNT(*) FROM sat.usuarios WHERE eliminado_en IS NULL) AS total_usuarios,
         (SELECT COUNT(*) FROM sat.docentes) AS total_docentes,
         (SELECT COUNT(*) FROM sat.participantes_vec WHERE tipo_participante = 'EGRESADO') AS total_egresados,
+        (SELECT COUNT(*) FROM sat.participantes_vec WHERE tipo_participante = 'ADMINISTRATIVO') AS total_administrativos,
         (SELECT COUNT(*) FROM sat.facultades) AS total_facultades;
     `);
 
@@ -611,21 +703,47 @@ router.delete("/usuarios/:id", async (req, res, next) => {
 });
 
 // --------------------------------------------------------------------------
-// 10. GET & PUT /umbrales-riesgo
+// 10. GET & PUT /umbrales-riesgo (Umbrales de permanencia y semaforización)
 // --------------------------------------------------------------------------
 router.get("/umbrales-riesgo", async (req, res, next) => {
   try {
     const { rows } = await query(
-      `SELECT
-         max(puntaje_min) FILTER (WHERE lower(nombre) = 'alto')  AS alto,
-         max(puntaje_min) FILTER (WHERE lower(nombre) = 'medio') AS medio
-       FROM sat.rangos_riesgo
-       WHERE activo = true`
+      `SELECT id_umbrales_permanencia, etapa, etapa_nombre, semestres_texto,
+              semestre_min, semestre_max, nivel, puntaje_min, puntaje_max, orden, color_hex
+       FROM sat.umbrales_permanencia
+       ORDER BY semestre_min ASC, orden ASC`
     );
-    const { alto, medio } = rows[0] || {};
+
+    // Agrupar por etapa formativa
+    const etapasMap = new Map();
+    rows.forEach((r) => {
+      if (!etapasMap.has(r.etapa)) {
+        etapasMap.set(r.etapa, {
+          etapa: r.etapa,
+          nombre: r.etapa_nombre,
+          semestres: r.semestres_texto,
+          semestre_min: r.semestre_min,
+          semestre_max: r.semestre_max,
+          niveles: []
+        });
+      }
+      etapasMap.get(r.etapa).niveles.push({
+        id: r.id_umbrales_permanencia,
+        nivel: r.nivel,
+        puntaje_min: Number(r.puntaje_min),
+        puntaje_max: Number(r.puntaje_max),
+        orden: r.orden,
+        color_hex: r.color_hex
+      });
+    });
+
+    const etapas = Array.from(etapasMap.values());
+
     res.json({
-      alto: alto == null ? null : Number(alto),
-      medio: medio == null ? null : Number(medio)
+      ok: true,
+      etapas,
+      alto: 91,
+      medio: 84
     });
   } catch (err) {
     next(err);
@@ -633,26 +751,80 @@ router.get("/umbrales-riesgo", async (req, res, next) => {
 });
 
 router.put("/umbrales-riesgo", async (req, res, next) => {
-  const { alto, medio } = req.body;
-  if (alto == null || medio == null) {
-    return res.status(400).json({ error: "Debe enviar los umbrales alto y medio." });
-  }
+  const { etapas, alto, medio } = req.body;
 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await client.query(
-      `UPDATE sat.rangos_riesgo SET puntaje_min = $1, actualizado_en = now()
-       WHERE lower(nombre) = 'alto'`,
-      [Number(alto)]
-    );
-    await client.query(
-      `UPDATE sat.rangos_riesgo SET puntaje_min = $1, actualizado_en = now()
-       WHERE lower(nombre) = 'medio'`,
-      [Number(medio)]
-    );
+
+    if (Array.isArray(etapas)) {
+      for (const e of etapas) {
+        if (Array.isArray(e.niveles)) {
+          for (const n of e.niveles) {
+            await client.query(
+              `UPDATE sat.umbrales_permanencia
+               SET puntaje_min = $1, puntaje_max = $2, actualizado_en = now()
+               WHERE etapa = $3 AND nivel = $4`,
+              [Number(n.puntaje_min), Number(n.puntaje_max), e.etapa, n.nivel]
+            );
+          }
+        }
+      }
+    }
+
+    // Compatibilidad opcional si se envían valores escalares
+    if (alto != null && medio != null) {
+      await client.query(
+        `UPDATE sat.rangos_riesgo SET puntaje_min = $1, actualizado_en = now()
+         WHERE lower(nombre) = 'alto'`,
+        [Number(alto)]
+      ).catch(() => {});
+      await client.query(
+        `UPDATE sat.rangos_riesgo SET puntaje_min = $1, actualizado_en = now()
+         WHERE lower(nombre) = 'medio'`,
+        [Number(medio)]
+      ).catch(() => {});
+    }
+
     await client.query("COMMIT");
-    res.json({ alto: Number(alto), medio: Number(medio) });
+
+    // Retornar los umbrales actualizados
+    const { rows } = await client.query(
+      `SELECT id_umbrales_permanencia, etapa, etapa_nombre, semestres_texto,
+              semestre_min, semestre_max, nivel, puntaje_min, puntaje_max, orden, color_hex
+       FROM sat.umbrales_permanencia
+       ORDER BY semestre_min ASC, orden ASC`
+    );
+
+    const etapasMap = new Map();
+    rows.forEach((r) => {
+      if (!etapasMap.has(r.etapa)) {
+        etapasMap.set(r.etapa, {
+          etapa: r.etapa,
+          nombre: r.etapa_nombre,
+          semestres: r.semestres_texto,
+          semestre_min: r.semestre_min,
+          semestre_max: r.semestre_max,
+          niveles: []
+        });
+      }
+      etapasMap.get(r.etapa).niveles.push({
+        id: r.id_umbrales_permanencia,
+        nivel: r.nivel,
+        puntaje_min: Number(r.puntaje_min),
+        puntaje_max: Number(r.puntaje_max),
+        orden: r.orden,
+        color_hex: r.color_hex
+      });
+    });
+
+    res.json({
+      ok: true,
+      mensaje: "Umbrales institucionales de riesgo actualizados exitosamente.",
+      etapas: Array.from(etapasMap.values()),
+      alto: Number(alto || 91),
+      medio: Number(medio || 84)
+    });
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
     next(err);

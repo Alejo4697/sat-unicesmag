@@ -14,6 +14,7 @@
     "db:matriculas-codigo": "node src/shared/db/seed.js matriculas_codigo_externo.sql",
     "db:roles-participantes": "node src/shared/db/seed.js ../../features/actividades/participantes_roles.sql",
     "db:actividades": "node src/features/actividades/aplicarMigracion.js",
+    "db:permisos-actividades": "node src/features/actividades/aplicarPermisosLineaAccion.js",
     "db:catalogo-actividades": "node src/features/actividades/importarCatalogo.mjs",
     "db:sync": "node src/shared/services/syncService.js"
   },

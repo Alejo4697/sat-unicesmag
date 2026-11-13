@@ -15,7 +15,7 @@ const CARDS = [
   { label: "Externos", key: "externos", icon: "fa-user-group", color: "icon-red" },
 ];
 
-export default function DashboardView() {
+export default function DashboardView({ access }) {
   const { user } = useAuth();
   const [resumen, setResumen] = useState(null);
   const [cargando, setCargando] = useState(true);
@@ -82,14 +82,16 @@ export default function DashboardView() {
           />
         </>
       )}
-      <ParticipantesTable
-        limite={100}
-        titulo="Personas registradas"
-        colapsadoInicialmente
-        puedeEliminar={puedeAdministrar}
-        refreshKey={actualizacion}
-        onChanged={() => setActualizacion((current) => current + 1)}
-      />
+      {!access?.restringido && (
+        <ParticipantesTable
+          limite={100}
+          titulo="Personas registradas"
+          colapsadoInicialmente
+          puedeEliminar={puedeAdministrar}
+          refreshKey={actualizacion}
+          onChanged={() => setActualizacion((current) => current + 1)}
+        />
+      )}
     </section>
   );
 }

@@ -43,6 +43,10 @@ export function getCatalogosEstudiante({ signal } = {}) {
   });
 }
 
+export function getAccesoActividades({ signal } = {}) {
+  return apiFetch("/actividades/participantes/acceso-lineas", { signal });
+}
+
 export function getBeneficiariosApoyo({ tipoApoyo, pagina = 1, signal }) {
   const params = new URLSearchParams({ pagina: String(pagina) });
   if (tipoApoyo && tipoApoyo !== "todos") params.set("tipoApoyo", tipoApoyo);

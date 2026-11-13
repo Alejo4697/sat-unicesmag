@@ -472,6 +472,99 @@ export async function ejecutarSincronizacion() {
     }
     console.log(`[OK] ${studentIdMap.size} códigos/documentos mapeados a sat.estudiantes.`);
 
+    const { rows: estudiantesStats } = await localClient.query(`
+      SELECT
+        COUNT(*)::int AS registros,
+        COUNT(*) FILTER (WHERE student.id_personas IS NULL)::int AS "sinPersona",
+        COUNT(DISTINCT student.id_personas) FILTER (
+          WHERE student.id_personas IS NOT NULL
+            AND EXISTS (
+              SELECT 1
+              FROM sat.participantes_vec externo
+              WHERE externo.id_personas = student.id_personas
+                AND externo.tipo_participante = 'EXTERNO'
+            )
+        )::int AS "conflictosExternos"
+      FROM sat.estudiantes student;
+    `);
+    if (estudiantesStats[0].registros === 0) {
+      throw new Error("La sincronización institucional no devolvió estudiantes para conectar a Actividades.");
+    }
+    const { rows: perfilesEstudiantes } = await localClient.query(`
+      WITH estudiantes AS (
+        SELECT DISTINCT ON (estudiante.id_personas)
+          estudiante.id_personas,
+          estudiante.tipo_documento,
+          estudiante.codigo_externo,
+          estudiante.id_programas_academicos,
+          estudiante.semestre_actual
+        FROM sat.estudiantes estudiante
+        WHERE estudiante.id_personas IS NOT NULL
+        ORDER BY
+          estudiante.id_personas,
+          (UPPER(COALESCE(estudiante.estado_matricula, '')) = 'MATRICULADO') DESC,
+          estudiante.actualizado_en DESC NULLS LAST,
+          estudiante.id_estudiantes
+      )
+      INSERT INTO sat.participantes_vec (
+        id_personas,
+        tipo_participante,
+        detalle_tipo_participante,
+        tipo_documento,
+        codigo,
+        programa_academico,
+        semestre
+      )
+      SELECT
+        estudiante.id_personas,
+        'ESTUDIANTE',
+        'Estudiante',
+        NULLIF(estudiante.tipo_documento, ''),
+        NULLIF(estudiante.codigo_externo, ''),
+        NULLIF(programa.nombre, ''),
+        CASE WHEN estudiante.semestre_actual > 0
+          THEN estudiante.semestre_actual
+          ELSE NULL
+        END
+      FROM estudiantes estudiante
+      LEFT JOIN sat.programas_academicos programa
+        ON programa.id_programas_academicos = estudiante.id_programas_academicos
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM sat.participantes_vec externo
+        WHERE externo.id_personas = estudiante.id_personas
+          AND externo.tipo_participante = 'EXTERNO'
+      )
+      ON CONFLICT (id_personas, tipo_participante) DO UPDATE SET
+        detalle_tipo_participante = COALESCE(
+          NULLIF(sat.participantes_vec.detalle_tipo_participante, ''),
+          EXCLUDED.detalle_tipo_participante
+        ),
+        tipo_documento = COALESCE(
+          NULLIF(sat.participantes_vec.tipo_documento, ''),
+          EXCLUDED.tipo_documento
+        ),
+        codigo = COALESCE(
+          NULLIF(sat.participantes_vec.codigo, ''),
+          EXCLUDED.codigo
+        ),
+        programa_academico = COALESCE(
+          NULLIF(sat.participantes_vec.programa_academico, ''),
+          EXCLUDED.programa_academico
+        ),
+        semestre = COALESCE(
+          sat.participantes_vec.semestre,
+          EXCLUDED.semestre
+        ),
+        actualizado_en = NOW()
+      RETURNING id_participantes_vec;
+    `);
+    const estudiantesConPerfil = perfilesEstudiantes.length;
+    console.log(
+      `[OK] ${estudiantesConPerfil} perfiles de estudiante conectados a Actividades; ` +
+      `${estudiantesStats[0].conflictosExternos} omitidos por rol Externo.`,
+    );
+
     // -------------------------------------------------------------
     // PASO 4: Sincronización de Matrículas (sat.matriculas)
     // -------------------------------------------------------------
@@ -804,6 +897,9 @@ export async function ejecutarSincronizacion() {
       duracionSegundos: duracion,
       personas: personaIdMap.size,
       estudiantes: studentIdMap.size,
+      perfilesEstudiantes: estudiantesConPerfil,
+      estudiantesSinPersona: estudiantesStats[0].sinPersona,
+      estudiantesConflictoExterno: estudiantesStats[0].conflictosExternos,
       matriculas: matriculaIdMap.size,
       asignaturas: asignaturaIdMap.size,
       calificaciones: notasSincronizadas,

@@ -11,27 +11,41 @@ const expectedActivitiesBySheet = new Map([
 
 const sourcePath = new URL("./catalogo_actividades.json", import.meta.url);
 const records = JSON.parse(await readFile(sourcePath, "utf8"));
-const activities = records.filter((record) => record.tipo_registro === "ACTIVIDAD");
+const activities = records.filter(
+  (record) => record.tipo_registro === "ACTIVIDAD",
+);
 const notes = records.filter((record) => record.tipo_registro === "NOTA");
 
 if (records.length !== 242 || activities.length !== 241 || notes.length !== 1) {
   throw new Error(
-    `Conteo del archivo inesperado: ${activities.length} actividades, ${notes.length} notas, ${records.length} filas.`
+    `Conteo del archivo inesperado: ${activities.length} actividades, ${notes.length} notas, ${records.length} filas.`,
   );
 }
 
 for (const [sheet, expectedCount] of expectedActivitiesBySheet) {
-  const count = activities.filter((record) => record.hoja_origen === sheet).length;
+  const count = activities.filter(
+    (record) => record.hoja_origen === sheet,
+  ).length;
   if (count !== expectedCount) {
-    throw new Error(`La hoja "${sheet}" tiene ${count} actividades; se esperaban ${expectedCount}.`);
+    throw new Error(
+      `La hoja "${sheet}" tiene ${count} actividades; se esperaban ${expectedCount}.`,
+    );
   }
 }
 
-if (records.some((record) => !record.hoja_origen || !Number.isInteger(record.fila_origen))) {
-  throw new Error("Cada fila importada debe incluir la hoja y la fila Excel de origen.");
+if (
+  records.some(
+    (record) => !record.hoja_origen || !Number.isInteger(record.fila_origen),
+  )
+) {
+  throw new Error(
+    "Cada fila importada debe incluir la hoja y la fila Excel de origen.",
+  );
 }
 if (activities.some((record) => !record.actividad?.trim())) {
-  throw new Error("Hay filas de actividad sin nombre; se canceló la importación.");
+  throw new Error(
+    "Hay filas de actividad sin nombre; se canceló la importación.",
+  );
 }
 
 const nullableText = (value) => {
@@ -72,7 +86,7 @@ try {
         nullableText(record.programa),
         nullableText(record.componente),
         nullableText(record.linea_accion),
-      ]
+      ],
     );
   }
 
@@ -83,7 +97,7 @@ try {
      FROM sat.catalogo_actividades_vec
      WHERE hoja_origen = ANY($1::text[])
      GROUP BY hoja_origen`,
-    [[...expectedActivitiesBySheet.keys()]]
+    [[...expectedActivitiesBySheet.keys()]],
   );
   const loaded = new Map(rows.map((row) => [row.hoja_origen, row]));
 
@@ -91,24 +105,32 @@ try {
     const actual = loaded.get(sheet);
     const expectedNotes = sheet === "Trabajo social" ? 1 : 0;
     if (
-      !actual
-      || actual.actividades !== expectedActivities
-      || actual.notas !== expectedNotes
+      !actual ||
+      actual.actividades !== expectedActivities ||
+      actual.notas !== expectedNotes
     ) {
       throw new Error(
         `Conteo persistido inesperado en "${sheet}": ${JSON.stringify(actual)}. ` +
-        "No se eliminó ningún registro preexistente; la transacción se revertirá."
+          "No se eliminó ningún registro preexistente; la transacción se revertirá.",
       );
     }
   }
 
   await client.query("COMMIT");
-  console.log(JSON.stringify({
-    importedActivities: activities.length,
-    preservedNotes: notes.length,
-    sheets: rows,
-    sourceRowsWithMissingComponent: activities.filter((record) => !record.componente).length,
-  }, null, 2));
+  console.log(
+    JSON.stringify(
+      {
+        importedActivities: activities.length,
+        preservedNotes: notes.length,
+        sheets: rows,
+        sourceRowsWithMissingComponent: activities.filter(
+          (record) => !record.componente,
+        ).length,
+      },
+      null,
+      2,
+    ),
+  );
 } catch (error) {
   if (client) await client.query("ROLLBACK");
   throw error;

@@ -8,7 +8,6 @@ import {
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_ROWS = 500;
 const ROLES = [
-  { value: "ADMINISTRATIVO", label: "Administrativos", singular: "Administrativo", icon: "fa-user-gear" },
   { value: "EXTERNO", label: "Externos", singular: "Externo", icon: "fa-user-group" },
 ];
 const ROLE_LABELS = {
@@ -41,14 +40,12 @@ const FIELDS = [
   { id: "discapacidad", label: "Discapacidad", aliases: ["DISCAPACIDAD"] },
 ];
 
-function requiredFieldsForRole(selectedRole) {
-  return selectedRole === "ADMINISTRATIVO"
-    ? ["identificacion", "nombres", "correo"]
-    : ["identificacion", "nombres", "apellidos", "tipoDocumento", "correo"];
+function requiredFieldsForRole() {
+  return ["identificacion", "nombres", "apellidos", "tipoDocumento", "correo"];
 }
 
-function isRequiredField(field, selectedRole) {
-  return requiredFieldsForRole(selectedRole).includes(field.id);
+function isRequiredField(field) {
+  return requiredFieldsForRole().includes(field.id);
 }
 
 function cellText(value) {
@@ -171,7 +168,7 @@ function readRows(file) {
 }
 
 function ProfileBulkImport({ onSaved }) {
-  const [role, setRole] = useState("ADMINISTRATIVO");
+  const role = "EXTERNO";
   const [sheets, setSheets] = useState([]);
   const [sheetName, setSheetName] = useState("");
   const [headerRow, setHeaderRow] = useState(1);
@@ -185,11 +182,6 @@ function ProfileBulkImport({ onSaved }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [manualAdmin, setManualAdmin] = useState({
-    identificacion: "",
-    nombres: "",
-    correo: "",
-  });
   const [cargaOpen, setCargaOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
 
@@ -297,15 +289,6 @@ function ProfileBulkImport({ onSaved }) {
         else if (["fechaNacimiento", "fechaEgreso"].includes(field.id)) participant[field.id] = normalizeDate(value);
         else participant[field.id] = value;
       });
-      if (role === "ADMINISTRATIVO" && participant.nombres && !participant.apellidos) {
-        const parts = participant.nombres.split(/\s+/).filter(Boolean);
-        const splitAt = Math.ceil(parts.length / 2);
-        participant.nombres = parts.slice(0, splitAt).join(" ");
-        participant.apellidos = parts.slice(splitAt).join(" ");
-      }
-      if (role === "ADMINISTRATIVO" && !participant.tipoDocumento) {
-        participant.tipoDocumento = "CC";
-      }
       return { ...participant, fila: start + index + 1 };
     }).filter((row) => Object.entries(row)
       .some(([field, value]) => field !== "fila" && String(value || "").trim()));
@@ -325,9 +308,7 @@ function ProfileBulkImport({ onSaved }) {
     const missingFields = FIELDS.filter((field) => requiredFields.includes(field.id)
       && (mapping[field.id] === "" || mapping[field.id] === undefined));
     if (missingFields.length) {
-      const labels = missingFields.map((field) => (
-        role === "ADMINISTRATIVO" && field.id === "nombres" ? "Nombre completo" : field.label
-      ));
+      const labels = missingFields.map((field) => field.label);
       setError(`Asigna las columnas obligatorias: ${labels.join(", ")}.`);
       return;
     }
@@ -349,54 +330,6 @@ function ProfileBulkImport({ onSaved }) {
       setMessage("Revisa las coincidencias. Para personas existentes, confirma también la casilla que autoriza agregar el nuevo rol.");
     } catch (validationError) {
       setError(validationError.message || "No se pudo validar el archivo.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function validateManualAdmin(event) {
-    event.preventDefault();
-    const fila =
-      Math.max(0, ...rows.map((row) => row.fila), ...results.map((row) => row.fila)) +
-      1;
-    const participant = {
-      ...manualAdmin,
-      tipoDocumento: "CC",
-      fila,
-    };
-    setBusy(true);
-    setError("");
-    setMessage("");
-    try {
-      const response = await validarPerfilesMasivo({
-        rol: "ADMINISTRATIVO",
-        participantes: [participant],
-      });
-      const validatedResults = response.resultados || [];
-      if (validatedResults.length !== 1) {
-        throw new Error("No se pudo validar el administrativo ingresado.");
-      }
-      const [validated] = validatedResults;
-      setRows((current) => [...current.filter((row) => row.fila !== fila), participant]);
-      setResults((current) => [
-        ...current.filter((result) => result.fila !== fila),
-        validated,
-      ]);
-      setResultsFilter("todos");
-      if (validated.status === "ready") {
-        setSelectedRows((current) => new Set(current).add(fila));
-        setMessage("Administrativo validado y agregado a la lista para guardar.");
-        setManualAdmin({ identificacion: "", nombres: "", correo: "" });
-      } else if (validated.status === "requires-confirmation") {
-        setMessage(
-          "La persona ya existe. Confirma la asignación del rol en la lista antes de guardar.",
-        );
-        setManualAdmin({ identificacion: "", nombres: "", correo: "" });
-      } else {
-        setMessage("Revisa el resultado de validación antes de continuar.");
-      }
-    } catch (validationError) {
-      setError(validationError.message || "No se pudo validar el administrativo.");
     } finally {
       setBusy(false);
     }
@@ -476,19 +409,7 @@ function ProfileBulkImport({ onSaved }) {
 
   const roleLabel = ROLES.find((item) => item.value === role)?.singular || role;
 
-  function selectRole(nextRole) {
-    if (busy || role === nextRole) return;
-    setRole(nextRole);
-    setResults([]);
-    setRows([]);
-    setSelectedRows(new Set());
-    setConfirmRows(new Set());
-    setMessage("");
-    setError("");
-  }
-
-  function openImporter(nextRole) {
-    if (role !== nextRole) selectRole(nextRole);
+  function openImporter() {
     setCargaOpen(true);
   }
 
@@ -499,14 +420,14 @@ function ProfileBulkImport({ onSaved }) {
         <div>
           <span className="vec-profile-import__eyebrow">GESTIÓN DE PERFILES</span>
           <h2 id="vec-profile-import-title">Perfiles de participantes</h2>
-          <p>Aquí puedes cargar perfiles administrativos y externos desde un archivo.</p>
+          <p>Aquí puedes cargar perfiles externos desde un archivo.</p>
         </div>
       </div>
 
       {!cargaOpen && error && <div className="auth-error" role="alert">{error}</div>}
       {!cargaOpen && message && <p className="vec-profile-import__message" role="status">{message}</p>}
 
-      <h3 className="vec-profile-import__load-title">Carga manual disponible</h3>
+      <h3 className="vec-profile-import__load-title">Carga de perfiles externos</h3>
       <div className="vec-profile-import__role-shortcuts vec-profile-import__role-shortcuts--limited" role="group" aria-label="Seleccionar rol para importar">
         {ROLES.map((item) => (
           <button
@@ -514,11 +435,11 @@ function ProfileBulkImport({ onSaved }) {
             type="button"
             key={item.value}
             aria-pressed={role === item.value}
-            onClick={() => openImporter(item.value)}
+            onClick={openImporter}
             disabled={busy}
           >
             <i className={`fas ${item.icon}`} aria-hidden="true"></i>
-            <span>Cargar {item.label.toLowerCase()}</span>
+            <span>Cargar {item.label.toLowerCase()} desde Excel</span>
             <i className="fas fa-arrow-right vec-profile-import__role-arrow" aria-hidden="true"></i>
           </button>
         ))}
@@ -567,20 +488,12 @@ function ProfileBulkImport({ onSaved }) {
               <div className="vec-profile-import__requirements">
                 <section>
                   <strong><i className="fas fa-asterisk" aria-hidden="true"></i> Estas columnas sí son necesarias</strong>
-                  {role === "ADMINISTRATIVO" ? (
-                    <ul>
-                      <li><b>Cédula o documento de identidad</b></li>
-                      <li><b>Nombre completo</b> (una sola columna)</li>
-                      <li><b>Correo</b></li>
-                    </ul>
-                  ) : (
-                    <ul>
-                      <li><b>Documento de identidad</b></li>
-                      <li><b>Nombres y apellidos</b></li>
-                      <li><b>Tipo de documento:</b> CC, TI, CE, PA, entre otros.</li>
-                      <li><b>Correo</b></li>
-                    </ul>
-                  )}
+                  <ul>
+                    <li><b>Documento de identidad</b></li>
+                    <li><b>Nombres y apellidos</b></li>
+                    <li><b>Tipo de documento:</b> CC, TI, CE, PA, entre otros.</li>
+                    <li><b>Correo</b></li>
+                  </ul>
                 </section>
                 <section>
                   <strong><i className="fas fa-plus" aria-hidden="true"></i> Estas columnas son opcionales</strong>
@@ -588,9 +501,7 @@ function ProfileBulkImport({ onSaved }) {
                 </section>
               </div>
               <p className="vec-profile-import__example">
-                <strong>Ejemplo de encabezados:</strong> {role === "ADMINISTRATIVO"
-                  ? "Cédula | Nombre completo | Correo"
-                  : "Documento | Nombres | Apellidos | Tipo de documento | Correo"}
+                <strong>Ejemplo de encabezados:</strong> Documento | Nombres | Apellidos | Tipo de documento | Correo
               </p>
               <ol className="vec-profile-import__steps">
                 <li>Pon los títulos arriba y una persona en cada fila.</li>
@@ -605,15 +516,6 @@ function ProfileBulkImport({ onSaved }) {
             </div>
 
       <div className="vec-profile-import__controls">
-        <label className="vec-profile-import__role-control">
-          <span><i className="fas fa-user-tag" aria-hidden="true"></i> Rol que tendrán las personas de este archivo</span>
-          <select className="form-select" value={role} onChange={(event) => {
-            selectRole(event.target.value);
-          }} disabled={busy}>
-            {ROLES.map((item) => <option value={item.value} key={item.value}>{item.singular}</option>)}
-          </select>
-          <small>Este rol se aplicará a todos los perfiles que guardes en esta carga.</small>
-        </label>
         <label className="vec-profile-import__file vec-profile-import__file-picker">
           <input
             type="file"
@@ -634,79 +536,6 @@ function ProfileBulkImport({ onSaved }) {
           </span>
         </label>
       </div>
-
-      {role === "ADMINISTRATIVO" && (
-        <form
-          className="vec-profile-import__manual-entry"
-          onSubmit={validateManualAdmin}
-        >
-          <div className="vec-profile-import__manual-entry-heading">
-            <div>
-              <strong>¿Solo necesitas agregar un administrativo?</strong>
-              <span>Ingresa sus datos aquí, sin preparar un archivo.</span>
-            </div>
-            <i className="fas fa-user-plus" aria-hidden="true"></i>
-          </div>
-          <div className="vec-profile-import__manual-entry-fields">
-            <label>
-              <span>Documento de identidad *</span>
-              <input
-                className="form-control"
-                value={manualAdmin.identificacion}
-                onChange={(event) =>
-                  setManualAdmin((current) => ({
-                    ...current,
-                    identificacion: event.target.value,
-                  }))
-                }
-                maxLength={64}
-                required
-                disabled={busy}
-              />
-            </label>
-            <label>
-              <span>Nombre completo *</span>
-              <input
-                className="form-control"
-                value={manualAdmin.nombres}
-                onChange={(event) =>
-                  setManualAdmin((current) => ({
-                    ...current,
-                    nombres: event.target.value,
-                  }))
-                }
-                maxLength={240}
-                required
-                disabled={busy}
-              />
-            </label>
-            <label>
-              <span>Correo electrónico *</span>
-              <input
-                className="form-control"
-                type="email"
-                value={manualAdmin.correo}
-                onChange={(event) =>
-                  setManualAdmin((current) => ({
-                    ...current,
-                    correo: event.target.value,
-                  }))
-                }
-                maxLength={254}
-                required
-                disabled={busy}
-              />
-            </label>
-          </div>
-          <button className="btn btn-outline" type="submit" disabled={busy}>
-            <i
-              className={`fas ${busy ? "fa-spinner fa-spin" : "fa-user-plus"}`}
-              aria-hidden="true"
-            ></i>
-            {busy ? "Validando..." : "Agregar a la lista"}
-          </button>
-        </form>
-      )}
 
       {activeSheet && (
         <>
@@ -729,8 +558,8 @@ function ProfileBulkImport({ onSaved }) {
               {FIELDS.map((field) => (
                 <label key={field.id}>
                   <span>
-                    {role === "ADMINISTRATIVO" && field.id === "nombres" ? "Nombre completo / nombres" : field.label}
-                    {isRequiredField(field, role) ? " *" : ""}
+                    {field.label}
+                    {isRequiredField(field) ? " *" : ""}
                   </span>
                   <select
                     className="form-select"

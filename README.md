@@ -232,17 +232,31 @@ por-dispositivo, como el borrador de intervenciones):
   consulta de actividades, asistencia, apoyos y reportes; no puede crear,
   modificar o eliminar registros, inscribir participantes ni confirmar
   asistencia. La API bloquea también sus solicitudes de escritura.
+  Los permisos por línea de acción de Actividades VEC se aplican con
+  `npm --prefix server run db:permisos-actividades`; la migración asigna las
+  cuentas configuradas a sus líneas y permite acceso global a la cuenta global
+  registrada. Las cuentas limitadas tienen acceso a las secciones del módulo,
+  pero sus actividades, participantes, asistencia, apoyos y reportes se filtran
+  por las líneas asignadas. Pueden crear y administrar actividades, inscribir
+  participantes, verificar asistencia e importar actividades realizadas solo
+  dentro de ese alcance. Las herramientas de administración global de perfiles
+  siguen reservadas a los roles autorizados.
   La selección de filas controla exactamente qué personas se guardan. Esta
   carga crea o vincula perfiles VEC en sus tablas de rol sin inscribir personas
   en actividades; antes de agregar un rol a una persona ya registrada solicita
   confirmación explícita. Los roles repetidos y los conflictos de exclusividad
   de Externo se omiten. El botón de sincronización de Usuario y parámetros
   sincroniza docentes y estudiantes con la sincronización institucional existente
-  (incluye matrículas, facultades, notas y apoyos) y actualiza egresados desde
+  (incluye matrículas, facultades, notas y apoyos), crea perfiles VEC para el
+  padrón completo de estudiantes sin inscribirlos en actividades y actualiza egresados desde
   `public.vista_egresados`: agrupa filas por identificación, registra o vincula
   personas y perfiles VEC sin inscribirlas
   en actividades, completa datos vacíos sin sobrescribir los existentes y omite
-  conflictos con el rol Externo. El mismo
+  conflictos con el rol Externo. También sincroniza los administrativos desde
+  `public.vista_administrativos`, consolida identificaciones repetidas y
+  actualiza cargo, vinculación y dependencia en sus perfiles VEC sin crear
+  cuentas de acceso ni inscribirlos en actividades; ya no se cargan manualmente.
+  El panel muestra el total de perfiles administrativos registrados. El mismo
   Resumen ofrece una lista consultable por rol
   (Egresado, Colaborador o Externo), con búsqueda por nombre, documento o
   correo y acciones para editar o eliminar perfiles. La ficha permite actualizar

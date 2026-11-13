@@ -20,7 +20,7 @@ const SECTION_CONTENT = {
   },
 };
 
-export default function SectionPlaceholder({ section }) {
+export default function SectionPlaceholder({ section, access }) {
   const content = SECTION_CONTENT[section];
   if (!content) return null;
 
@@ -46,7 +46,7 @@ export default function SectionPlaceholder({ section }) {
           <li><span>02</span><div><strong>Concilia la lista</strong><small>Marca manualmente o importa un archivo exportado de Forms.</small></div></li>
           <li><span>03</span><div><strong>Revisa y confirma</strong><small>Solo las coincidencias verificadas quedan registradas.</small></div></li>
         </ol>
-        <AsistentesActividadTable />
+        <AsistentesActividadTable access={access} />
       </section>
     );
   }

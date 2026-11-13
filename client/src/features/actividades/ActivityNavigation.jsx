@@ -15,21 +15,32 @@ const SECTIONS = [
   { id: "carga-realizadas", label: "Actividades realizadas", description: "Carga y registra actividades ejecutadas", icon: "fa-file-circle-plus" },
 ];
 
-export default function ActivityNavigation({ activeSection }) {
+export default function ActivityNavigation({ activeSection, access }) {
   const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const puedeAdministrar = ["admin", "administrador", "coordinador"].includes(String(user?.rol || "").toLowerCase());
   const esReporteActividades = String(user?.rol || "").toLowerCase() === "reporte_actividades";
   const sections = SECTIONS
-    .filter((section) => (
-      puedeAdministrar
-      || (esReporteActividades
+    .filter((section) => {
+      if (access?.moduloCompleto) return true;
+      if (puedeAdministrar) return true;
+      return esReporteActividades
         ? !["nuevo", "carga-realizadas"].includes(section.id)
-        : !["actividades", "carga-realizadas"].includes(section.id))
-    ))
+        : !["actividades", "carga-realizadas"].includes(section.id);
+    })
     .map((section) => (
-      esReporteActividades && section.id === "actividades"
-        ? { ...section, label: "Consultar actividades", description: "Revisa jornadas, estados y personas inscritas" }
+      access?.restringido && section.id === "actividades"
+        ? {
+            ...section,
+            label: "Actividades de mis líneas",
+            description: "Administra actividades y participantes de tus líneas asignadas",
+          }
+        : esReporteActividades && section.id === "actividades"
+        ? {
+            ...section,
+            label: "Consultar actividades",
+            description: "Revisa jornadas, estados y personas inscritas",
+          }
         : section
     ));
 

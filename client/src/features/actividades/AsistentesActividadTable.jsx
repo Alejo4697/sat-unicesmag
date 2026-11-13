@@ -36,10 +36,11 @@ function asistenciaEstaConfirmada(asistente) {
   );
 }
 
-export default function AsistentesActividadTable() {
+export default function AsistentesActividadTable({ access }) {
   const { user } = useAuth();
-  const esCoordinador = ["admin", "administrador", "coordinador"]
-    .includes(String(user?.rol || "").toLowerCase());
+  const esCoordinador = Boolean(access?.moduloCompleto) ||
+    ["admin", "administrador", "coordinador"]
+      .includes(String(user?.rol || "").toLowerCase());
   const [actividades, setActividades] = useState([]);
   const [actividadId, setActividadId] = useState("");
   const [busquedaActividad, setBusquedaActividad] = useState("");
