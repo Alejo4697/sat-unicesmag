@@ -3,11 +3,15 @@ import { query } from "./pool.js";
 
 async function run() {
   try {
-    const passwordPorDefecto = "cesmag2026*";
+    const passwordPorDefecto = process.env.SEED_TEMP_PASSWORD;
+    if (!passwordPorDefecto) {
+      console.error("[PASSWORDS] Falta la variable de entorno SEED_TEMP_PASSWORD (contraseña temporal para los usuarios). Defínela en server/.env o en el entorno antes de ejecutar este script.");
+      process.exit(1);
+    }
     const saltRounds = 10;
     const hash = await bcrypt.hash(passwordPorDefecto, saltRounds);
 
-    console.log(`[PASSWORDS] Generando hash bcrypt para '${passwordPorDefecto}'...`);
+    console.log("[PASSWORDS] Generando hash bcrypt de la contraseña temporal...");
 
     // Actualizar todos los usuarios con el hash temporal y bandera debe_cambiar_password
     const res = await query(

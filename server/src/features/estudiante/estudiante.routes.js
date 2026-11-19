@@ -5,7 +5,7 @@
      POST /api/estudiante/solicitar-otp      -> Valida cédula y correo, despacha OTP
      POST /api/estudiante/verificar-otp      -> Valida OTP, emite sesión de estudiante
      GET  /api/estudiante/instrumento        -> Obtiene preguntas activas actualizadas del instrumento
-     GET  /api/estudiante/estado             -> Consulta elegibilidad (semestre 1, 4, 7) y estado/resultado de encuesta
+     GET  /api/estudiante/estado             -> (Bearer, rol estudiante) Consulta elegibilidad (semestre 1, 4, 7) y estado/resultado de encuesta
      POST /api/estudiante/guardar-encuesta   -> Guarda respuestas de caracterización con confirmación y devuelve diagnóstico completo
    ========================================================================== */
 
@@ -18,6 +18,14 @@ import { INSTRUMENTO_ITEMS, DIM_NOMBRES, evaluarInstrumento } from "../caracteri
 import { MOCK_DATA } from "../../shared/data/mockData.js";
 
 const router = Router();
+
+// Los endpoints personales del portal solo los usa un estudiante con sesión.
+function soloEstudiante(req, res, next) {
+  if (req.user?.rol !== "estudiante") {
+    return res.status(403).json({ error: "Este recurso es exclusivo para estudiantes." });
+  }
+  next();
+}
 
 // Semestres institucionales habilitados para caracterización obligatoria
 const SEMESTRES_ELEGIBLES = [1, 4, 7];
@@ -209,28 +217,6 @@ router.post("/solicitar-otp", async (req, res, next) => {
       console.warn("Fallo consulta a sat.estudiantes en solicitar-otp:", dbErr.message);
     }
 
-    // Fallback a MOCK_DATA únicamente si no hay conexión a DB
-    if (!estudiante) {
-      const mockEst = MOCK_DATA.estudiantes.find((e) => {
-        const matchesDoc = docLimpio && (e.documento === docLimpio || e.codigo === docLimpio);
-        const matchesEmail = correoLimpio && e.email?.toLowerCase().trim() === correoLimpio;
-        return matchesDoc || matchesEmail;
-      });
-      if (mockEst) {
-        estudiante = {
-          id_estudiantes: `est_${mockEst.codigo}`,
-          codigo_externo: mockEst.codigo,
-          numero_documento: mockEst.documento,
-          nombres: mockEst.nombres,
-          apellidos: mockEst.apellidos,
-          correo_institucional: mockEst.email,
-          semestre_actual: mockEst.semestre || 1,
-          estado_matricula: "MATRICULADO",
-          programa: mockEst.programa
-        };
-      }
-    }
-
     if (!estudiante) {
       return res.status(404).json({
         error: "Los datos ingresados no coinciden con ningún estudiante registrado en el sistema. Verifique su número de documento."
@@ -346,28 +332,6 @@ router.post("/verificar-otp", async (req, res, next) => {
       }
     } catch {
       // Fallback
-    }
-
-    if (!estudiante) {
-      const mockEst = MOCK_DATA.estudiantes.find((e) => {
-        const matchesDoc = docLimpio && (e.documento === docLimpio || e.codigo === docLimpio);
-        const matchesEmail = correoLimpio && e.email?.toLowerCase().trim() === correoLimpio;
-        return matchesDoc || matchesEmail;
-      });
-      if (mockEst) {
-        estudiante = {
-          id_estudiantes: `est_${mockEst.codigo}`,
-          codigo_externo: mockEst.codigo,
-          numero_documento: mockEst.documento,
-          nombres: mockEst.nombres,
-          apellidos: mockEst.apellidos,
-          correo_institucional: mockEst.email,
-          semestre_actual: mockEst.semestre || 1,
-          estado_matricula: "MATRICULADO",
-          programa: mockEst.programa,
-          sede: "Sede Principal - Pasto"
-        };
-      }
     }
 
     if (!estudiante) {
@@ -494,11 +458,9 @@ router.post("/verificar-otp", async (req, res, next) => {
 // --------------------------------------------------------------------------
 // 3. GET /estado - Consultar elegibilidad y estado/resultado de encuesta para el estudiante
 // --------------------------------------------------------------------------
-router.get("/estado", identifyUser, async (req, res, next) => {
-  const userId = req.user?.id || req.user?.codigo || req.headers["x-user-id"];
-  if (!userId) {
-    return res.status(401).json({ error: "No autenticado. Inicie sesión nuevamente." });
-  }
+router.get("/estado", identifyUser, soloEstudiante, async (req, res, next) => {
+  // La identidad sale SIEMPRE de la sesión (req.user), nunca de un id enviado por el cliente
+  const userId = req.user.id;
 
   try {
     // 1. Obtener estudiante de BD
@@ -511,7 +473,7 @@ router.get("/estado", identifyUser, async (req, res, next) => {
          FROM sat.estudiantes e
          LEFT JOIN sat.programas_academicos p ON e.id_programas_academicos = p.id_programas_academicos
          LEFT JOIN sat.sedes s ON e.id_sedes = s.id_sedes
-         WHERE e.id_estudiantes::text = $1 OR e.codigo_externo = $1 OR e.numero_documento = $1
+         WHERE e.id_estudiantes = $1
          LIMIT 1`,
         [userId]
       );
@@ -519,25 +481,7 @@ router.get("/estado", identifyUser, async (req, res, next) => {
         estudiante = rows[0];
       }
     } catch {
-      // Fallback
-    }
-
-    if (!estudiante) {
-      const mockEst = MOCK_DATA.estudiantes.find(
-        (e) => e.codigo === userId || e.documento === userId || `est_${e.codigo}` === userId
-      );
-      if (mockEst) {
-        estudiante = {
-          id_estudiantes: `est_${mockEst.codigo}`,
-          codigo_externo: mockEst.codigo,
-          numero_documento: mockEst.documento,
-          nombres: mockEst.nombres,
-          apellidos: mockEst.apellidos,
-          correo_institucional: mockEst.email,
-          semestre_actual: mockEst.semestre || 1,
-          programa: mockEst.programa
-        };
-      }
+      // Sin datos: se responde 404 más abajo
     }
 
     if (!estudiante) {
@@ -690,13 +634,10 @@ router.get("/estado", identifyUser, async (req, res, next) => {
 // --------------------------------------------------------------------------
 // 4. POST /guardar-encuesta - Guardar respuestas oficiales del estudiante
 // --------------------------------------------------------------------------
-router.post("/guardar-encuesta", identifyUser, async (req, res, next) => {
-  const userId = req.user?.id || req.user?.codigo || req.headers["x-user-id"];
+router.post("/guardar-encuesta", identifyUser, soloEstudiante, async (req, res, next) => {
+  // La identidad sale SIEMPRE de la sesión (req.user), nunca de un id enviado por el cliente
+  const userId = req.user.id;
   const { respuestas } = req.body;
-
-  if (!userId) {
-    return res.status(401).json({ error: "Sesión expirada o no autenticada. Inicie sesión nuevamente." });
-  }
 
   if (!respuestas || typeof respuestas !== "object") {
     return res.status(400).json({ error: "No se recibieron las respuestas del formulario." });
@@ -709,7 +650,7 @@ router.post("/guardar-encuesta", identifyUser, async (req, res, next) => {
       const estRes = await query(
         `SELECT id_estudiantes, codigo_externo, numero_documento, nombres, apellidos, semestre_actual
          FROM sat.estudiantes
-         WHERE id_estudiantes::text = $1 OR codigo_externo = $1 OR numero_documento = $1
+         WHERE id_estudiantes = $1
          LIMIT 1`,
         [userId]
       );
@@ -717,23 +658,7 @@ router.post("/guardar-encuesta", identifyUser, async (req, res, next) => {
         estudianteDb = estRes.rows[0];
       }
     } catch {
-      // Fallback
-    }
-
-    if (!estudianteDb) {
-      const mockEst = MOCK_DATA.estudiantes.find(
-        (e) => e.codigo === userId || e.documento === userId || `est_${e.codigo}` === userId
-      );
-      if (mockEst) {
-        estudianteDb = {
-          id_estudiantes: `est_${mockEst.codigo}`,
-          codigo_externo: mockEst.codigo,
-          numero_documento: mockEst.documento,
-          nombres: mockEst.nombres,
-          apellidos: mockEst.apellidos,
-          semestre_actual: mockEst.semestre || 1
-        };
-      }
+      // Sin datos: se responde 404 más abajo
     }
 
     if (!estudianteDb) {

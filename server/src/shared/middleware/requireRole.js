@@ -2,9 +2,9 @@
    SAT-UNICESMAG - Middleware de control de acceso (RBAC) y resolución de sesión
    ==========================================================================
    Resuelve el usuario autenticado a partir de:
-   1. Header Authorization: Bearer <token> validado contra sat.sesiones en BD.
-   2. Fallback temporal header x-user-id (para compatibilidad).
-   
+   Header Authorization: Bearer <token> validado contra sat.sesiones en BD
+   (funcionarios y estudiantes). No se acepta ninguna otra forma de identidad.
+
    Provee:
    - identifyUser: middleware transversal para inyectar req.user con sus roles,
      dependencias asignadas y programas académicos autorizados.
@@ -13,12 +13,11 @@
    ========================================================================== */
 
 import crypto from "node:crypto";
-import { MOCK_DATA } from "../data/mockData.js";
 import { rolesParaModulo } from "../security/permisosModulos.js";
 import { query } from "../db/pool.js";
 
 function normalizarRol(rol) {
-  if (!rol) return "sin_rol";
+  if (!rol) return null;
   const r = String(rol).toLowerCase().trim();
   if (r === "administrador" || r === "coordinador" || r === "admin") return "admin";
   if (r === "docente" || r === "docente_permanencia") return "directivo";
@@ -26,9 +25,12 @@ function normalizarRol(rol) {
   return r;
 }
 
+function respuestaSinRol(res) {
+  return res.status(403).json({ error: "Su usuario no tiene un rol asignado. Comuníquese con la administración." });
+}
+
 export async function identifyUser(req, res, next) {
   const authHeader = req.headers.authorization;
-  const legacyUserId = req.headers["x-user-id"];
 
   let sessionToken = null;
   if (authHeader && authHeader.startsWith("Bearer ")) {
@@ -66,7 +68,7 @@ export async function identifyUser(req, res, next) {
               u.correo_institucional AS email,
               COALESCE(
                 LOWER(r.nombre),
-                CASE WHEN doc_u.id_docentes IS NOT NULL THEN 'profesional' ELSE 'funcionario' END
+                CASE WHEN doc_u.id_docentes IS NOT NULL THEN 'profesional' END
               ) AS rol,
               COALESCE(u.cargo, doc_u.tipo_vinculo, 'Funcionario Institucional') AS cargo,
               d.nombre AS dependencia,
@@ -86,6 +88,7 @@ export async function identifyUser(req, res, next) {
           `, [ses.id_usuarios]);
 
           if (userRows.length > 0) {
+            if (!normalizarRol(userRows[0].rol)) return respuestaSinRol(res);
             req.user = {
               ...userRows[0],
               rol: normalizarRol(userRows[0].rol)
@@ -126,90 +129,6 @@ export async function identifyUser(req, res, next) {
       }
     } catch (err) {
       console.warn("Fallo al validar sesión en sat.sesiones:", err.message);
-    }
-  }
-
-  // 2. Fallback por header x-user-id validado contra sat.usuarios en BD
-  if (legacyUserId) {
-    try {
-      const { rows: userRows } = await query(`
-        SELECT u.id_usuarios AS id, u.nombres, u.apellidos, u.correo_institucional AS email,
-               CONCAT(u.nombres, ' ', u.apellidos) AS nombre,
-               COALESCE(
-                 LOWER(r.nombre),
-                 CASE WHEN doc_u.id_docentes IS NOT NULL THEN 'profesional' ELSE 'admin' END
-               ) AS rol,
-               COALESCE(u.cargo, doc_u.tipo_vinculo, 'Funcionario Institucional') AS cargo,
-               d.nombre AS dependencia,
-               COALESCE(p.nombre, p_doc.nombre) AS programa,
-               u.debe_cambiar_password AS "debeCambiarPassword"
-        FROM sat.usuarios u
-        LEFT JOIN sat.usuarios_roles ur ON u.id_usuarios = ur.id_usuarios
-        LEFT JOIN sat.roles r ON ur.id_roles = r.id_roles
-        LEFT JOIN sat.usuarios_dependencias ud ON u.id_usuarios = ud.id_usuarios
-        LEFT JOIN sat.dependencias d ON ud.id_dependencias = d.id_dependencias
-        LEFT JOIN sat.usuarios_programas up ON u.id_usuarios = up.id_usuarios
-        LEFT JOIN sat.programas_academicos p ON up.id_programas_academicos = p.id_programas_academicos
-        LEFT JOIN sat.docentes doc_u ON (doc_u.id_usuarios = u.id_usuarios OR (doc_u.numero_documento = u.numero_documento AND u.numero_documento IS NOT NULL))
-        LEFT JOIN sat.programas_academicos p_doc ON doc_u.id_programas_academicos = p_doc.id_programas_academicos
-        WHERE (u.id_usuarios::text = $1 OR LOWER(u.correo_institucional) = LOWER($1))
-          AND u.activo = true
-        LIMIT 1
-      `, [legacyUserId]);
-
-      if (userRows.length > 0) {
-        req.user = {
-          ...userRows[0],
-          rol: normalizarRol(userRows[0].rol)
-        };
-        return next();
-      }
-
-      // Buscar en estudiantes
-      const { rows: estRows } = await query(`
-        SELECT e.id_estudiantes AS id, e.codigo_externo AS codigo, e.codigo_externo AS "codigoEstudiante",
-               e.numero_documento AS documento, e.numero_documento AS "numeroDocumento",
-               e.nombres, e.apellidos, CONCAT(e.nombres, ' ', e.apellidos) AS nombre,
-               e.correo_institucional AS email, e.correo_institucional AS "correoInstitucional",
-               e.semestre_actual AS semestre,
-               'estudiante' AS rol, 'Estudiante Activo' AS cargo, p.nombre AS programa
-        FROM sat.estudiantes e
-        LEFT JOIN sat.programas_academicos p ON e.id_programas_academicos = p.id_programas_academicos
-        WHERE e.id_estudiantes::text = $1 OR e.codigo_externo = $1 OR e.numero_documento = $1
-        LIMIT 1
-      `, [legacyUserId]);
-
-      if (estRows.length > 0) {
-        req.user = estRows[0];
-        return next();
-      }
-    } catch (dbErr) {
-      console.warn("Fallo al resolver usuario en fallback PostgreSQL:", dbErr.message);
-    }
-
-    // Fallback MOCK_DATA
-    const user = MOCK_DATA.usuarios.find((u) => u.id === legacyUserId || u.email === legacyUserId);
-    if (user) {
-      req.user = { ...user, rol: normalizarRol(user.rol) };
-      return next();
-    }
-
-    const mockEst = MOCK_DATA.estudiantes.find(
-      (e) => e.codigo === legacyUserId || e.documento === legacyUserId || `est_${e.codigo}` === legacyUserId
-    );
-    if (mockEst) {
-      req.user = {
-        id: `est_${mockEst.codigo}`,
-        codigo: mockEst.codigo,
-        codigoEstudiante: mockEst.codigo,
-        nombre: `${mockEst.nombres} ${mockEst.apellidos}`,
-        email: mockEst.email,
-        rol: "estudiante",
-        cargo: "Estudiante Activo",
-        semestre: mockEst.semestre,
-        programa: mockEst.programa
-      };
-      return next();
     }
   }
 
