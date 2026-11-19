@@ -45,7 +45,9 @@ export default function ActividadesPage() {
     ? "Resumen"
     : activeSection === "actividades"
       ? access?.restringido
-        ? "Actividades por línea de acción"
+        ? access?.soloActividadesPropias
+          ? "Administrar mis actividades"
+          : "Administrar actividades por línea de acción"
         : esReporteActividades && !access?.moduloCompleto
           ? "Consultar actividades"
           : "Administrar actividades"

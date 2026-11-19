@@ -9,3 +9,6 @@ build/
 .DS_Store
 .vscode/*
 !.vscode/extensions.json
+
+# Volcados con datos reales (no versionar)
+database/database_sat_completa.sql

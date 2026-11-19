@@ -29,17 +29,27 @@ export default function ActivityNavigation({ activeSection, access }) {
         : !["actividades", "carga-realizadas"].includes(section.id);
     })
     .map((section) => (
-      access?.restringido && section.id === "actividades"
+      access?.soloActividadesPropias && section.id === "actividades"
         ? {
             ...section,
-            label: "Actividades de mis líneas",
+            label: "Administrar mis actividades",
+            description: "Crea y gestiona las actividades que registras en Desarrollo Humano y Salud",
+          }
+        : access?.restringido && section.id === "actividades"
+        ? {
+            ...section,
+            label: "Administrar actividades de mis líneas",
             description: "Administra actividades y participantes de tus líneas asignadas",
           }
-        : esReporteActividades && section.id === "actividades"
+        : esReporteActividades &&
+          !access?.moduloCompleto &&
+          section.id === "actividades"
         ? {
             ...section,
-            label: "Consultar actividades",
-            description: "Revisa jornadas, estados y personas inscritas",
+            label: access?.restringido ? "Consultar actividades de mis líneas" : "Consultar actividades",
+            description: access?.restringido
+              ? "Consulta jornadas y personas inscritas en tus líneas asignadas"
+              : "Revisa jornadas, estados y personas inscritas",
           }
         : section
     ));

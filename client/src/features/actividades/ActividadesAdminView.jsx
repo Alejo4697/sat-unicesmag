@@ -8,6 +8,8 @@ import {
   crearActividad,
   eliminarActividad,
   eliminarActividades,
+  getActividadesParaExportar,
+  getActividadesParaExportarPorLinea,
   exportarParticipantesActividad,
   eliminarInscripcion,
   getActividades,
@@ -15,9 +17,11 @@ import {
   getHistorialParticipacion,
   getParticipantesActividad,
 } from "./participantesApi.js";
+import { descargarReporteActividades } from "./excelReporteGeneral.js";
 const EMPTY_FORM = {
   idPeriodo: "",
   actividad: "",
+  programaAcademico: "",
   programaBienestar: "",
   lineaAccion: "",
   componente: "",
@@ -33,6 +37,8 @@ const EMPTY_FORM = {
   articulacionInstitucional: "",
   idDependencia: "",
   dependenciaOtra: "",
+  responsable: "",
+  idPersonaResponsable: "",
   estrategiaPoliticaBienestar: "",
   estrategiaPoliticaPermanencia: "",
   estrategiaPoliticaEducacionInclusiva: "",
@@ -330,6 +336,7 @@ function toForm(activity, programasBienestar, tiposApoyo) {
     idEventoExistente: activity.id,
     idPeriodo: activity.idPeriodo,
     actividad: activity.actividad || "",
+    programaAcademico: activity.programaAcademico || "",
     programaBienestar: programa?.programa || programaBienestarNombre,
     lineaAccion,
     componente,
@@ -349,6 +356,10 @@ function toForm(activity, programasBienestar, tiposApoyo) {
     articulacionInstitucional: activity.articulacionInstitucional || "",
     idDependencia: activity.idDependencia || "",
     dependenciaOtra: activity.dependenciaOtra || "",
+    responsable: activity.responsable || "",
+    idPersonaResponsable: activity.idPersonaResponsable || "",
+    tipoDocumentoResponsable: activity.tipoDocumentoResponsable || "",
+    identificacionResponsable: activity.identificacionResponsable || "",
     estrategiaPoliticaBienestar: activity.estrategiaPoliticaBienestar || "",
     estrategiaPoliticaPermanencia: activity.estrategiaPoliticaPermanencia || "",
     estrategiaPoliticaEducacionInclusiva:
@@ -366,6 +377,7 @@ export default function ActividadesAdminView({ readOnly = false, access }) {
   const [actividades, setActividades] = useState([]);
   const [periodos, setPeriodos] = useState([]);
   const [programasBienestar, setProgramasBienestar] = useState([]);
+  const [programasAcademicos, setProgramasAcademicos] = useState([]);
   const [tiposApoyo, setTiposApoyo] = useState([]);
   const [busqueda, setBusqueda] = useState("");
   const [filtroEstado, setFiltroEstado] = useState("");
@@ -391,12 +403,18 @@ export default function ActividadesAdminView({ readOnly = false, access }) {
   const [eliminandoActividades, setEliminandoActividades] = useState(false);
   const [errorEliminacionMasiva, setErrorEliminacionMasiva] = useState("");
   const [exportandoActividadId, setExportandoActividadId] = useState("");
+  const [exportandoActividades, setExportandoActividades] = useState(false);
+  const [exportandoReporteLinea, setExportandoReporteLinea] = useState(false);
   const [eliminandoInscripcionId, setEliminandoInscripcionId] = useState("");
   const [errorEliminacionInscripcion, setErrorEliminacionInscripcion] =
     useState("");
   const [confirmacionEliminacion, setConfirmacionEliminacion] = useState(null);
   const [busquedaParticipante, setBusquedaParticipante] = useState("");
   const [buscandoPersonas, setBuscandoPersonas] = useState(false);
+  const [busquedaResponsable, setBusquedaResponsable] = useState("");
+  const [responsablesEncontrados, setResponsablesEncontrados] = useState([]);
+  const [buscandoResponsable, setBuscandoResponsable] = useState(false);
+  const [errorBusquedaResponsable, setErrorBusquedaResponsable] = useState("");
   const puedeCrear = !readOnly && (access ? Boolean(access.puedeCrear) : true);
   const puedeAdministrar =
     !readOnly && (access ? Boolean(access.puedeAdministrar) : true);
@@ -414,6 +432,7 @@ export default function ActividadesAdminView({ readOnly = false, access }) {
         if (!mounted) return;
         setPeriodos(refs.periodos || []);
         setProgramasBienestar(refs.programasBienestar || []);
+        setProgramasAcademicos(refs.programasAcademicos || []);
         setTiposApoyo(refs.tiposApoyo || []);
       })
       .catch(
@@ -482,6 +501,57 @@ export default function ActividadesAdminView({ readOnly = false, access }) {
     }, 250);
     return () => clearTimeout(timeout);
   }, [personaTerm]);
+
+  useEffect(() => {
+    const termino = busquedaResponsable.trim();
+    if (termino.length < 2) {
+      setResponsablesEncontrados([]);
+      setBuscandoResponsable(false);
+      setErrorBusquedaResponsable("");
+      return undefined;
+    }
+
+    let active = true;
+    const timeout = setTimeout(() => {
+      setBuscandoResponsable(true);
+      setErrorBusquedaResponsable("");
+      buscarPersonasActividades(termino)
+        .then((result) => {
+          if (active) setResponsablesEncontrados(result);
+        })
+        .catch((requestError) => {
+          if (active) {
+            setErrorBusquedaResponsable(
+              requestError.message || "No se pudo buscar la persona responsable.",
+            );
+          }
+        })
+        .finally(() => {
+          if (active) setBuscandoResponsable(false);
+        });
+    }, 250);
+    return () => {
+      active = false;
+      clearTimeout(timeout);
+    };
+  }, [busquedaResponsable]);
+
+  function seleccionarResponsable(persona) {
+    const responsable = [persona.nombres, persona.apellidos]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+    setForm((current) => ({
+      ...current,
+      responsable,
+      idPersonaResponsable: String(persona.idPersona),
+      tipoDocumentoResponsable: persona.tipoDocumento || "",
+      identificacionResponsable: persona.identificacion || "",
+    }));
+    setBusquedaResponsable("");
+    setResponsablesEncontrados([]);
+    setErrorBusquedaResponsable("");
+  }
 
   function update(name, value) {
     setForm((current) => ({ ...current, [name]: value }));
@@ -705,13 +775,32 @@ export default function ActividadesAdminView({ readOnly = false, access }) {
     if (
       !form?.idPeriodo ||
       !form.actividad?.trim() ||
+      !form.descripcion?.trim() ||
       !form.fechaInicio ||
       !form.fechaFinalizacion ||
       !form.ubicacion?.length
     ) {
       setError(
-        "Ingresa el periodo, el nombre de la actividad, la ubicación y ambas fechas.",
+        "Ingresa el periodo, el nombre y la descripción de la actividad, la ubicación y ambas fechas.",
       );
+      return;
+    }
+    if (
+      !form.idEventoExistente &&
+      !valorCatalogoSeleccionado(form.lineaAccion || "").trim()
+    ) {
+      setError("Selecciona una línea de acción para elegir el componente.");
+      return;
+    }
+    if (
+      !form.idEventoExistente &&
+      !valorCatalogoSeleccionado(form.componente || "").trim()
+    ) {
+      setError("Selecciona el componente de la actividad.");
+      return;
+    }
+    if (!form.idEventoExistente && !form.idPersonaResponsable) {
+      setError("Busca y selecciona una persona responsable registrada.");
       return;
     }
     if (
@@ -928,6 +1017,71 @@ export default function ActividadesAdminView({ readOnly = false, access }) {
     }
   }
 
+  async function downloadAllActivitiesExcel() {
+    setError("");
+    setMensaje("");
+    setExportandoActividades(true);
+    try {
+      const activities = await getActividadesParaExportar();
+      if (!Array.isArray(activities)) {
+        throw new Error("La respuesta de actividades no tiene un formato válido.");
+      }
+      if (activities.length === 0) {
+        setMensaje("No hay actividades registradas para exportar.");
+        return;
+      }
+
+      await descargarReporteActividades(
+        activities,
+        `actividades-vec-${new Date().toISOString().slice(0, 10)}.xlsx`,
+      );
+      setMensaje(`Se exportaron ${activities.length} actividades a Excel.`);
+    } catch (requestError) {
+      setError(
+        requestError.message || "No se pudieron exportar las actividades.",
+      );
+    } finally {
+      setExportandoActividades(false);
+    }
+  }
+
+  async function downloadAuthorizedLineReport() {
+    setError("");
+    setMensaje("");
+    setExportandoReporteLinea(true);
+    try {
+      const lineas = [...new Set(access?.lineasReporte || [])];
+      if (!lineas.length) {
+        throw new Error("Tu cuenta no tiene líneas autorizadas para este reporte.");
+      }
+      const reportes = await Promise.all(
+        lineas.map((linea) => getActividadesParaExportarPorLinea(linea)),
+      );
+      if (reportes.some((activities) => !Array.isArray(activities))) {
+        throw new Error("La respuesta de actividades no tiene un formato válido.");
+      }
+      const activities = reportes.flat();
+      if (!activities.length) {
+        setMensaje("No hay actividades registradas para tus líneas autorizadas.");
+        return;
+      }
+
+      await descargarReporteActividades(
+        activities,
+        `actividades-mis-lineas-${new Date().toISOString().slice(0, 10)}.xlsx`,
+      );
+      setMensaje(
+        `Se exportaron ${activities.length} actividades de tus líneas autorizadas.`,
+      );
+    } catch (requestError) {
+      setError(
+        requestError.message || "No se pudo descargar el reporte por línea.",
+      );
+    } finally {
+      setExportandoReporteLinea(false);
+    }
+  }
+
   async function showParticipants(activity) {
     setError("");
     setErrorEliminacionInscripcion("");
@@ -1078,23 +1232,64 @@ export default function ActividadesAdminView({ readOnly = false, access }) {
                 : "Organiza, consulta y administra las actividades registradas."}
             </p>
           </div>
-          {puedeCrear && (
-            <button
-              className="btn btn-primary"
-              type="button"
-              onClick={() =>
-                setForm({
-                  ...EMPTY_FORM,
-                  lineaAccion:
-                    accesoRestringidoPorLinea &&
-                    access.lineasAccion.length === 1
-                      ? access.lineasAccion[0]
-                      : "",
-                })
-              }
-            >
-              <i className="fas fa-plus" aria-hidden="true"></i> Crear actividad
-            </button>
+          {((access?.accesoGlobal && puedeAdministrar) ||
+            puedeCrear ||
+            access?.lineasReporte?.length > 0) && (
+            <div className="activity-admin__actions">
+              {access?.accesoGlobal && puedeAdministrar && (
+                <button
+                  className="btn btn-outline activity-admin__export-btn"
+                  type="button"
+                  onClick={downloadAllActivitiesExcel}
+                  disabled={exportandoActividades}
+                  aria-busy={exportandoActividades}
+                >
+                  <i
+                    className={`fas ${exportandoActividades ? "fa-spinner fa-spin" : "fa-file-excel"}`}
+                    aria-hidden="true"
+                  ></i>
+                  {exportandoActividades
+                    ? "Preparando Excel..."
+                    : "Descargar todas en Excel"}
+                </button>
+              )}
+              {puedeCrear && (
+                <button
+                  className="btn btn-primary activity-admin__create-btn"
+                  type="button"
+                  onClick={() =>
+                    setForm({
+                      ...EMPTY_FORM,
+                      lineaAccion:
+                        accesoRestringidoPorLinea &&
+                        access.lineasAccion.length === 1
+                          ? access.lineasAccion[0]
+                          : "",
+                    })
+                  }
+                >
+                  <i className="fas fa-plus" aria-hidden="true"></i>
+                  Crear actividad
+                </button>
+              )}
+              {access?.lineasReporte?.length > 0 && (
+                <button
+                  className="btn btn-outline activity-admin__export-btn"
+                  type="button"
+                  onClick={downloadAuthorizedLineReport}
+                  disabled={exportandoReporteLinea}
+                  aria-busy={exportandoReporteLinea}
+                >
+                  <i
+                    className={`fas ${exportandoReporteLinea ? "fa-spinner fa-spin" : "fa-file-excel"}`}
+                    aria-hidden="true"
+                  ></i>
+                  {exportandoReporteLinea
+                    ? "Preparando Excel..."
+                    : "Descargar reporte por línea"}
+                </button>
+              )}
+            </div>
           )}
         </div>
         <div className="activity-toolbar">
@@ -1524,6 +1719,18 @@ export default function ActividadesAdminView({ readOnly = false, access }) {
                                   <small>Creada por</small>
                                 </span>
                               </div>
+                              <div className="activity-detail">
+                                <i
+                                  className="fas fa-user-check"
+                                  aria-hidden="true"
+                                ></i>
+                                <span>
+                                  <strong>
+                                    {activity.responsable || "Sin especificar"}
+                                  </strong>
+                                  <small>Responsable</small>
+                                </span>
+                              </div>
                             </div>
 
                             {activity.programaBienestar && (
@@ -1577,7 +1784,7 @@ export default function ActividadesAdminView({ readOnly = false, access }) {
 
                             <div className="activity-card__footer">
                               <div className="activity-card__actions">
-                                {!accesoRestringidoPorLinea && <button
+                                {puedeAdministrar && <button
                                   className="btn btn-outline btn-sm activity-card__download"
                                   type="button"
                                   onClick={() =>
@@ -1818,12 +2025,124 @@ export default function ActividadesAdminView({ readOnly = false, access }) {
                         required
                       />
                     </div>
+                    <div className="form-group activity-general-field">
+                      <label
+                        className="form-label"
+                        htmlFor="activity-academic-program"
+                      >
+                        Programa académico
+                        <span className="activity-form-optional">Opcional</span>
+                      </label>
+                      <input
+                        className="form-control"
+                        id="activity-academic-program"
+                        list="activity-academic-program-options"
+                        value={form.programaAcademico}
+                        onChange={(event) =>
+                          update("programaAcademico", event.target.value)
+                        }
+                        maxLength={250}
+                        placeholder="Escribe o selecciona un programa"
+                      />
+                      <datalist id="activity-academic-program-options">
+                        {programasAcademicos.map((programa) => (
+                          <option key={programa} value={programa} />
+                        ))}
+                      </datalist>
+                    </div>
+                    <div className="form-group activity-general-field">
+                      <label className="form-label" htmlFor="activity-responsible">
+                        Persona responsable
+                        <span className="activity-form-optional">
+                          {form.idEventoExistente ? "Opcional" : "Obligatorio"}
+                        </span>
+                      </label>
+                      <div className="activity-responsible-picker">
+                        <input
+                          className="form-control"
+                          id="activity-responsible"
+                          value={form.responsable}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            setForm((current) => ({
+                              ...current,
+                              responsable: value,
+                              idPersonaResponsable: "",
+                              tipoDocumentoResponsable: "",
+                              identificacionResponsable: "",
+                            }));
+                            setBusquedaResponsable(value);
+                          }}
+                          maxLength={250}
+                          placeholder="Busca y selecciona una persona"
+                          required={!form.idEventoExistente}
+                          autoComplete="off"
+                          aria-autocomplete="list"
+                          aria-expanded={responsablesEncontrados.length > 0}
+                        />
+                        {form.idPersonaResponsable && (
+                          <small className="activity-program-hint">
+                            Documento: {[
+                              form.tipoDocumentoResponsable,
+                              form.identificacionResponsable,
+                            ].filter(Boolean).join(" ") || "No registrado"}
+                          </small>
+                        )}
+                        {buscandoResponsable && (
+                          <small className="activity-program-hint" role="status">
+                            Buscando personas...
+                          </small>
+                        )}
+                        {!buscandoResponsable &&
+                          !errorBusquedaResponsable &&
+                          busquedaResponsable.trim().length >= 2 &&
+                          responsablesEncontrados.length === 0 && (
+                            <small className="activity-program-hint" role="status">
+                              No se encontraron personas. Debes seleccionar una persona registrada.
+                            </small>
+                          )}
+                        {errorBusquedaResponsable && (
+                          <small className="auth-error" role="alert">
+                            {errorBusquedaResponsable}
+                          </small>
+                        )}
+                        {responsablesEncontrados.length > 0 && (
+                          <div className="activity-person-search-results" role="listbox" aria-label="Personas encontradas">
+                            {responsablesEncontrados.map((persona) => {
+                              const nombre = [persona.nombres, persona.apellidos]
+                                .filter(Boolean)
+                                .join(" ");
+                              return (
+                                <button
+                                  className="activity-person-search-results__option"
+                                  key={persona.idPersona}
+                                  type="button"
+                                  role="option"
+                                  aria-selected={false}
+                                  onClick={() => seleccionarResponsable(persona)}
+                                >
+                                  <strong>{nombre || "Persona sin nombre"}</strong>
+                                  <small>
+                                    {[
+                                      persona.tipoDocumento,
+                                      persona.identificacion,
+                                    ].filter(Boolean).join(" ") || "Documento no registrado"}
+                                  </small>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
                     <div className="form-group activity-form-field--wide activity-general-field">
                       <label className="form-label" htmlFor="activity-action-line">
                         Línea de acción
-                        {!accesoRestringidoPorLinea && (
-                          <span className="activity-form-optional">Opcional</span>
-                        )}
+                        <span className="activity-form-optional">
+                          {accesoRestringidoPorLinea || !form.idEventoExistente
+                            ? "Obligatorio"
+                            : "Opcional"}
+                        </span>
                       </label>
                       <p className="activity-program-hint">
                         Selecciona una línea de acción para filtrar sus
@@ -1833,7 +2152,9 @@ export default function ActividadesAdminView({ readOnly = false, access }) {
                         className="form-select"
                         id="activity-action-line"
                         value={form.lineaAccion}
-                        required={accesoRestringidoPorLinea}
+                        required={
+                          accesoRestringidoPorLinea || !form.idEventoExistente
+                        }
                         onChange={(event) =>
                           updateFiltroClasificacion(
                             "lineaAccion",
@@ -1857,13 +2178,14 @@ export default function ActividadesAdminView({ readOnly = false, access }) {
                         >
                           Componente
                           <span className="activity-form-optional">
-                            Opcional
+                            {form.idEventoExistente ? "Opcional" : "Obligatorio"}
                           </span>
                         </label>
                         <select
                           className="form-select"
                           id="activity-catalog-component"
                           value={form.componente}
+                          required={!form.idEventoExistente}
                           onChange={(event) =>
                             updateFiltroClasificacion(
                               "componente",
@@ -2095,7 +2417,10 @@ export default function ActividadesAdminView({ readOnly = false, access }) {
                             "Estrategia de Educación inclusiva",
                           ],
                         ].map(([field, label], index) => (
-                          <div className="form-group" key={field}>
+                          <div
+                            className="form-group activity-strategy-field"
+                            key={field}
+                          >
                             <label
                               className="form-label"
                               htmlFor={`activity-${field}`}
@@ -2331,22 +2656,29 @@ export default function ActividadesAdminView({ readOnly = false, access }) {
                     </span>
                     <span>
                       <h3>Descripción</h3>
-                      <p>
-                        Agrega información adicional para contextualizar la
+                      <p id="activity-description-hint">
+                        Describe el propósito y los detalles principales de la
                         actividad.
                       </p>
                     </span>
-                    <span className="activity-form-optional">Opcional</span>
                   </div>
+                  <label
+                    className="form-label activity-form-description-label"
+                    htmlFor="activity-description"
+                  >
+                    Descripción de la actividad
+                    <span className="activity-form-required">Obligatoria</span>
+                  </label>
                   <textarea
                     className="form-control activity-form-description"
                     id="activity-description"
-                    aria-label="Descripción de la actividad"
+                    aria-describedby="activity-description-hint"
                     value={form.descripcion}
                     onChange={(event) =>
                       update("descripcion", event.target.value)
                     }
                     rows={3}
+                    required
                     placeholder="Describe brevemente el propósito o los detalles de la actividad."
                   />
                 </section>

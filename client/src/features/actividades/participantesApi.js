@@ -47,6 +47,11 @@ export function getAccesoActividades({ signal } = {}) {
   return apiFetch("/actividades/participantes/acceso-lineas", { signal });
 }
 
+export function getActividadesParaExportarPorLinea(lineaAccion) {
+  const params = new URLSearchParams({ lineaReporte: lineaAccion });
+  return apiFetch(`/actividades/participantes/eventos?${params.toString()}`);
+}
+
 export function getBeneficiariosApoyo({ tipoApoyo, pagina = 1, signal }) {
   const params = new URLSearchParams({ pagina: String(pagina) });
   if (tipoApoyo && tipoApoyo !== "todos") params.set("tipoApoyo", tipoApoyo);
@@ -70,6 +75,12 @@ export function getActividades({ busqueda = "", estado = "", ids = [] } = {}) {
   if (estado) params.set("estado", estado);
   ids.forEach((id) => params.append("id", id));
   return apiFetch(`/actividades/participantes/eventos?${params.toString()}`);
+}
+
+export function getActividadesParaExportar() {
+  return apiFetch(
+    "/actividades/participantes/eventos?exportarTodas=true",
+  );
 }
 
 export function previsualizarImportacionActividades(payload) {

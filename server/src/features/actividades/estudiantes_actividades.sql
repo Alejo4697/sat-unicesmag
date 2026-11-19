@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS sat.actividades_vec (
   id_dependencias uuid REFERENCES sat.dependencias(id_dependencias),
   dependencia_otra varchar(250),
   modalidad varchar(100),
+  responsable varchar(250),
+  programa_academico varchar(250),
   fecha_inicio date NOT NULL,
   fecha_finalizacion date NOT NULL,
   id_programas_bienestar uuid NOT NULL

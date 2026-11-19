@@ -7,7 +7,9 @@ ALTER TABLE sat.actividades_vec
   ADD COLUMN IF NOT EXISTS actualizado_en timestamptz NOT NULL DEFAULT now(),
   ADD COLUMN IF NOT EXISTS cancelada_en timestamptz,
   ADD COLUMN IF NOT EXISTS ubicacion text,
-  ADD COLUMN IF NOT EXISTS variables_modalidades text[] NOT NULL DEFAULT ARRAY[]::text[];
+  ADD COLUMN IF NOT EXISTS variables_modalidades text[] NOT NULL DEFAULT ARRAY[]::text[],
+  ADD COLUMN IF NOT EXISTS responsable varchar(250),
+  ADD COLUMN IF NOT EXISTS programa_academico varchar(250);
 
 UPDATE sat.actividades_vec
 SET cancelada_en = now()

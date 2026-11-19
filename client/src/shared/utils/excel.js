@@ -23,12 +23,13 @@ export function valorCeldaExcel(fila, columna, vacio = "No aplica") {
  * @param {Object} [opciones]
  * @param {string} [opciones.hoja="Reporte"] - Nombre de la hoja de cálculo.
  * @param {string} [opciones.vacio="No aplica"] - Texto para celdas nulas o vacías.
+ * @param {boolean} [opciones.autofiltro=false] - Agrega filtros a todas las columnas.
  */
 export async function descargarExcel(
   filas,
   columnas,
   nombreArchivo,
-  { hoja = "Reporte", vacio = "No aplica" } = {}
+  { hoja = "Reporte", vacio = "No aplica", autofiltro = false } = {}
 ) {
   const { default: ExcelJS } = await import("exceljs");
   const workbook = new ExcelJS.Workbook();
@@ -131,6 +132,13 @@ export async function descargarExcel(
     });
     column.width = Math.min(45, Math.max(14, maxLength + 3));
   });
+
+  if (autofiltro && filas.length) {
+    worksheet.autoFilter = {
+      from: "A1",
+      to: `${worksheet.getColumn(columnas.length).letter}${filas.length + 1}`
+    };
+  }
 
   // Generar buffer XLSX y descargar en el navegador
   const buffer = await workbook.xlsx.writeBuffer();

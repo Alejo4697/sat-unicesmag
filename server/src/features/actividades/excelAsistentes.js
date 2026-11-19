@@ -61,6 +61,7 @@ const COLUMNS = [
   "rolColaborador",
   "rolAdministrativo",
   "rolExterno",
+  "responsable",
 ];
 const DATE_COLUMNS = new Set([30, 31]);
 const WRAPPED_TEXT_COLUMNS = new Set([
@@ -86,6 +87,7 @@ const WRAPPED_TEXT_COLUMNS = new Set([
   "AJ",
   "AK",
   "AL",
+  "AR",
 ]);
 const MISSING_VALUE = "—";
 const NOT_APPLICABLE = "No aplica";
@@ -766,7 +768,7 @@ function resizeWorksheetRanges(xml, lastRow) {
   return xml.replace(
     /<(dimension|autoFilter)\b([^>]*\bref=")([A-Z]+\d+):[A-Z]+\d+("[^>]*)\/>/g,
     (_match, tag, prefix, start, suffix) =>
-      `<${tag}${prefix}${start}:AQ${lastRow}${suffix}/>`,
+      `<${tag}${prefix}${start}:AR${lastRow}${suffix}/>`,
   ).replace(
     /(<conditionalFormatting\b[^>]*\bsqref=")B9("[^>]*>)/g,
     (_match, prefix, suffix) => `${prefix}B9:B${lastRow}${suffix}`,
@@ -1061,9 +1063,10 @@ function addRolesHeaderAndColumns(xml) {
             (header, index) =>
               `<c r="${columnName(39 + index)}8"${styleAttribute} t="inlineStr"><is><t>${header}</t></is></c>`,
           )
-          .join("");
+          .join("") +
+        `<c r="${columnName(44)}8"${styleAttribute} t="inlineStr"><is><t>RESPONSABLE DE ACTIVIDAD</t></is></c>`;
       hasHeader = true;
-      return `<row${attributes.replace(/\bspans="1:38"/, 'spans="1:43"')}>${content}${headers}</row>`;
+      return `<row${attributes.replace(/\bspans="1:38"/, 'spans="1:44"')}>${content}${headers}</row>`;
     },
   );
   if (!hasHeader)
@@ -1085,18 +1088,18 @@ function addRolesHeaderAndColumns(xml) {
         (column) => {
           splitDefaultColumns = true;
           const remainder = column
-            .replace(/\bmin="39"/, 'min="44"')
+            .replace(/\bmin="39"/, 'min="45"')
             .replace(/\bmax="16384"/, 'max="16384"');
           return `<col min="39" max="43" width="16" customWidth="1"/>${remainder}`;
         },
       );
       const roleColumnWidths = splitDefaultColumns
-        ? remainingColumns
-        : `${remainingColumns}<col min="39" max="43" width="16" customWidth="1"/>`;
+        ? `${remainingColumns}<col min="44" max="44" width="30" customWidth="1"/>`
+        : `${remainingColumns}<col min="39" max="43" width="16" customWidth="1"/><col min="44" max="44" width="30" customWidth="1"/>`;
       return `<cols${attributes}>${roleColumnWidths}</cols>`;
     },
   );
-  return updated.replace(/spans="1:38"/g, 'spans="1:43"');
+  return updated.replace(/spans="1:38"/g, 'spans="1:44"');
 }
 
 async function appendMultipleRoleCellStyles(
@@ -1322,7 +1325,7 @@ function createDataRow(
 
   const attributes = rowAttributes
     .replace(/\br="9"/, `r="${rowNumber}"`)
-    .replace(/\bspans="1:38"/, 'spans="1:43"');
+    .replace(/\bspans="1:38"/, 'spans="1:44"');
   return `<row${attributes}>${cells}</row>`;
 }
 

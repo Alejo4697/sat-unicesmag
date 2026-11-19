@@ -13,7 +13,6 @@ import {
 } from "./rolePresentation.js";
 
 const ROLES = [
-  { value: "POR_CONFIRMAR", label: "Por confirmar", singular: "Por confirmar", icon: "fa-circle-question" },
   { value: "COLABORADOR", label: "Docentes", singular: "Docente", icon: "fa-user-tie" },
   { value: "ADMINISTRATIVO", label: "Administrativos", singular: "Administrativo", icon: "fa-user-gear" },
   { value: "EGRESADO", label: "Egresados", singular: "Egresado", icon: "fa-user-graduate" },

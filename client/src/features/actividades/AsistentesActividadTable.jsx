@@ -38,9 +38,11 @@ function asistenciaEstaConfirmada(asistente) {
 
 export default function AsistentesActividadTable({ access }) {
   const { user } = useAuth();
-  const esCoordinador = Boolean(access?.moduloCompleto) ||
-    ["admin", "administrador", "coordinador"]
-      .includes(String(user?.rol || "").toLowerCase());
+  const puedeAdministrar =
+    Boolean(access?.puedeAdministrar) ||
+    ["admin", "administrador", "coordinador"].includes(
+      String(user?.rol || "").toLowerCase(),
+    );
   const [actividades, setActividades] = useState([]);
   const [actividadId, setActividadId] = useState("");
   const [busquedaActividad, setBusquedaActividad] = useState("");
@@ -54,10 +56,17 @@ export default function AsistentesActividadTable({ access }) {
   const [cargandoActividades, setCargandoActividades] = useState(true);
   const [cargandoAsistentes, setCargandoAsistentes] = useState(false);
   const [error, setError] = useState("");
-  const actividadSeleccionada = actividades.find((actividad) => actividad.id === actividadId);
-  const asistenciasConfirmadas = asistentes.filter((item) => item.asistenciaEstado === "PRESENTE" || item.asistenciaVerificada).length;
-  const ausenciasConfirmadas = asistentes.filter((item) => item.asistenciaEstado === "AUSENTE").length;
-  const pendientesAsistencia = asistentes.length - asistenciasConfirmadas - ausenciasConfirmadas;
+  const actividadSeleccionada = actividades.find(
+    (actividad) => actividad.id === actividadId,
+  );
+  const asistenciasConfirmadas = asistentes.filter(
+    (item) => item.asistenciaEstado === "PRESENTE" || item.asistenciaVerificada,
+  ).length;
+  const ausenciasConfirmadas = asistentes.filter(
+    (item) => item.asistenciaEstado === "AUSENTE",
+  ).length;
+  const pendientesAsistencia =
+    asistentes.length - asistenciasConfirmadas - ausenciasConfirmadas;
   const porcentajeAsistencia = asistentes.length
     ? Math.round((asistenciasConfirmadas / asistentes.length) * 100)
     : 0;
@@ -68,7 +77,10 @@ export default function AsistentesActividadTable({ access }) {
       .then(setActividades)
       .catch((requestError) => {
         if (!controller.signal.aborted) {
-          setError(requestError.message || "No se pudieron cargar las actividades registradas.");
+          setError(
+            requestError.message ||
+              "No se pudieron cargar las actividades registradas.",
+          );
         }
       })
       .finally(() => {
@@ -100,7 +112,9 @@ export default function AsistentesActividadTable({ access }) {
       })
       .catch((requestError) => {
         if (!controller.signal.aborted) {
-          setError(requestError.message || "No se pudieron consultar los asistentes.");
+          setError(
+            requestError.message || "No se pudieron consultar los asistentes.",
+          );
         }
       })
       .finally(() => {
@@ -140,7 +154,11 @@ export default function AsistentesActividadTable({ access }) {
       asistente.codigo,
       asistente.apellidosNombres,
       asistente.correo,
-    ].some((value) => String(value || "").toLocaleLowerCase("es").includes(term));
+    ].some((value) =>
+      String(value || "")
+        .toLocaleLowerCase("es")
+        .includes(term),
+    );
   });
   function seleccionarActividad(actividad) {
     setActividadId(actividad.id);
@@ -163,9 +181,11 @@ export default function AsistentesActividadTable({ access }) {
       if (opcionesVisibles.length === 0) return;
       event.preventDefault();
       setMostrarOpciones(true);
-      setOpcionActiva((current) => (
-        mostrarOpciones ? Math.min(current + 1, opcionesVisibles.length - 1) : 0
-      ));
+      setOpcionActiva((current) =>
+        mostrarOpciones
+          ? Math.min(current + 1, opcionesVisibles.length - 1)
+          : 0,
+      );
       return;
     }
 
@@ -173,24 +193,31 @@ export default function AsistentesActividadTable({ access }) {
       if (opcionesVisibles.length === 0) return;
       event.preventDefault();
       setMostrarOpciones(true);
-      setOpcionActiva((current) => (
-        mostrarOpciones ? Math.max(current - 1, 0) : opcionesVisibles.length - 1
-      ));
+      setOpcionActiva((current) =>
+        mostrarOpciones
+          ? Math.max(current - 1, 0)
+          : opcionesVisibles.length - 1,
+      );
       return;
     }
 
-    if (event.key === "Enter" && mostrarOpciones && opcionesVisibles[opcionActiva]) {
+    if (
+      event.key === "Enter" &&
+      mostrarOpciones &&
+      opcionesVisibles[opcionActiva]
+    ) {
       event.preventDefault();
       seleccionarActividad(opcionesVisibles[opcionActiva]);
     }
   }
 
-  const asistentesPendientesVisibles = asistentesFiltrados.filter((item) => (
-    !asistenciaEstaConfirmada(item) && item.asistenciaEstado !== "AUSENTE"
-  ));
-  const seleccionadosPendientes = asistentes.filter((item) => (
-    idsSeleccionados.has(item.id) && !asistenciaEstaConfirmada(item)
-  ));
+  const asistentesPendientesVisibles = asistentesFiltrados.filter(
+    (item) =>
+      !asistenciaEstaConfirmada(item) && item.asistenciaEstado !== "AUSENTE",
+  );
+  const seleccionadosPendientes = asistentes.filter(
+    (item) => idsSeleccionados.has(item.id) && !asistenciaEstaConfirmada(item),
+  );
 
   function cambiarSeleccion(asistente, seleccionado) {
     if (asistenciaEstaConfirmada(asistente)) return;
@@ -211,11 +238,14 @@ export default function AsistentesActividadTable({ access }) {
     });
   }
 
-  async function guardarAsistencias(registros, {
-    origen = "MANUAL",
-    fuente = "lista manual",
-    asistenciaEstado = "PRESENTE",
-  } = {}) {
+  async function guardarAsistencias(
+    registros,
+    {
+      origen = "MANUAL",
+      fuente = "lista manual",
+      asistenciaEstado = "PRESENTE",
+    } = {},
+  ) {
     if (!actividadSeleccionada || registros.length === 0) return;
     setVerificandoIds(registros);
     setError("");
@@ -232,32 +262,41 @@ export default function AsistentesActividadTable({ access }) {
         origen,
       });
       if (!Array.isArray(result?.idsVerificados)) {
-        throw new Error("El servidor no devolvió el resultado de la confirmación. Actualiza la página e inténtalo de nuevo.");
+        throw new Error(
+          "El servidor no devolvió el resultado de la confirmación. Actualiza la página e inténtalo de nuevo.",
+        );
       }
-      const verifiedIds = new Set(result.idsVerificados.map((id) => String(id).toLocaleLowerCase("en")));
-      const confirmados = registros.filter((id) => (
-        verifiedIds.has(String(id).toLocaleLowerCase("en"))
-      )).length;
+      const verifiedIds = new Set(
+        result.idsVerificados.map((id) => String(id).toLocaleLowerCase("en")),
+      );
+      const confirmados = registros.filter((id) =>
+        verifiedIds.has(String(id).toLocaleLowerCase("en")),
+      ).length;
       let actualizados;
       try {
         actualizados = await getAsistentes({
           idActividad: actividadId,
           idPeriodo: actividadSeleccionada.idPeriodo,
           fechaInicio: fechaCorta(actividadSeleccionada.fechaInicio),
-          fechaFinalizacion: fechaCorta(actividadSeleccionada.fechaFinalizacion),
+          fechaFinalizacion: fechaCorta(
+            actividadSeleccionada.fechaFinalizacion,
+          ),
         });
         setAsistentes(actualizados);
       } catch (refreshError) {
-        setAsistentes((current) => current.map((item) => (
-          registros.includes(item.id)
-            ? {
-              ...item,
-              asistenciaVerificada: asistenciaEstado === "PRESENTE",
-              asistenciaEstado,
-              origenAsistencia: asistenciaEstado === "PENDIENTE" ? "MANUAL" : origen,
-            }
-            : item
-        )));
+        setAsistentes((current) =>
+          current.map((item) =>
+            registros.includes(item.id)
+              ? {
+                  ...item,
+                  asistenciaVerificada: asistenciaEstado === "PRESENTE",
+                  asistenciaEstado,
+                  origenAsistencia:
+                    asistenciaEstado === "PENDIENTE" ? "MANUAL" : origen,
+                }
+              : item,
+          ),
+        );
         setError(
           `La asistencia se guardó, pero no se pudo actualizar la lista. Vuelve a cargar la actividad. ${refreshError.message || ""}`.trim(),
         );
@@ -278,7 +317,9 @@ export default function AsistentesActividadTable({ access }) {
       }
       return { confirmed: true };
     } catch (requestError) {
-      const message = requestError.message || "No se pudo actualizar la asistencia seleccionada.";
+      const message =
+        requestError.message ||
+        "No se pudo actualizar la asistencia seleccionada.";
       setError(message);
       return { confirmed: false, message };
     } finally {
@@ -292,7 +333,10 @@ export default function AsistentesActividadTable({ access }) {
   }
 
   async function confirmarDesdeArchivo(registros, fileName) {
-    return guardarAsistencias(registros, { origen: "EXCEL", fuente: `el archivo ${fileName}` });
+    return guardarAsistencias(registros, {
+      origen: "EXCEL",
+      fuente: `el archivo ${fileName}`,
+    });
   }
 
   async function resolverRevisionAsistencia(id, asistio) {
@@ -319,22 +363,37 @@ export default function AsistentesActividadTable({ access }) {
   }
 
   return (
-    <section className="card vec-attendance-panel" aria-label="Asistentes por actividad">
+    <section
+      className="card vec-attendance-panel"
+      aria-label="Asistentes por actividad"
+    >
       <div className="card-header">
         <h2 className="card-title">
           <i className="fas fa-clipboard-check" aria-hidden="true"></i>
           Control de asistencia
         </h2>
       </div>
-      <p className="text-muted">Consulta las inscripciones, verifica la lista manualmente o concilia la asistencia desde un archivo de formulario.</p>
+      <p className="text-muted">
+        Consulta las inscripciones, verifica la lista manualmente o concilia la
+        asistencia desde un archivo de formulario.
+      </p>
 
-      {error && <div className="auth-error" role="alert">{error}</div>}
+      {error && (
+        <div className="auth-error" role="alert">
+          {error}
+        </div>
+      )}
 
       <div className="vec-activity-filters">
         <div className="form-group vec-activity-search">
-          <label className="form-label" htmlFor="vec-buscar-actividad">Actividad</label>
+          <label className="form-label" htmlFor="vec-buscar-actividad">
+            Actividad
+          </label>
           <div className="vec-activity-combobox">
-            <i className="fas fa-search vec-activity-search-icon" aria-hidden="true"></i>
+            <i
+              className="fas fa-search vec-activity-search-icon"
+              aria-hidden="true"
+            ></i>
             <input
               className="form-control"
               id="vec-buscar-actividad"
@@ -344,9 +403,11 @@ export default function AsistentesActividadTable({ access }) {
               aria-autocomplete="list"
               aria-expanded={mostrarOpciones}
               aria-controls="vec-activity-options"
-              aria-activedescendant={mostrarOpciones && opcionesVisibles[opcionActiva]
-                ? `vec-activity-option-${opcionActiva}`
-                : undefined}
+              aria-activedescendant={
+                mostrarOpciones && opcionesVisibles[opcionActiva]
+                  ? `vec-activity-option-${opcionActiva}`
+                  : undefined
+              }
               autoComplete="off"
               placeholder="Buscar actividad por nombre o proyecto"
               onFocus={() => setMostrarOpciones(true)}
@@ -384,9 +445,15 @@ export default function AsistentesActividadTable({ access }) {
               </button>
             )}
             {mostrarOpciones && (
-              <div className="vec-activity-options" id="vec-activity-options" role="listbox">
+              <div
+                className="vec-activity-options"
+                id="vec-activity-options"
+                role="listbox"
+              >
                 {cargandoActividades ? (
-                  <div className="vec-activity-empty">Cargando actividades...</div>
+                  <div className="vec-activity-empty">
+                    Cargando actividades...
+                  </div>
                 ) : opcionesVisibles.length === 0 ? (
                   <div className="vec-activity-empty">
                     {actividades.length === 0
@@ -406,17 +473,28 @@ export default function AsistentesActividadTable({ access }) {
                         onMouseEnter={() => setOpcionActiva(index)}
                         onClick={() => seleccionarActividad(actividad)}
                       >
-                        <span className="vec-activity-option-name">{actividad.actividad}</span>
+                        <span className="vec-activity-option-name">
+                          {actividad.actividad}
+                        </span>
                         <span className="vec-activity-option-meta">
-                          {[actividad.periodo, fechaCorta(actividad.fechaInicio), fechaCorta(actividad.fechaFinalizacion)]
-                            .filter(Boolean).join(" · ")}
-                          {" · "}{actividad.totalAsistentes} participantes · {actividad.estado}
+                          {[
+                            actividad.periodo,
+                            fechaCorta(actividad.fechaInicio),
+                            fechaCorta(actividad.fechaFinalizacion),
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                          {" · "}
+                          {actividad.totalAsistentes} participantes ·{" "}
+                          {actividad.estado}
                         </span>
                       </div>
                     ))}
                     {actividadesFiltradas.length > opcionesVisibles.length && (
                       <div className="vec-activity-more">
-                        Mostrando {opcionesVisibles.length} de {actividadesFiltradas.length}; escribe para afinar la búsqueda.
+                        Mostrando {opcionesVisibles.length} de{" "}
+                        {actividadesFiltradas.length}; escribe para afinar la
+                        búsqueda.
                       </div>
                     )}
                   </>
@@ -434,7 +512,10 @@ export default function AsistentesActividadTable({ access }) {
 
       {actividadSeleccionada && (
         <>
-          <div className="card-header" style={{ padding: "0.75rem 0", marginTop: "0.5rem" }}>
+          <div
+            className="card-header"
+            style={{ padding: "0.75rem 0", marginTop: "0.5rem" }}
+          >
             <div>
               <h3 className="card-title">{actividadSeleccionada.actividad}</h3>
               <p className="text-muted" style={{ margin: "0.25rem 0 0" }}>
@@ -443,188 +524,306 @@ export default function AsistentesActividadTable({ access }) {
                   `${fechaCorta(actividadSeleccionada.fechaInicio)} – ${fechaCorta(actividadSeleccionada.fechaFinalizacion)}`,
                   actividadSeleccionada.proyecto,
                   actividadSeleccionada.programa,
-                ].filter(Boolean).join(" · ")}
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </p>
             </div>
           </div>
 
-              <div className="vec-attendance-summary" role="status">
-                <div>
-                  <strong>Jornada: {fechaCorta(actividadSeleccionada.fechaInicio)} – {fechaCorta(actividadSeleccionada.fechaFinalizacion)}</strong>
-                  <span>{actividadSeleccionada.actividad}</span>
-                </div>
-                <div className="vec-attendance-progress">
-                  <strong>{cargandoAsistentes
-                    ? "Consultando asistentes..."
-                    : `${asistenciasConfirmadas} de ${asistentes.length} asistencias confirmadas (${porcentajeAsistencia}%)`}</strong>
-                  <progress value={asistenciasConfirmadas} max={Math.max(asistentes.length, 1)} aria-label="Progreso de verificación de asistencia" />
-                  <span>{ausenciasConfirmadas} ausentes confirmados · {Math.max(pendientesAsistencia, 0)} pendientes</span>
-                </div>
-              </div>
-              {esCoordinador ? (
-                <section className="vec-attendance-tools" aria-labelledby="vec-attendance-tools-title">
-                  <h4 id="vec-attendance-tools-title">Confirmar asistentes</h4>
-                  <p className="text-muted">Marca en la lista a quienes asistieron y confirma la selección para guardar la asistencia.</p>
-                  <div className="vec-attendance-actions">
-                    <span>{seleccionadosPendientes.length} seleccionados de {asistentesPendientesVisibles.length} pendientes visibles</span>
-                    <div>
-                      <button className="btn btn-outline btn-sm" type="button" onClick={seleccionarPendientesVisibles} disabled={asistentesPendientesVisibles.length === 0 || verificandoIds.length > 0}>Seleccionar pendientes visibles</button>
-                      <button className="btn btn-outline btn-sm" type="button" onClick={() => setIdsSeleccionados(new Set())} disabled={idsSeleccionados.size === 0 || verificandoIds.length > 0}>Limpiar selección</button>
-                      <button className="btn btn-primary btn-sm" type="button" onClick={confirmarAsistentes} disabled={seleccionadosPendientes.length === 0 || verificandoIds.length > 0 || cargandoAsistentes}>{verificandoIds.length > 0 ? "Guardando confirmaciones..." : `Confirmar asistentes (${seleccionadosPendientes.length})`}</button>
-                    </div>
-                  </div>
-                  {resultadoLote && <p className="vec-batch-result" role="status">{resultadoLote}</p>}
-                  <AttendanceSpreadsheetImport
-                    key={actividadId}
-                    asistentes={asistentes}
-                    busy={verificandoIds.length > 0 || cargandoAsistentes}
-                    onConfirm={confirmarDesdeArchivo}
-                    onResolveReview={resolverRevisionAsistencia}
-                  />
-                </section>
-              ) : (
-                <p className="text-muted">La verificación física solo está disponible para coordinadores.</p>
-              )}
-
-              <h4 className="vec-attendance-checklist-title">Lista de asistentes</h4>
+          <div className="vec-attendance-summary" role="status">
+            <div>
+              <strong>
+                Jornada: {fechaCorta(actividadSeleccionada.fechaInicio)} –{" "}
+                {fechaCorta(actividadSeleccionada.fechaFinalizacion)}
+              </strong>
+              <span>{actividadSeleccionada.actividad}</span>
+            </div>
+            <div className="vec-attendance-progress">
+              <strong>
+                {cargandoAsistentes
+                  ? "Consultando asistentes..."
+                  : `${asistenciasConfirmadas} de ${asistentes.length} asistencias confirmadas (${porcentajeAsistencia}%)`}
+              </strong>
+              <progress
+                value={asistenciasConfirmadas}
+                max={Math.max(asistentes.length, 1)}
+                aria-label="Progreso de verificación de asistencia"
+              />
+              <span>
+                {ausenciasConfirmadas} ausentes confirmados ·{" "}
+                {Math.max(pendientesAsistencia, 0)} pendientes
+              </span>
+            </div>
+          </div>
+          {puedeAdministrar ? (
+            <section
+              className="vec-attendance-tools"
+              aria-labelledby="vec-attendance-tools-title"
+            >
+              <h4 id="vec-attendance-tools-title">Confirmar asistentes</h4>
               <p className="text-muted">
-                Selecciona las personas presentes y pulsa “Confirmar asistentes” para guardar las marcas.
+                Marca en la lista a quienes asistieron y confirma la selección
+                para guardar la asistencia.
               </p>
-
-              <div className="form-group vec-attendance-search">
-                <label className="form-label" htmlFor="vec-buscar-asistente">
-                  Filtrar asistentes inscritos por nombre, identificación, código o correo
-                </label>
-                <input
-                  className="form-control"
-                  id="vec-buscar-asistente"
-                  type="search"
-                  value={busquedaAsistente}
-                  onChange={(event) => setBusquedaAsistente(event.target.value.slice(0, 100))}
-                  maxLength={100}
-                  placeholder="Escribe para filtrar los asistentes"
-                />
+              <div className="vec-attendance-actions">
+                <span>
+                  {seleccionadosPendientes.length} seleccionados de{" "}
+                  {asistentesPendientesVisibles.length} pendientes visibles
+                </span>
+                <div>
+                  <button
+                    className="btn btn-outline btn-sm"
+                    type="button"
+                    onClick={seleccionarPendientesVisibles}
+                    disabled={
+                      asistentesPendientesVisibles.length === 0 ||
+                      verificandoIds.length > 0
+                    }
+                  >
+                    Seleccionar pendientes visibles
+                  </button>
+                  <button
+                    className="btn btn-outline btn-sm"
+                    type="button"
+                    onClick={() => setIdsSeleccionados(new Set())}
+                    disabled={
+                      idsSeleccionados.size === 0 || verificandoIds.length > 0
+                    }
+                  >
+                    Limpiar selección
+                  </button>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    type="button"
+                    onClick={confirmarAsistentes}
+                    disabled={
+                      seleccionadosPendientes.length === 0 ||
+                      verificandoIds.length > 0 ||
+                      cargandoAsistentes
+                    }
+                  >
+                    {verificandoIds.length > 0
+                      ? "Guardando confirmaciones..."
+                      : `Confirmar asistentes (${seleccionadosPendientes.length})`}
+                  </button>
+                </div>
               </div>
-
-              {cargandoAsistentes ? (
-                <p className="text-muted" role="status">Consultando asistentes...</p>
-              ) : asistentesFiltrados.length === 0 ? (
-                <p className="text-muted">
-                  {asistentes.length === 0
-                    ? "Esta jornada todavía no tiene participantes inscritos."
-                    : "No hay asistentes que coincidan con la búsqueda."}
+              {resultadoLote && (
+                <p className="vec-batch-result" role="status">
+                  {resultadoLote}
                 </p>
-              ) : (
-                <div className="table-responsive">
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>Confirmar asistencia</th>
-                        <th>Periodo</th>
-                        <th>Rol en esta actividad</th>
-                        <th>Otros roles</th>
-                        <th>Identificación</th>
-                        <th>Asistente</th>
-                        <th>Código</th>
-                        <th>Programa / dependencia</th>
-                        <th>Correo</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {asistentesFiltrados.map((asistente) => {
-                        const roles = asistente.roles || [asistente.rolParticipacion];
-                        const multipleRoles = roles.length > 1;
-                        return (
-                          <tr className={multipleRoles ? "vec-multiple-roles" : undefined} key={asistente.id}>
-                            <td>
-                              {esCoordinador ? (
-                                <div className="vec-attendance-state">
-                                  <label className="vec-attendance-checkbox">
-                                    <input
-                                      type="checkbox"
-                                      checked={Boolean(asistenciaEstaConfirmada(asistente) || idsSeleccionados.has(asistente.id))}
-                                      onChange={(event) => cambiarSeleccion(asistente, event.target.checked)}
-                                      disabled={asistenciaEstaConfirmada(asistente) || verificandoIds.includes(asistente.id)}
-                                      aria-label={`Confirmar asistencia de ${asistente.apellidosNombres || asistente.identificacion}`}
-                                    />
-                                    <span>
-                                      {asistenciaEstaConfirmada(asistente)
-                                        ? `Confirmada · ${asistente.origenAsistencia === "EXCEL" ? "Excel" : "manual"}`
-                                        : asistente.asistenciaEstado === "AUSENTE"
-                                          ? idsSeleccionados.has(asistente.id) ? "Seleccionada para corregir" : "No asistió · revisada"
-                                          : idsSeleccionados.has(asistente.id) ? "Seleccionada" : "Pendiente"}
-                                    </span>
-                                  </label>
-                                  {asistenciaEstaConfirmada(asistente) && (
-                                    <button
-                                      className="vec-attendance-undo"
-                                      type="button"
-                                      onClick={() => quitarAsistencia(asistente)}
-                                      disabled={verificandoIds.includes(asistente.id)}
-                                      aria-label={`Quitar asistencia de ${asistente.apellidosNombres || asistente.identificacion}`}
-                                    >
-                                      <i className="fas fa-rotate-left" aria-hidden="true"></i>
-                                      Quitar asistencia
-                                    </button>
+              )}
+              <AttendanceSpreadsheetImport
+                key={actividadId}
+                asistentes={asistentes}
+                busy={verificandoIds.length > 0 || cargandoAsistentes}
+                onConfirm={confirmarDesdeArchivo}
+                onResolveReview={resolverRevisionAsistencia}
+              />
+            </section>
+          ) : (
+            <p className="text-muted">
+              La verificación de asistencia solo está disponible para cuentas
+              con permisos de administración.
+            </p>
+          )}
+
+          <h4 className="vec-attendance-checklist-title">
+            Lista de asistentes
+          </h4>
+          <p className="text-muted">
+            Selecciona las personas presentes y pulsa “Confirmar asistentes”
+            para guardar las marcas.
+          </p>
+
+          <div className="form-group vec-attendance-search">
+            <label className="form-label" htmlFor="vec-buscar-asistente">
+              Filtrar asistentes inscritos por nombre, identificación, código o
+              correo
+            </label>
+            <input
+              className="form-control"
+              id="vec-buscar-asistente"
+              type="search"
+              value={busquedaAsistente}
+              onChange={(event) =>
+                setBusquedaAsistente(event.target.value.slice(0, 100))
+              }
+              maxLength={100}
+              placeholder="Escribe para filtrar los asistentes"
+            />
+          </div>
+
+          {cargandoAsistentes ? (
+            <p className="text-muted" role="status">
+              Consultando asistentes...
+            </p>
+          ) : asistentesFiltrados.length === 0 ? (
+            <p className="text-muted">
+              {asistentes.length === 0
+                ? "Esta jornada todavía no tiene participantes inscritos."
+                : "No hay asistentes que coincidan con la búsqueda."}
+            </p>
+          ) : (
+            <div className="table-responsive">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Confirmar asistencia</th>
+                    <th>Periodo</th>
+                    <th>Rol en esta actividad</th>
+                    <th>Otros roles</th>
+                    <th>Identificación</th>
+                    <th>Asistente</th>
+                    <th>Código</th>
+                    <th>Programa / dependencia</th>
+                    <th>Correo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {asistentesFiltrados.map((asistente) => {
+                    const roles = asistente.roles || [
+                      asistente.rolParticipacion,
+                    ];
+                    const multipleRoles = roles.length > 1;
+                    return (
+                      <tr
+                        className={
+                          multipleRoles ? "vec-multiple-roles" : undefined
+                        }
+                        key={asistente.id}
+                      >
+                        <td>
+                          {puedeAdministrar ? (
+                            <div className="vec-attendance-state">
+                              <label className="vec-attendance-checkbox">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(
+                                    asistenciaEstaConfirmada(asistente) ||
+                                    idsSeleccionados.has(asistente.id),
                                   )}
-                                </div>
-                              ) : (
+                                  onChange={(event) =>
+                                    cambiarSeleccion(
+                                      asistente,
+                                      event.target.checked,
+                                    )
+                                  }
+                                  disabled={
+                                    asistenciaEstaConfirmada(asistente) ||
+                                    verificandoIds.includes(asistente.id)
+                                  }
+                                  aria-label={`Confirmar asistencia de ${asistente.apellidosNombres || asistente.identificacion}`}
+                                />
                                 <span>
                                   {asistenciaEstaConfirmada(asistente)
                                     ? `Confirmada · ${asistente.origenAsistencia === "EXCEL" ? "Excel" : "manual"}`
                                     : asistente.asistenciaEstado === "AUSENTE"
-                                      ? "No asistió · revisada"
-                                      : idsSeleccionados.has(asistente.id) ? "Seleccionada" : "Pendiente"}
+                                      ? idsSeleccionados.has(asistente.id)
+                                        ? "Seleccionada para corregir"
+                                        : "No asistió · revisada"
+                                      : idsSeleccionados.has(asistente.id)
+                                        ? "Seleccionada"
+                                        : "Pendiente"}
                                 </span>
-                              )}
-                            </td>
-                            <td>{asistente.periodo || "—"}</td>
-                            <td>
-                              <span className={`vec-role-badge vec-role-${String(asistente.rolParticipacion).toLowerCase()}`}>
-                                {ROL_LABELS[asistente.rolParticipacion] || asistente.rolParticipacion}
-                              </span>
-                            </td>
-                            <td>
-                              {roles.filter((role) => role !== asistente.rolParticipacion).map((role) => (
-                                <span className={`vec-role-badge vec-role-${String(role).toLowerCase()}`} key={role}>
-                                  {ROL_LABELS[role] || role}
-                                </span>
-                              ))}
-                            </td>
-                            <td>{asistente.identificacion || "—"}</td>
-                            <td>
-                              <div className="vec-multiple-roles__person">
-                                <span
-                                  className={
-                                    multipleRoles
-                                      ? "vec-multiple-roles__name"
-                                      : undefined
-                                  }
+                              </label>
+                              {asistenciaEstaConfirmada(asistente) && (
+                                <button
+                                  className="vec-attendance-undo"
+                                  type="button"
+                                  onClick={() => quitarAsistencia(asistente)}
+                                  disabled={verificandoIds.includes(
+                                    asistente.id,
+                                  )}
+                                  aria-label={`Quitar asistencia de ${asistente.apellidosNombres || asistente.identificacion}`}
                                 >
-                                  {asistente.apellidosNombres || "—"}
-                                </span>
-                                {multipleRoles && (
-                                  <span
-                                    className="vec-multiple-roles__badge"
-                                    aria-label={`${roles.length} roles`}
-                                    title={roles.map((role) => ROL_LABELS[role] || role).join(" · ")}
-                                  >
-                                    <i className="fas fa-layer-group" aria-hidden="true"></i>
-                                    {roles.length} roles
-                                  </span>
-                                )}
-                              </div>
-                            </td>
-                            <td>{asistente.codigo || "—"}</td>
-                            <td>{asistente.programaPregrado || asistente.programaPosgrado || "—"}</td>
-                            <td>{asistente.correo || "—"}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                                  <i
+                                    className="fas fa-rotate-left"
+                                    aria-hidden="true"
+                                  ></i>
+                                  Quitar asistencia
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <span>
+                              {asistenciaEstaConfirmada(asistente)
+                                ? `Confirmada · ${asistente.origenAsistencia === "EXCEL" ? "Excel" : "manual"}`
+                                : asistente.asistenciaEstado === "AUSENTE"
+                                  ? "No asistió · revisada"
+                                  : idsSeleccionados.has(asistente.id)
+                                    ? "Seleccionada"
+                                    : "Pendiente"}
+                            </span>
+                          )}
+                        </td>
+                        <td>{asistente.periodo || "—"}</td>
+                        <td>
+                          <span
+                            className={`vec-role-badge vec-role-${String(asistente.rolParticipacion).toLowerCase()}`}
+                          >
+                            {ROL_LABELS[asistente.rolParticipacion] ||
+                              asistente.rolParticipacion}
+                          </span>
+                        </td>
+                        <td>
+                          {roles
+                            .filter(
+                              (role) => role !== asistente.rolParticipacion,
+                            )
+                            .map((role) => (
+                              <span
+                                className={`vec-role-badge vec-role-${String(role).toLowerCase()}`}
+                                key={role}
+                              >
+                                {ROL_LABELS[role] || role}
+                              </span>
+                            ))}
+                        </td>
+                        <td>{asistente.identificacion || "—"}</td>
+                        <td>
+                          <div className="vec-multiple-roles__person">
+                            <span
+                              className={
+                                multipleRoles
+                                  ? "vec-multiple-roles__name"
+                                  : undefined
+                              }
+                            >
+                              {asistente.apellidosNombres || "—"}
+                            </span>
+                            {multipleRoles && (
+                              <span
+                                className="vec-multiple-roles__badge"
+                                aria-label={`${roles.length} roles`}
+                                title={roles
+                                  .map((role) => ROL_LABELS[role] || role)
+                                  .join(" · ")}
+                              >
+                                <i
+                                  className="fas fa-layer-group"
+                                  aria-hidden="true"
+                                ></i>
+                                {roles.length} roles
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td>{asistente.codigo || "—"}</td>
+                        <td>
+                          {asistente.programaPregrado ||
+                            asistente.programaPosgrado ||
+                            "—"}
+                        </td>
+                        <td>{asistente.correo || "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
     </section>

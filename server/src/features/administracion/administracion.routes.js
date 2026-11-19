@@ -20,6 +20,63 @@ const router = Router();
 
 router.use(identifyUser, requireModule("administracion"));
 
+const ROL_REPORTE_ACTIVIDADES = "reporte_actividades";
+const LINEA_ACCION_NOMBRE_SQL = "regexp_replace(BTRIM(nombre), '[[:space:]]+', ' ', 'g')";
+const LINEA_ACCION_NORMALIZADA_SQL = `translate(LOWER(${LINEA_ACCION_NOMBRE_SQL}), 'áéíóúüñ', 'aeiouun')`;
+const LINEAS_ACCION_EXCLUIDAS = "('fin de formulas', 'paz y conivencia')";
+
+async function guardarPermisosLineasReporte(client, idUsuario, rol, lineasSeleccionadas) {
+  if (String(rol || "").trim().toLowerCase() !== ROL_REPORTE_ACTIVIDADES) {
+    return [];
+  }
+
+  if (!Array.isArray(lineasSeleccionadas)) {
+    const err = new Error("Selecciona al menos una línea de acción para el rol Reporte de Actividades.");
+    err.status = 400;
+    throw err;
+  }
+  if (lineasSeleccionadas.some((linea) => typeof linea !== "string")) {
+    const err = new Error("Una o más líneas de acción seleccionadas no son válidas.");
+    err.status = 400;
+    throw err;
+  }
+
+  const lineas = [...new Set(
+    lineasSeleccionadas.map((linea) => linea.trim()).filter(Boolean)
+  )];
+  if (lineas.length === 0) {
+    const err = new Error("Selecciona al menos una línea de acción para el rol Reporte de Actividades.");
+    err.status = 400;
+    throw err;
+  }
+
+  const { rows } = await client.query(
+    `SELECT DISTINCT ${LINEA_ACCION_NOMBRE_SQL} AS nombre
+     FROM sat.lineas_accion
+     WHERE ${LINEA_ACCION_NOMBRE_SQL} = ANY($1::text[])
+       AND ${LINEA_ACCION_NORMALIZADA_SQL} NOT IN ${LINEAS_ACCION_EXCLUIDAS}`,
+    [lineas]
+  );
+  const lineasValidas = new Set(rows.map((linea) => linea.nombre));
+  if (lineas.some((linea) => !lineasValidas.has(linea))) {
+    const err = new Error("Una o más líneas de acción seleccionadas no son válidas.");
+    err.status = 400;
+    throw err;
+  }
+
+  await client.query(
+    `INSERT INTO sat.actividades_vec_permisos_linea_accion
+       (id_usuarios, lineas_accion, acceso_global)
+     VALUES ($1, $2::text[], false)
+     ON CONFLICT (id_usuarios)
+     DO UPDATE SET lineas_accion = EXCLUDED.lineas_accion,
+                   acceso_global = false`,
+    [idUsuario, lineas]
+  );
+
+  return lineas;
+}
+
 // Catálogos administrables (áreas de remisión, estados de remisión, tipos de intervención)
 router.use(catalogosRoutes);
 
@@ -45,6 +102,14 @@ const USUARIO_SELECT_ENHANCED = `
          COALESCE(prog_up.nombre, prog_d.nombre, 'Todos') AS programa,
          COALESCE(up.id_programas_academicos, d.id_programas_academicos) AS id_programa,
          u.activo,
+         COALESCE(
+           (
+             SELECT permisos.lineas_accion
+             FROM sat.actividades_vec_permisos_linea_accion permisos
+             WHERE permisos.id_usuarios = u.id_usuarios
+           ),
+           ARRAY[]::text[]
+         ) AS "lineasAccion",
          true AS tiene_cuenta,
          'usuario' AS tipo_registro
   FROM sat.usuarios u
@@ -332,6 +397,23 @@ router.get("/cargos-catalogo", (req, res) => {
   });
 });
 
+router.get("/lineas-accion", async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      `SELECT DISTINCT ON (LOWER(${LINEA_ACCION_NOMBRE_SQL}))
+              id_lineas_accion AS id,
+              ${LINEA_ACCION_NOMBRE_SQL} AS nombre
+       FROM sat.lineas_accion
+       WHERE NULLIF(${LINEA_ACCION_NOMBRE_SQL}, '') IS NOT NULL
+         AND ${LINEA_ACCION_NORMALIZADA_SQL} NOT IN ${LINEAS_ACCION_EXCLUIDAS}
+       ORDER BY LOWER(${LINEA_ACCION_NOMBRE_SQL}), ${LINEA_ACCION_NOMBRE_SQL}, id_lineas_accion`
+    );
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // --------------------------------------------------------------------------
 // 4. POST /usuarios/gestionar-acceso - Crear o administrar acceso completo
 // --------------------------------------------------------------------------
@@ -347,7 +429,8 @@ router.post("/usuarios/gestionar-acceso", async (req, res, next) => {
     id_programa,
     activo = true,
     resetear_password = false,
-    password: passwordPersonalizada
+    password: passwordPersonalizada,
+    lineasAccion
   } = req.body;
 
   if (!email || !nombre) {
@@ -451,6 +534,12 @@ router.post("/usuarios/gestionar-acceso", async (req, res, next) => {
       [rolElegido]
     );
 
+    if (rolElegido === ROL_REPORTE_ACTIVIDADES && rolRows.length === 0) {
+      const err = new Error("No se encontró el rol Reporte de Actividades.");
+      err.status = 400;
+      throw err;
+    }
+
     if (rolRows.length > 0) {
       const idRol = rolRows[0].id_roles;
       await client.query(`DELETE FROM sat.usuarios_roles WHERE id_usuarios = $1`, [targetUserId]);
@@ -459,6 +548,8 @@ router.post("/usuarios/gestionar-acceso", async (req, res, next) => {
         [targetUserId, idRol]
       );
     }
+
+    await guardarPermisosLineasReporte(client, targetUserId, rolElegido, lineasAccion);
 
     // Asignar Programa si aplica
     if (id_programa && id_programa !== "todos" && id_programa !== "Todos") {
@@ -498,6 +589,9 @@ router.post("/usuarios/gestionar-acceso", async (req, res, next) => {
     });
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
+    if (err.status) {
+      return res.status(err.status).json({ error: err.message });
+    }
     next(err);
   } finally {
     client.release();
@@ -596,7 +690,7 @@ router.get("/estado-sincronizacion", async (req, res, next) => {
 // 8. POST /usuarios - Crear usuario directo
 // --------------------------------------------------------------------------
 router.post("/usuarios", async (req, res, next) => {
-  const { nombre, email, rol, cargo, programa } = req.body;
+  const { nombre, email, rol, cargo, programa, lineasAccion } = req.body;
   if (!nombre || !email || !cargo) {
     return res.status(400).json({ error: "Complete todos los campos del usuario." });
   }
@@ -638,6 +732,22 @@ router.post("/usuarios", async (req, res, next) => {
       }
     }
 
+    if (
+      String(rol || "").trim().toLowerCase() === ROL_REPORTE_ACTIVIDADES &&
+      String(rolAsignado).trim().toLowerCase() !== ROL_REPORTE_ACTIVIDADES
+    ) {
+      const err = new Error("No se encontró el rol Reporte de Actividades.");
+      err.status = 400;
+      throw err;
+    }
+
+    const lineasGuardadas = await guardarPermisosLineasReporte(
+      client,
+      idUsuario,
+      rolAsignado,
+      lineasAccion
+    );
+
     await client.query("COMMIT");
 
     res.status(201).json({
@@ -647,6 +757,7 @@ router.post("/usuarios", async (req, res, next) => {
       rol: rolAsignado,
       cargo: cargo || "",
       programa: programa || "Todos",
+      lineasAccion: lineasGuardadas,
       activo: true,
       tiene_cuenta: true
     });
@@ -655,6 +766,9 @@ router.post("/usuarios", async (req, res, next) => {
     if (err.code === "23505") {
       err.status = 409;
       err.message = "Ya existe un usuario con ese correo o documento.";
+    }
+    if (err.status) {
+      return res.status(err.status).json({ error: err.message });
     }
     next(err);
   } finally {

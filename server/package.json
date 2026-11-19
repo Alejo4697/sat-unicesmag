@@ -14,7 +14,11 @@
     "db:matriculas-codigo": "node src/shared/db/seed.js matriculas_codigo_externo.sql",
     "db:roles-participantes": "node src/shared/db/seed.js ../../features/actividades/participantes_roles.sql",
     "db:actividades": "node src/features/actividades/aplicarMigracion.js",
+    "db:responsable-actividad": "node src/shared/db/seed.js ../../features/actividades/responsable_persona_actividad.sql",
+    "db:programa-actividad": "node src/shared/db/seed.js ../../features/actividades/programa_academico.sql",
     "db:permisos-actividades": "node src/features/actividades/aplicarPermisosLineaAccion.js",
+    "db:reportes-linea": "node src/shared/db/seed.js ../../features/actividades/reportes_linea_accion.sql",
+    "db:permisos-actividades-propias": "node src/shared/db/seed.js ../../features/actividades/permisos_actividades_propias.sql",
     "db:catalogo-actividades": "node src/features/actividades/importarCatalogo.mjs",
     "db:sync": "node src/shared/services/syncService.js"
   },

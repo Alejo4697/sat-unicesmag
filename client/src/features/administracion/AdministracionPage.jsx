@@ -16,6 +16,7 @@ import {
   actualizarPermisoModulo,
   getProgramasAcademicos,
   getCargosCatalogo,
+  getLineasAccion,
   gestionarAccesoUsuario,
   toggleEstadoUsuario,
   resetPasswordUsuario,
@@ -43,7 +44,68 @@ const ROLE_LABELS = {
   estudiante: "Estudiante"
 };
 
-const FORM_USUARIO_INICIAL = { nombre: "", email: "", rol: "profesional", cargo: "Docente Acompañante", programa: "Todos" };
+const FORM_USUARIO_INICIAL = { nombre: "", email: "", rol: "profesional", cargo: "Docente Acompañante", programa: "Todos", lineasAccion: [] };
+
+function SelectorLineasAccion({ catalogo, seleccionadas, onChange, idPrefix }) {
+  function alternarLinea(nombre) {
+    onChange(
+      seleccionadas.includes(nombre)
+        ? seleccionadas.filter((linea) => linea !== nombre)
+        : [...seleccionadas, nombre]
+    );
+  }
+
+  return (
+    <fieldset className="authorized-lines-picker">
+      <legend className="authorized-lines-picker__legend">
+        <span className="authorized-lines-picker__icon" aria-hidden="true">
+          <i className="fas fa-diagram-project"></i>
+        </span>
+        Líneas de acción autorizadas
+      </legend>
+      <div className="authorized-lines-picker__intro">
+        <p>Selecciona las líneas que delimitan el acceso de esta cuenta.</p>
+        <span className="authorized-lines-picker__count" aria-live="polite">
+          <i className="fas fa-check" aria-hidden="true"></i>
+          {seleccionadas.length} {seleccionadas.length === 1 ? "seleccionada" : "seleccionadas"}
+        </span>
+      </div>
+      {catalogo.length > 0 ? (
+        <div className="authorized-lines-picker__grid">
+          {catalogo.map((linea) => {
+            const seleccionada = seleccionadas.includes(linea.nombre);
+            return (
+              <label
+                className={`authorized-lines-picker__option${seleccionada ? " authorized-lines-picker__option--selected" : ""}`}
+                key={linea.id}
+                htmlFor={`${idPrefix}-${linea.id}`}
+              >
+                <input
+                  id={`${idPrefix}-${linea.id}`}
+                  type="checkbox"
+                  checked={seleccionada}
+                  onChange={() => alternarLinea(linea.nombre)}
+                />
+                <span className="authorized-lines-picker__name">
+                  {linea.nombre}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="authorized-lines-picker__empty">
+          No hay líneas de acción disponibles.
+        </p>
+      )}
+      {seleccionadas.length === 0 && (
+        <small className="authorized-lines-picker__warning" role="status">
+          Debes seleccionar al menos una línea para este rol.
+        </small>
+      )}
+    </fieldset>
+  );
+}
 
 const DEFAULT_UMBRALES_ETAPAS = [
   {
@@ -95,6 +157,7 @@ export default function AdministracionPage() {
   const [guardandoUmbrales, setGuardandoUmbrales] = useState(false);
   const [estadoSync, setEstadoSync] = useState(null);
   const [programas, setProgramas] = useState([]);
+  const [catalogoLineasAccion, setCatalogoLineasAccion] = useState([]);
   const [catalogoCargos, setCatalogoCargos] = useState({ administrativo: [], profesional: [], directivo: [] });
 
   const [formUsuario, setFormUsuario] = useState(FORM_USUARIO_INICIAL);
@@ -115,7 +178,8 @@ export default function AdministracionPage() {
     cargo: "Docente Acompañante",
     id_programa: "",
     activo: true,
-    resetear_password: false
+    resetear_password: false,
+    lineasAccion: []
   });
   const [guardandoAcceso, setGuardandoAcceso] = useState(false);
 
@@ -141,6 +205,10 @@ export default function AdministracionPage() {
         setProgramas(progs || []);
         if (cargos) setCatalogoCargos(cargos);
       })
+      .catch((err) => setError(err.message));
+
+    getLineasAccion()
+      .then((lineas) => setCatalogoLineasAccion(lineas || []))
       .catch((err) => setError(err.message));
   }, []);
 
@@ -231,6 +299,10 @@ export default function AdministracionPage() {
       setError("Complete todos los campos del usuario.");
       return;
     }
+    if (formUsuario.rol === "reporte_actividades" && formUsuario.lineasAccion.length === 0) {
+      setError("Selecciona al menos una línea de acción para el rol Reporte de Actividades.");
+      return;
+    }
     setError("");
     try {
       const nuevo = await crearUsuarioAdmin(formUsuario);
@@ -261,7 +333,8 @@ export default function AdministracionPage() {
       id_programa: u.id_programa || "",
       activo: u.tiene_cuenta ? u.activo : true,
       resetear_password: true,
-      password: "cesmag2026*"
+      password: "cesmag2026*",
+      lineasAccion: Array.isArray(u.lineasAccion) ? u.lineasAccion : []
     });
   }
 
@@ -269,6 +342,10 @@ export default function AdministracionPage() {
     e.preventDefault();
     if (!formAcceso.email || !formAcceso.nombre) {
       setError("El nombre y el correo institucional son obligatorios.");
+      return;
+    }
+    if (formAcceso.rol === "reporte_actividades" && formAcceso.lineasAccion.length === 0) {
+      setError("Selecciona al menos una línea de acción para el rol Reporte de Actividades.");
       return;
     }
 
@@ -728,7 +805,14 @@ export default function AdministracionPage() {
                 id="usr-rol"
                 className="form-select"
                 value={formUsuario.rol}
-                onChange={(e) => setFormUsuario({ ...formUsuario, rol: e.target.value })}
+                onChange={(e) => {
+                  const rol = e.target.value;
+                  setFormUsuario((actual) => ({
+                    ...actual,
+                    rol,
+                    lineasAccion: rol === "reporte_actividades" ? actual.lineasAccion : []
+                  }));
+                }}
               >
                 <option value="admin">1. Rol Administrativo</option>
                 <option value="profesional">2. Rol Profesionales</option>
@@ -749,6 +833,15 @@ export default function AdministracionPage() {
               />
             </div>
           </div>
+
+          {formUsuario.rol === "reporte_actividades" && (
+            <SelectorLineasAccion
+              catalogo={catalogoLineasAccion}
+              seleccionadas={formUsuario.lineasAccion}
+              onChange={(lineasAccion) => setFormUsuario((actual) => ({ ...actual, lineasAccion }))}
+              idPrefix="nuevo-usuario-linea"
+            />
+          )}
 
           <button type="submit" className="btn btn-primary" style={{ marginTop: 10 }}>
             <i className="fas fa-floppy-disk"></i> Guardar y Crear Acceso
@@ -996,54 +1089,41 @@ export default function AdministracionPage() {
       {/* Modal de Administración de Acceso y Roles */}
       {modalUsuario && (
         <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: "rgba(15, 23, 42, 0.6)",
-            backdropFilter: "blur(4px)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 9999,
-            padding: "1rem"
-          }}
+          className="admin-access-modal-overlay"
           onClick={(e) => {
             if (e.target === e.currentTarget) setModalUsuario(null);
           }}
         >
           <div
-            style={{
-              background: "#ffffff",
-              borderRadius: "12px",
-              width: "100%",
-              maxWidth: "560px",
-              boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
-              overflow: "hidden"
-            }}
+            className="admin-access-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="admin-access-modal-title"
           >
-            <div style={{ background: "linear-gradient(135deg, #002855 0%, #001f3f 100%)", padding: "18px 24px", color: "#ffffff", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div className="admin-access-modal__header">
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <i className="fas fa-user-shield" style={{ fontSize: "1.25rem", color: "#93c5fd" }}></i>
                 <div>
-                  <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 700 }}>
+                  <h3 id="admin-access-modal-title">
                     {modalUsuario.tiene_cuenta ? "Administrar Acceso de Usuario" : "Habilitar Acceso al Sistema SAT"}
                   </h3>
-                  <small style={{ color: "#cbd5e1" }}>Configuración de Rol, Perfil y Permisos Institucionales</small>
+                  <small>Configuración de Rol, Perfil y Permisos Institucionales</small>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setModalUsuario(null)}
-                style={{ background: "none", border: "none", color: "#ffffff", fontSize: "1.25rem", cursor: "pointer" }}
+                className="admin-access-modal__close"
+                aria-label="Cerrar ventana"
               >
                 <i className="fas fa-xmark"></i>
               </button>
             </div>
 
-            <form onSubmit={handleGuardarAcceso} style={{ padding: "24px" }}>
+            <form
+              className="admin-access-modal__form"
+              onSubmit={handleGuardarAcceso}
+            >
               {/* Información Personal */}
               <div style={{ background: "#f8fafc", padding: "12px 16px", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "16px" }}>
                 <div style={{ fontWeight: 700, fontSize: "0.95rem", color: "#1e293b" }}>{formAcceso.nombre}</div>
@@ -1081,7 +1161,12 @@ export default function AdministracionPage() {
                         : nuevoRol === "reporte_actividades"
                           ? "Reporte de Actividades"
                           : "Coordinador de Acompañamiento";
-                    setFormAcceso({ ...formAcceso, rol: nuevoRol, cargo: defaultCargo });
+                    setFormAcceso({
+                      ...formAcceso,
+                      rol: nuevoRol,
+                      cargo: defaultCargo,
+                      lineasAccion: nuevoRol === "reporte_actividades" ? formAcceso.lineasAccion : []
+                    });
                   }}
                 >
                   <option value="admin">1. Rol Administrativo (Coordinador de Acompañamiento, VEC)</option>
@@ -1096,6 +1181,15 @@ export default function AdministracionPage() {
                   {formAcceso.rol === "reporte_actividades" && "• Rol Reporte de Actividades: Acceso al módulo de actividades y sus reportes."}
                 </small>
               </div>
+
+              {formAcceso.rol === "reporte_actividades" && (
+                <SelectorLineasAccion
+                  catalogo={catalogoLineasAccion}
+                  seleccionadas={formAcceso.lineasAccion}
+                  onChange={(lineasAccion) => setFormAcceso((actual) => ({ ...actual, lineasAccion }))}
+                  idPrefix="acceso-usuario-linea"
+                />
+              )}
 
               {/* Selector de Cargo / Perfil sugerido */}
               <div className="form-group" style={{ marginBottom: "14px" }}>
@@ -1182,7 +1276,7 @@ export default function AdministracionPage() {
               </div>
 
               {/* Botones de Acción */}
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <div className="admin-access-modal__actions">
                 <button
                   type="button"
                   className="btn btn-outline"

@@ -12,6 +12,7 @@ export const crearUsuarioAdmin = (data) => apiFetch("/administracion/usuarios", 
 export const eliminarUsuarioAdmin = (id) => apiFetch(`/administracion/usuarios/${id}`, { method: "DELETE" });
 export const getProgramasAcademicos = () => apiFetch("/administracion/programas");
 export const getCargosCatalogo = () => apiFetch("/administracion/cargos-catalogo");
+export const getLineasAccion = () => apiFetch("/administracion/lineas-accion");
 export const gestionarAccesoUsuario = (data) => apiFetch("/administracion/usuarios/gestionar-acceso", { method: "POST", body: data });
 export const toggleEstadoUsuario = (id) => apiFetch(`/administracion/usuarios/${id}/toggle-estado`, { method: "PATCH" });
 export const resetPasswordUsuario = (id) => apiFetch(`/administracion/usuarios/${id}/reset-password`, { method: "POST" });

@@ -62,7 +62,8 @@ async function resolverAccesoActividades(user) {
   if (UUID_PATTERN.test(String(user?.id || ""))) {
     const { rows } = await query(
       `SELECT lineas_accion AS "lineasAccion",
-              acceso_global AS "accesoGlobal"
+              acceso_global AS "accesoGlobal",
+              solo_actividades_propias AS "soloActividadesPropias"
        FROM sat.actividades_vec_permisos_linea_accion
        WHERE id_usuarios = $1`,
       [user.id],
@@ -77,6 +78,8 @@ async function resolverAccesoActividades(user) {
       puedeCrear: puedeAdministrarPorRol,
       puedeAdministrar: puedeAdministrarPorRol,
       accesoGlobal: true,
+      soloActividadesPropias: false,
+      idUsuario: user?.id,
     };
   }
 
@@ -84,6 +87,7 @@ async function resolverAccesoActividades(user) {
     ? configuracion.lineasAccion.filter((linea) => String(linea || "").trim())
     : [];
   const accesoGlobal = Boolean(configuracion.accesoGlobal);
+  const soloActividadesPropias = Boolean(configuracion.soloActividadesPropias);
   return {
     restringido: !accesoGlobal,
     lineasAccion,
@@ -91,12 +95,34 @@ async function resolverAccesoActividades(user) {
     puedeAdministrar: true,
     moduloCompleto: true,
     accesoGlobal,
+    soloActividadesPropias,
+    idUsuario: user?.id,
   };
+}
+
+async function obtenerLineasReporteUsuario(idUsuario) {
+  if (!UUID_PATTERN.test(String(idUsuario || ""))) return [];
+  const { rows } = await query(
+    `SELECT lineas_accion AS "lineasAccion"
+     FROM sat.actividades_vec_permisos_reporte_linea
+     WHERE id_usuarios = $1`,
+    [idUsuario],
+  );
+  return Array.isArray(rows[0]?.lineasAccion)
+    ? rows[0].lineasAccion.filter((linea) => String(linea || "").trim())
+    : [];
 }
 
 async function actividadDentroDelAlcance(id, access) {
   const { rows } = await query(
-    `SELECT ${EXPRESION_LINEA_ACTIVIDAD} AS "lineaAccion"
+    `SELECT ${EXPRESION_LINEA_ACTIVIDAD} AS "lineaAccion",
+            EXISTS (
+              SELECT 1
+              FROM sat.actividades_vec_auditoria auditoria
+              WHERE auditoria.id_actividades_vec = a.id_actividades_vec
+                AND auditoria.accion = 'CREAR'
+                AND auditoria.id_usuario = $2::text
+            ) AS "creadaPorUsuario"
      FROM sat.actividades_vec a
      LEFT JOIN sat.catalogo_actividades_vec cat
        ON cat.id_catalogo_actividades_vec = a.id_catalogo_actividades_vec
@@ -108,18 +134,29 @@ async function actividadDentroDelAlcance(id, access) {
      LEFT JOIN sat.lineas_accion la
        ON la.id_lineas_accion = cb.id_lineas_accion
      WHERE a.id_actividades_vec = $1`,
-    [id],
+    [id, String(access.idUsuario || "")],
   );
   const linea = normalizarLineaAccion(rows[0]?.lineaAccion);
   const lineasPermitidas = new Set(
     access.lineasAccion.map(normalizarLineaAccion),
   );
-  return Boolean(linea && lineasPermitidas.has(linea));
+  return Boolean(
+    linea &&
+    lineasPermitidas.has(linea) &&
+    (!access.soloActividadesPropias || rows[0]?.creadaPorUsuario),
+  );
 }
 
 async function inscripcionDentroDelAlcance(id, access) {
   const { rows } = await query(
-    `SELECT ${EXPRESION_LINEA_ACTIVIDAD} AS "lineaAccion"
+    `SELECT ${EXPRESION_LINEA_ACTIVIDAD} AS "lineaAccion",
+            EXISTS (
+              SELECT 1
+              FROM sat.actividades_vec_auditoria auditoria
+              WHERE auditoria.id_actividades_vec = a.id_actividades_vec
+                AND auditoria.accion = 'CREAR'
+                AND auditoria.id_usuario = $2::text
+            ) AS "creadaPorUsuario"
      FROM sat.actividades_vec_participantes avp
      JOIN sat.actividades_vec a
        ON a.id_actividades_vec = avp.id_actividades_vec
@@ -133,12 +170,26 @@ async function inscripcionDentroDelAlcance(id, access) {
      LEFT JOIN sat.lineas_accion la
        ON la.id_lineas_accion = cb.id_lineas_accion
      WHERE avp.id_actividades_vec_participantes = $1`,
-    [id],
+    [id, String(access.idUsuario || "")],
   );
   const linea = normalizarLineaAccion(rows[0]?.lineaAccion);
-  return access.lineasAccion.some(
-    (permitida) => normalizarLineaAccion(permitida) === linea,
+  return Boolean(
+    access.lineasAccion.some(
+      (permitida) => normalizarLineaAccion(permitida) === linea,
+    ) &&
+    (!access.soloActividadesPropias || rows[0]?.creadaPorUsuario),
   );
+}
+
+function filtroCreadorActividades(alias, access, parameterIndex) {
+  if (!access.soloActividadesPropias) return "";
+  return `AND EXISTS (
+    SELECT 1
+    FROM sat.actividades_vec_auditoria auditoria
+    WHERE auditoria.id_actividades_vec = ${alias}.id_actividades_vec
+      AND auditoria.accion = 'CREAR'
+      AND auditoria.id_usuario = $${parameterIndex}::text
+  )`;
 }
 
 async function catalogoDentroDelAlcance(id, access) {
@@ -166,16 +217,17 @@ async function controlarAlcanceActividades(req, res, next) {
     const access = await resolverAccesoActividades(req.user);
     req.activityAccess = access;
 
+    if (
+      String(req.user?.rol || "").trim().toLowerCase() === "reporte_actividades" &&
+      !access.puedeAdministrar &&
+      ["POST", "PUT", "PATCH", "DELETE"].includes(req.method)
+    ) {
+      return res.status(403).json({
+        error: "El rol Reporte de Actividades solo tiene permisos de consulta.",
+      });
+    }
+
     if (!access.restringido) {
-      if (
-        !access.moduloCompleto &&
-        req.user?.rol === "reporte_actividades" &&
-        ["POST", "PUT", "PATCH", "DELETE"].includes(req.method)
-      ) {
-        return res.status(403).json({
-          error: "El rol Reporte de Actividades solo tiene permisos de consulta.",
-        });
-      }
       return next();
     }
 
@@ -272,6 +324,14 @@ async function controlarAlcanceActividades(req, res, next) {
 
     if (
       req.method === "POST" &&
+      ["/importar-realizadas/previsualizar",
+        "/importar-realizadas/confirmar"].includes(req.path)
+    ) {
+      return next();
+    }
+
+    if (
+      req.method === "POST" &&
       ["/registro-actividad", "/registro-estudiante"].includes(req.path)
     ) {
       const activity = req.body?.actividad || {};
@@ -283,6 +343,11 @@ async function controlarAlcanceActividades(req, res, next) {
           return next();
         }
         return res.status(404).json({ error: "Actividad no encontrada." });
+      }
+      if (access.soloActividadesPropias) {
+        return res.status(403).json({
+          error: "Solo puedes registrar participantes en actividades creadas desde tu cuenta.",
+        });
       }
       const idCatalogo = String(activity.idCatalogoActividad || "").trim();
       if (
@@ -296,14 +361,6 @@ async function controlarAlcanceActividades(req, res, next) {
       });
     }
 
-    if (
-      req.method === "POST" &&
-      ["/importar-realizadas/previsualizar",
-        "/importar-realizadas/confirmar"].includes(req.path)
-    ) {
-      return next();
-    }
-
     return res.status(403).json({
       error: "No tienes permisos para consultar o modificar este recurso de actividades.",
     });
@@ -315,7 +372,11 @@ async function controlarAlcanceActividades(req, res, next) {
 function requireRoleOrLineaAccion(...roles) {
   const requireConfiguredRole = requireRole(...roles);
   return (req, res, next) => {
-    if (req.activityAccess?.moduloCompleto) return next();
+    if (
+      req.activityAccess?.moduloCompleto ||
+      (req.activityAccess?.soloActividadesPropias &&
+        req.activityAccess?.puedeAdministrar)
+    ) return next();
     return requireConfiguredRole(req, res, next);
   };
 }
@@ -331,6 +392,19 @@ function validarLineasImportacion(input, access) {
   return actividadFueraDeAlcance
     ? "Todas las actividades del archivo deben pertenecer a tus líneas asignadas."
     : null;
+}
+
+async function validarPropiedadImportacion(groups, access) {
+  if (!access.soloActividadesPropias) return null;
+  for (const group of groups) {
+    if (
+      group.existing &&
+      !(await actividadDentroDelAlcance(group.existing.id, access))
+    ) {
+      return "El archivo coincide con actividades fuera de tu alcance. Solo puedes importar sobre actividades creadas desde tu cuenta.";
+    }
+  }
+  return null;
 }
 const TIPOS_DOCUMENTO_PARTICIPANTE = new Set([
   "CC",
@@ -598,6 +672,7 @@ const ASSISTANTS_QUERY = `
          COALESCE(p.victima_conflicto, pv.conflicto_armado) AS "conflictoArmado",
          pv.discapacidad AS "discapacidad",
          COALESCE(cat.actividad, a.actividad) AS "actividad",
+         a.responsable AS responsable,
          COALESCE(a.descripcion_actividad, cat.descripcion) AS "descripcionActividad",
          COALESCE(cat.proyecto, a.proyecto) AS "proyecto",
          COALESCE(cat.tipo_actividad, a.tipo_actividad) AS "tipoActividad",
@@ -933,8 +1008,17 @@ function asistentesSinIdPersona(asistentes) {
 router.use(identifyUser, requireModule("actividades"));
 router.use(controlarAlcanceActividades);
 
-router.get("/acceso-lineas", (req, res) => {
-  res.json(req.activityAccess);
+router.get("/acceso-lineas", async (req, res, next) => {
+  try {
+    const access = { ...req.activityAccess };
+    delete access.idUsuario;
+    access.lineasReporte = await obtenerLineasReporteUsuario(
+      req.activityAccess.idUsuario,
+    );
+    res.json(access);
+  } catch (error) {
+    enviarErrorBaseDatos(error, res, next);
+  }
 });
 
 router.post(
@@ -1062,6 +1146,14 @@ router.get("/actividades-disponibles", async (req, res, next) => {
   const parametros = req.activityAccess.restringido
     ? [req.activityAccess.lineasAccion.map(normalizarLineaAccion)]
     : [];
+  const filtroCreador = filtroCreadorActividades(
+    "a",
+    req.activityAccess,
+    parametros.length + 1,
+  );
+  if (req.activityAccess.soloActividadesPropias) {
+    parametros.push(String(req.activityAccess.idUsuario || ""));
+  }
   try {
     const { rows } = await query(
       `SELECT a.id_actividades_vec AS id,
@@ -1108,6 +1200,7 @@ router.get("/actividades-disponibles", async (req, res, next) => {
          ON ta.id_tipos_apoyo = avp.id_tipos_apoyo
        WHERE a.estado <> 'CANCELADA'
          ${filtroLinea}
+         ${filtroCreador}
        GROUP BY a.id_actividades_vec, cat.actividad, a.actividad, cat.descripcion,
                 a.descripcion_actividad, cat.tipo_actividad, a.tipo_actividad,
                 cat.proyecto, a.proyecto, cat.programa, pb.nombre, cat.componente,
@@ -1129,6 +1222,14 @@ router.get("/eventos-proximos", async (req, res, next) => {
   const parametros = req.activityAccess.restringido
     ? [req.activityAccess.lineasAccion.map(normalizarLineaAccion)]
     : [];
+  const filtroCreador = filtroCreadorActividades(
+    "a",
+    req.activityAccess,
+    parametros.length + 1,
+  );
+  if (req.activityAccess.soloActividadesPropias) {
+    parametros.push(String(req.activityAccess.idUsuario || ""));
+  }
   try {
     const { rows } = await query(
       `SELECT (ARRAY_AGG(a.id_actividades_vec ORDER BY a.creado_en, a.id_actividades_vec))[1] AS id,
@@ -1189,6 +1290,7 @@ router.get("/eventos-proximos", async (req, res, next) => {
         AND apoyo.activo = true
        WHERE a.estado IN ('PROGRAMADA', 'EN_CURSO')
          ${filtroLinea}
+         ${filtroCreador}
        GROUP BY cat.id_catalogo_actividades_vec, a.id_periodos_academicos, pa.nombre,
                 COALESCE(cat.actividad, a.actividad),
                 COALESCE(cat.descripcion, a.descripcion_actividad),
@@ -1222,6 +1324,24 @@ router.get("/eventos-proximos", async (req, res, next) => {
 });
 
 router.get("/eventos", async (req, res, next) => {
+  const exportarTodas = req.query.exportarTodas === "true";
+  const lineaReporte = String(req.query.lineaReporte || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (exportarTodas && lineaReporte) {
+    return res.status(400).json({
+      error: "Selecciona el reporte general o el reporte de una línea, no ambos.",
+    });
+  }
+  if (
+    exportarTodas &&
+    (!req.activityAccess.accesoGlobal ||
+      !req.activityAccess.puedeAdministrar)
+  ) {
+    return res.status(403).json({
+      error: "La exportación de todas las actividades requiere acceso global.",
+    });
+  }
   const estado = String(req.query.estado || "")
     .trim()
     .toUpperCase();
@@ -1244,14 +1364,46 @@ router.get("/eventos", async (req, res, next) => {
       error: "La lista de actividades solicitada no es válida.",
     });
   }
-  const params = [estado, busqueda, ids];
-  const filtroLinea = req.activityAccess.restringido
-    ? `AND LOWER(BTRIM(${EXPRESION_LINEA_ACTIVIDAD})) = ANY($4::text[])`
-    : "";
-  if (req.activityAccess.restringido) {
-    params.push(req.activityAccess.lineasAccion.map(normalizarLineaAccion));
-  }
   try {
+    if (lineaReporte) {
+      const lineasPermitidas = await obtenerLineasReporteUsuario(
+        req.activityAccess.idUsuario,
+      );
+      if (
+        !lineasPermitidas.some(
+          (linea) =>
+            normalizarLineaAccion(linea) ===
+            normalizarLineaAccion(lineaReporte),
+        )
+      ) {
+        return res.status(403).json({
+          error: "No tienes permiso para descargar el reporte de esta línea de acción.",
+        });
+      }
+    }
+    const params = [estado, busqueda, ids];
+    const filtroLinea = !lineaReporte && req.activityAccess.restringido
+      ? `AND LOWER(BTRIM(${EXPRESION_LINEA_ACTIVIDAD})) = ANY($4::text[])`
+      : "";
+    if (!lineaReporte && req.activityAccess.restringido) {
+      params.push(req.activityAccess.lineasAccion.map(normalizarLineaAccion));
+    }
+    const filtroCreador = lineaReporte
+      ? ""
+      : filtroCreadorActividades(
+        "a",
+        req.activityAccess,
+        params.length + 1,
+      );
+    if (!lineaReporte && req.activityAccess.soloActividadesPropias) {
+      params.push(String(req.activityAccess.idUsuario || ""));
+    }
+    const filtroLineaReporte = lineaReporte
+      ? `AND LOWER(BTRIM(${EXPRESION_LINEA_ACTIVIDAD})) = $${params.length + 1}`
+      : "";
+    if (lineaReporte) {
+      params.push(normalizarLineaAccion(lineaReporte));
+    }
     const { rows } = await query(
       `SELECT a.id_actividades_vec AS id,
               a.id_periodos_academicos AS "idPeriodo",
@@ -1273,7 +1425,21 @@ router.get("/eventos", async (req, res, next) => {
               a.entidad_alianza AS "entidadAlianza",
               a.articulacion_institucional AS "articulacionInstitucional",
               a.id_dependencias AS "idDependencia",
+              dependencia.nombre AS dependencia,
               a.dependencia_otra AS "dependenciaOtra",
+              a.responsable AS responsable,
+              a.id_persona_responsable AS "idPersonaResponsable",
+              COALESCE(
+                NULLIF(BTRIM(responsable_estudiante.tipo_documento), ''),
+                NULLIF(BTRIM(responsable_usuario.tipo_documento), ''),
+                NULLIF(BTRIM(responsable_perfil.tipo_documento), ''),
+                CASE
+                  WHEN BTRIM(responsable_persona.numero_identificacion) ~ '^[0-9]+$'
+                    THEN 'CC'
+                END
+              ) AS "tipoDocumentoResponsable",
+              responsable_persona.numero_identificacion AS "identificacionResponsable",
+              a.programa_academico AS "programaAcademico",
               a.estrategia_politica_bienestar AS "estrategiaPoliticaBienestar",
               a.estrategia_politica_permanencia AS "estrategiaPoliticaPermanencia",
               a.estrategia_politica_educacion_inclusiva AS "estrategiaPoliticaEducacionInclusiva",
@@ -1305,7 +1471,36 @@ router.get("/eventos", async (req, res, next) => {
                 LIMIT 1
               ) AS "creadoPor",
               a.actualizado_en AS "actualizadoEn",
-              COUNT(DISTINCT avp.id_actividades_vec_participantes)::int AS "totalParticipantes"
+              COUNT(DISTINCT avp.id_actividades_vec_participantes)::int AS "totalParticipantes",
+              COALESCE(
+                NULLIF(BTRIM(a.programa_academico), ''),
+                STRING_AGG(
+                  DISTINCT NULLIF(BTRIM(pv.programa_academico), ''),
+                  ' · ' ORDER BY NULLIF(BTRIM(pv.programa_academico), '')
+                ),
+                ''
+              ) AS "programasAcademicos",
+              (COUNT(DISTINCT avp.id_actividades_vec_participantes)
+                FILTER (WHERE pv.tipo_participante = 'ESTUDIANTE'))::int
+                AS "participantesEstudiantes",
+              (COUNT(DISTINCT avp.id_actividades_vec_participantes)
+                FILTER (WHERE pv.tipo_participante = 'COLABORADOR'))::int
+                AS "participantesDocentes",
+              (COUNT(DISTINCT avp.id_actividades_vec_participantes)
+                FILTER (WHERE pv.tipo_participante = 'ADMINISTRATIVO'))::int
+                AS "participantesAdministrativos",
+              (COUNT(DISTINCT avp.id_actividades_vec_participantes)
+                FILTER (WHERE pv.tipo_participante = 'EGRESADO'))::int
+                AS "participantesEgresados",
+              (COUNT(DISTINCT avp.id_actividades_vec_participantes)
+                FILTER (
+                  WHERE pv.tipo_participante = 'EXTERNO'
+                    AND translate(
+                      LOWER(BTRIM(COALESCE(pv.detalle_tipo_participante, ''))),
+                      'áéíóúüñ',
+                      'aeiouun'
+                    ) LIKE '%padre%familia%'
+                ))::int AS "participantesPadresFamilia"
        FROM sat.actividades_vec a
        JOIN sat.periodos_academicos pa ON pa.id_periodos_academicos = a.id_periodos_academicos
        LEFT JOIN sat.catalogo_actividades_vec cat
@@ -1317,8 +1512,37 @@ router.get("/eventos", async (req, res, next) => {
          ON cb.id_componentes_bienestar = pb.id_componentes_bienestar
        LEFT JOIN sat.lineas_accion la
          ON la.id_lineas_accion = cb.id_lineas_accion
+       LEFT JOIN sat.dependencias dependencia
+         ON dependencia.id_dependencias = a.id_dependencias
+       LEFT JOIN sat.personas responsable_persona
+         ON responsable_persona.id = a.id_persona_responsable
+       LEFT JOIN LATERAL (
+         SELECT e.tipo_documento
+         FROM sat.estudiantes e
+         WHERE e.id_personas = responsable_persona.id
+            OR e.numero_documento = responsable_persona.numero_identificacion
+         ORDER BY (e.id_personas = responsable_persona.id) DESC
+         LIMIT 1
+       ) responsable_estudiante ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT u.tipo_documento
+         FROM sat.usuarios u
+         WHERE u.id_personas = responsable_persona.id
+            OR u.numero_documento = responsable_persona.numero_identificacion
+         ORDER BY (u.activo = true AND u.eliminado_en IS NULL) DESC
+         LIMIT 1
+       ) responsable_usuario ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT pv.tipo_documento
+         FROM sat.participantes_vec pv
+         WHERE pv.id_personas = responsable_persona.id
+         ORDER BY pv.creado_en DESC
+         LIMIT 1
+       ) responsable_perfil ON TRUE
        LEFT JOIN sat.actividades_vec_participantes avp
          ON avp.id_actividades_vec = a.id_actividades_vec
+       LEFT JOIN sat.participantes_vec pv
+         ON pv.id_participantes_vec = avp.id_participantes_vec
        LEFT JOIN sat.actividades_vec_modalidades avm
          ON avm.id_actividades_vec = a.id_actividades_vec
        LEFT JOIN sat.apoyos_actividades_vec ta
@@ -1343,11 +1567,16 @@ router.get("/eventos", async (req, res, next) => {
                  ) ILIKE '%' || $2 || '%')
          AND (cardinality($3::uuid[]) = 0 OR a.id_actividades_vec = ANY($3::uuid[]))
          ${filtroLinea}
+         ${filtroCreador}
+         ${filtroLineaReporte}
        GROUP BY a.id_actividades_vec, pa.nombre, cat.actividad, cat.descripcion,
                 cat.programa, pb.nombre, cat.componente, cat.linea_accion, cb.nombre,
-                la.nombre, cat.proyecto, cat.tipo_actividad, a.variables_modalidades
+                la.nombre, dependencia.nombre, responsable_persona.numero_identificacion,
+                responsable_estudiante.tipo_documento, responsable_usuario.tipo_documento,
+                responsable_perfil.tipo_documento, cat.proyecto, cat.tipo_actividad,
+                a.variables_modalidades, a.responsable, a.programa_academico
        ORDER BY a.fecha_inicio DESC, a.creado_en DESC
-       LIMIT 500`,
+       ${exportarTodas || lineaReporte ? "" : "LIMIT 500"}`,
       params,
     );
     res.json(
@@ -1373,6 +1602,8 @@ router.post("/eventos", async (req, res, next) => {
   const activity = normalizarActividad(req.body || {});
   const invalid = validarActividad(activity, {
     requiereNombre: true,
+    requierePersonaResponsable: true,
+    requiereComponente: true,
   });
   if (invalid) return res.status(400).json({ error: invalid });
 
@@ -1421,6 +1652,7 @@ router.post("/eventos", async (req, res, next) => {
         );
       }
     }
+    await completarResponsableDesdePersona(client, activity);
     const event = await crearActividadTransaccion(
       client,
       activity,
@@ -1448,6 +1680,13 @@ router.post(
     try {
       client = await pool.connect();
       const result = await prepararImportacionActividades(client, input);
+      const errorPropiedad = await validarPropiedadImportacion(
+        result.groups,
+        req.activityAccess,
+      );
+      if (errorPropiedad) {
+        return res.status(403).json({ error: errorPropiedad });
+      }
       res.json(result.preview);
     } catch (err) {
       enviarErrorBaseDatos(err, res, next);
@@ -1470,6 +1709,14 @@ router.post(
       client = await pool.connect();
       await client.query("BEGIN");
       let prepared = await prepararImportacionActividades(client, input);
+      const errorPropiedad = await validarPropiedadImportacion(
+        prepared.groups,
+        req.activityAccess,
+      );
+      if (errorPropiedad) {
+        await client.query("ROLLBACK");
+        return res.status(403).json({ error: errorPropiedad });
+      }
       const candidates = prepared.groups.filter(
         (group) => group.status === "LISTA",
       );
@@ -1536,6 +1783,18 @@ router.post(
               "Hay más de una actividad existente que coincide con un grupo del archivo. No se guardó ningún cambio.",
             ),
             { status: 409 },
+          );
+        }
+        if (
+          event[0]?.id &&
+          req.activityAccess.soloActividadesPropias &&
+          !(await actividadDentroDelAlcance(event[0].id, req.activityAccess))
+        ) {
+          throw Object.assign(
+            new Error(
+              "El archivo coincide con una actividad fuera de tu alcance. Solo puedes importar sobre actividades creadas desde tu cuenta.",
+            ),
+            { status: 403 },
           );
         }
 
@@ -1750,6 +2009,7 @@ router.put(
           );
         }
       }
+      await completarResponsableDesdePersona(client, activity);
       const catalog = await obtenerCatalogoActividadManual(client, activity);
       const { rows } = await client.query(
         `UPDATE sat.actividades_vec SET
@@ -1760,8 +2020,8 @@ router.put(
          modalidad=$14, fecha_inicio=$15, fecha_finalizacion=$16,
          id_programas_bienestar=$17, estrategia_politica_bienestar=$18,
          estrategia_politica_permanencia=$19, estrategia_politica_educacion_inclusiva=$20,
-         ubicacion=$21, variables_modalidades=$22,
-         actualizado_en=now()
+         ubicacion=$21, variables_modalidades=$22, responsable=$23,
+         id_persona_responsable=$24, programa_academico=$25, actualizado_en=now()
        WHERE id_actividades_vec=$1
        RETURNING id_actividades_vec AS id, estado`,
         [
@@ -1787,6 +2047,9 @@ router.put(
           activity.estrategiaInclusiva || catalog.estrategiaInclusiva,
           activity.ubicacion,
           activity.subdivisionProgramas,
+          activity.responsable,
+          activity.idPersonaResponsable,
+          activity.programaAcademico,
         ],
       );
       if (!rows[0]) {
@@ -2702,49 +2965,64 @@ router.get("/catalogo-maestro", async (req, res, next) => {
 
 router.get("/catalogos-estudiante", async (req, res, next) => {
   try {
-    const [periodos, dependencias, tiposApoyo, generos, etnias, municipios] =
-      await Promise.all([
-        query(
-          `SELECT id_periodos_academicos AS id, nombre, activo
+    const [
+      periodos,
+      dependencias,
+      tiposApoyo,
+      generos,
+      etnias,
+      municipios,
+      programasAcademicos,
+    ] = await Promise.all([
+      query(
+        `SELECT id_periodos_academicos AS id, nombre, activo
          FROM sat.periodos_academicos
          ORDER BY activo DESC, fecha_inicio DESC NULLS LAST, nombre`,
-        ),
-        query(
-          `SELECT id_dependencias AS id, nombre
+      ),
+      query(
+        `SELECT id_dependencias AS id, nombre
          FROM sat.dependencias
          WHERE activo = true
          ORDER BY nombre`,
-        ),
-        query(
-          `SELECT id_tipos_apoyo AS id, numero, nombre
+      ),
+      query(
+        `SELECT id_tipos_apoyo AS id, numero, nombre
         FROM sat.apoyos_actividades_vec
          WHERE activo = true
          ORDER BY numero, nombre`,
-        ),
-        query(
-          `SELECT DISTINCT BTRIM(valor) AS valor FROM (
+      ),
+      query(
+        `SELECT DISTINCT BTRIM(valor) AS valor FROM (
            SELECT genero AS valor FROM sat.personas
            UNION ALL SELECT genero FROM sat.estudiantes
          ) valores
          WHERE NULLIF(BTRIM(valor), '') IS NOT NULL
          ORDER BY valor`,
-        ),
-        query(
-          `SELECT DISTINCT BTRIM(valor) AS valor FROM (
+      ),
+      query(
+        `SELECT DISTINCT BTRIM(valor) AS valor FROM (
            SELECT etnia AS valor FROM sat.participantes_vec
            UNION ALL SELECT etnia FROM sat.estudiantes
          ) valores
          WHERE NULLIF(BTRIM(valor), '') IS NOT NULL
          ORDER BY valor`,
-        ),
-        query(
-          `SELECT DISTINCT BTRIM(valor) AS valor FROM (
+      ),
+      query(
+        `SELECT DISTINCT BTRIM(valor) AS valor FROM (
            SELECT municipio AS valor FROM sat.participantes_vec
          ) valores
          WHERE NULLIF(BTRIM(valor), '') IS NOT NULL
          ORDER BY valor`,
-        ),
-      ]);
+      ),
+      query(
+        `SELECT DISTINCT UPPER(
+                  REGEXP_REPLACE(BTRIM(nombre), '[[:space:]]+', ' ', 'g')
+                ) AS nombre
+           FROM sat.programas_academicos
+           WHERE NULLIF(BTRIM(nombre), '') IS NOT NULL
+           ORDER BY nombre`,
+      ),
+    ]);
 
     res.json({
       periodos: periodos.rows,
@@ -2753,6 +3031,7 @@ router.get("/catalogos-estudiante", async (req, res, next) => {
       generos: generos.rows.map((row) => row.valor),
       etnias: etnias.rows.map((row) => row.valor),
       municipios: municipios.rows.map((row) => row.valor),
+      programasAcademicos: programasAcademicos.rows.map((row) => row.nombre),
       programasBienestar: listarProgramasBienestar().filter(
         (programa) =>
           !req.activityAccess.restringido ||
@@ -2786,6 +3065,8 @@ router.get("/apoyos/todos", async (req, res, next) => {
   const lineasPermitidas = access.restringido
     ? access.lineasAccion.map(normalizarLineaAccion)
     : null;
+  const filtroCreador = filtroCreadorActividades("a", access, 3);
+  const filtroCreadorSinTipo = filtroCreadorActividades("a", access, 2);
 
   try {
     if (idTipoApoyo) {
@@ -2906,8 +3187,15 @@ router.get("/apoyos/todos", async (req, res, next) => {
          ) m ON TRUE
          WHERE ($1::uuid IS NULL OR COALESCE(avp.id_tipos_apoyo, ruta.id_tipos_apoyo) = $1)
            AND ($2::text[] IS NULL OR LOWER(BTRIM(${EXPRESION_LINEA_ACTIVIDAD})) = ANY($2::text[]))
+           ${filtroCreador}
          ORDER BY apellidos, nombres, identificacion, apoyo`,
-        [idTipoApoyo, lineasPermitidas],
+        [
+          idTipoApoyo,
+          lineasPermitidas,
+          ...(access.soloActividadesPropias
+            ? [String(access.idUsuario || "")]
+            : []),
+        ],
       ),
       query(
         `SELECT COUNT(*)::int AS total
@@ -2924,8 +3212,14 @@ router.get("/apoyos/todos", async (req, res, next) => {
          LEFT JOIN sat.lineas_accion la
            ON la.id_lineas_accion = cb.id_lineas_accion
          WHERE avp.id_tipos_apoyo IS NULL
-           AND ($1::text[] IS NULL OR LOWER(BTRIM(${EXPRESION_LINEA_ACTIVIDAD})) = ANY($1::text[]))`,
-        [lineasPermitidas],
+           AND ($1::text[] IS NULL OR LOWER(BTRIM(${EXPRESION_LINEA_ACTIVIDAD})) = ANY($1::text[]))
+           ${filtroCreadorSinTipo}`,
+        [
+          lineasPermitidas,
+          ...(access.soloActividadesPropias
+            ? [String(access.idUsuario || "")]
+            : []),
+        ],
       ),
     ]);
 
@@ -3235,6 +3529,14 @@ router.get("/registros-estudiante", async (req, res, next) => {
       ? [req.activityAccess.lineasAccion.map(normalizarLineaAccion)]
       : []),
   ];
+  const filtroCreador = filtroCreadorActividades(
+    "a",
+    req.activityAccess,
+    parametros.length + 1,
+  );
+  if (req.activityAccess.soloActividadesPropias) {
+    parametros.push(String(req.activityAccess.idUsuario || ""));
+  }
   try {
     const { rows } = await query(
       `SELECT a.id_actividades_vec AS id,
@@ -3269,6 +3571,7 @@ router.get("/registros-estudiante", async (req, res, next) => {
          ON la.id_lineas_accion = cb.id_lineas_accion
        WHERE TRUE
          ${filtroLinea}
+         ${filtroCreador}
        ORDER BY a.creado_en DESC
        LIMIT $1`,
       parametros,
@@ -3280,9 +3583,17 @@ router.get("/registros-estudiante", async (req, res, next) => {
 });
 
 router.get("/resumen", async (req, res, next) => {
-  const lineasPermitidas = req.activityAccess.restringido
-    ? req.activityAccess.lineasAccion.map(normalizarLineaAccion)
+  const access = req.activityAccess;
+  const lineasPermitidas = access.restringido
+    ? access.lineasAccion.map(normalizarLineaAccion)
     : null;
+  const filtroCreador = filtroCreadorActividades("a", access, 2);
+  const parametros = [
+    lineasPermitidas,
+    ...(access.soloActividadesPropias
+      ? [String(access.idUsuario || "")]
+      : []),
+  ];
   try {
     const { rows } = await query(
       `WITH actividades_scope AS (
@@ -3297,8 +3608,9 @@ router.get("/resumen", async (req, res, next) => {
            ON cb.id_componentes_bienestar = pb.id_componentes_bienestar
          LEFT JOIN sat.lineas_accion la
            ON la.id_lineas_accion = cb.id_lineas_accion
-         WHERE $1::text[] IS NULL
-            OR LOWER(BTRIM(${EXPRESION_LINEA_ACTIVIDAD})) = ANY($1::text[])
+         WHERE ($1::text[] IS NULL
+            OR LOWER(BTRIM(${EXPRESION_LINEA_ACTIVIDAD})) = ANY($1::text[]))
+            ${filtroCreador}
        )
        SELECT COUNT(DISTINCT pv.id_personas)::int AS total_participantes,
               COUNT(DISTINCT pv.id_personas)
@@ -3317,7 +3629,7 @@ router.get("/resumen", async (req, res, next) => {
          ON a.id_actividades_vec = avp.id_actividades_vec
        JOIN sat.participantes_vec pv
          ON pv.id_participantes_vec = avp.id_participantes_vec`,
-      [lineasPermitidas],
+      parametros,
     );
     res.json(rows[0]);
   } catch (err) {
@@ -3334,23 +3646,34 @@ router.get("/personas/buscar", async (req, res, next) => {
   try {
     const { rows } = await query(
       `SELECT p.id AS "idPersona", p.numero_identificacion AS identificacion,
+              COALESCE(
+                NULLIF(BTRIM(e.tipo_documento), ''),
+                NULLIF(BTRIM(u.tipo_documento), ''),
+                NULLIF(BTRIM(pv.tipo_documento), ''),
+                CASE WHEN BTRIM(p.numero_identificacion) ~ '^[0-9]+$' THEN 'CC' END
+              ) AS "tipoDocumento",
               BTRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre)) AS nombres,
               BTRIM(CONCAT_WS(' ', p.primer_apellido, p.segundo_apellido)) AS apellidos,
               COALESCE(e.codigo_externo, pv.codigo, d.codigo_externo) AS codigo,
               COALESCE(roles.roles, ARRAY[]::varchar[]) AS roles
        FROM sat.personas p
        LEFT JOIN LATERAL (
-         SELECT e.codigo_externo FROM sat.estudiantes e
+         SELECT e.codigo_externo, e.tipo_documento FROM sat.estudiantes e
          WHERE e.id_personas=p.id OR e.numero_documento=p.numero_identificacion
          ORDER BY (e.id_personas=p.id) DESC NULLS LAST LIMIT 1
        ) e ON true
+       LEFT JOIN LATERAL (
+         SELECT u.tipo_documento FROM sat.usuarios u
+         WHERE u.id_personas=p.id OR u.numero_documento=p.numero_identificacion
+         ORDER BY (u.activo=true AND u.eliminado_en IS NULL) DESC LIMIT 1
+       ) u ON true
        LEFT JOIN LATERAL (
          SELECT d.codigo_externo FROM sat.docentes d
          WHERE d.id_personas=p.id OR d.numero_documento=p.numero_identificacion
          ORDER BY d.activo DESC LIMIT 1
        ) d ON true
        LEFT JOIN LATERAL (
-         SELECT pv.codigo FROM sat.participantes_vec pv WHERE pv.id_personas=p.id ORDER BY pv.creado_en DESC LIMIT 1
+         SELECT pv.codigo, pv.tipo_documento FROM sat.participantes_vec pv WHERE pv.id_personas=p.id ORDER BY pv.creado_en DESC LIMIT 1
        ) pv ON true
        LEFT JOIN LATERAL (
          SELECT ARRAY_AGG(DISTINCT perfil.tipo_participante ORDER BY perfil.tipo_participante) AS roles
@@ -6393,8 +6716,9 @@ async function insertarActividadTransaccion(client, activity, catalog, userId) {
        id_dependencias, dependencia_otra, modalidad, fecha_inicio, fecha_finalizacion,
        id_programas_bienestar, estrategia_politica_bienestar,
        estrategia_politica_permanencia, estrategia_politica_educacion_inclusiva,
-       ubicacion, variables_modalidades
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+       ubicacion, variables_modalidades, responsable, id_persona_responsable,
+       programa_academico
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
      RETURNING id_actividades_vec AS id, estado`,
     [
       activity.idPeriodo,
@@ -6418,6 +6742,9 @@ async function insertarActividadTransaccion(client, activity, catalog, userId) {
       activity.estrategiaInclusiva || catalog.estrategiaInclusiva,
       activity.ubicacion,
       activity.subdivisionProgramas,
+      activity.responsable,
+      activity.idPersonaResponsable,
+      activity.programaAcademico,
     ],
   );
   await guardarModalidadesActividad(client, rows[0].id, catalog.modalidades);
@@ -6623,15 +6950,13 @@ async function obtenerProgramaBienestar(client, activity) {
       { status: 400 },
     );
   }
+  const apoyosPorModalidad = activity.apoyosPorModalidad || {};
   selectedPrograms = selectedPrograms.map((row) => {
-    const hasExplicitSupport = Object.hasOwn(
-      activity.apoyosPorModalidad,
-      row.programa,
-    );
+    const hasExplicitSupport = Object.hasOwn(apoyosPorModalidad, row.programa);
     return {
       ...row,
       idTipoApoyo: hasExplicitSupport
-        ? activity.apoyosPorModalidad[row.programa] || null
+        ? apoyosPorModalidad[row.programa] || null
         : row.idTipoApoyo,
     };
   });
@@ -9492,6 +9817,66 @@ async function buscarActividadImportada(client, activity, forUpdate = false) {
   return rows;
 }
 
+async function completarResponsableDesdePersona(client, activity) {
+  if (!activity.idPersonaResponsable) {
+    activity.idPersonaResponsable = null;
+    return;
+  }
+  if (!/^[1-9]\d{0,18}$/.test(activity.idPersonaResponsable)) {
+    throw Object.assign(new Error("Selecciona una persona responsable válida."), {
+      status: 400,
+    });
+  }
+
+  const { rows } = await client.query(
+    `SELECT p.id,
+            p.numero_identificacion AS identificacion,
+            BTRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre,
+                             p.primer_apellido, p.segundo_apellido)) AS nombre,
+            COALESCE(
+              NULLIF(BTRIM(estudiante.tipo_documento), ''),
+              NULLIF(BTRIM(usuario.tipo_documento), ''),
+              NULLIF(BTRIM(perfil.tipo_documento), ''),
+              CASE WHEN BTRIM(p.numero_identificacion) ~ '^[0-9]+$' THEN 'CC' END
+            ) AS "tipoDocumento"
+     FROM sat.personas p
+     LEFT JOIN LATERAL (
+       SELECT e.tipo_documento
+       FROM sat.estudiantes e
+       WHERE e.id_personas = p.id OR e.numero_documento = p.numero_identificacion
+       ORDER BY (e.id_personas = p.id) DESC
+       LIMIT 1
+     ) estudiante ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT u.tipo_documento
+       FROM sat.usuarios u
+       WHERE u.id_personas = p.id OR u.numero_documento = p.numero_identificacion
+       ORDER BY (u.activo = true AND u.eliminado_en IS NULL) DESC
+       LIMIT 1
+     ) usuario ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT pv.tipo_documento
+       FROM sat.participantes_vec pv
+       WHERE pv.id_personas = p.id
+       ORDER BY pv.creado_en DESC
+       LIMIT 1
+     ) perfil ON TRUE
+     WHERE p.id = $1::bigint`,
+    [activity.idPersonaResponsable],
+  );
+  const persona = rows[0];
+  if (!persona) {
+    throw Object.assign(new Error("La persona responsable seleccionada ya no existe."), {
+      status: 400,
+    });
+  }
+  activity.idPersonaResponsable = String(persona.id);
+  activity.responsable =
+    persona.nombre || activity.responsable || persona.identificacion;
+  activity.tipoDocumentoResponsable = persona.tipoDocumento || null;
+  activity.identificacionResponsable = persona.identificacion || null;
+}
+
 function normalizarActividad(body = {}) {
   const clean = (value) =>
     value == null ? null : String(value).trim() || null;
@@ -9543,6 +9928,9 @@ function normalizarActividad(body = {}) {
     articulacion: clean(body.articulacionInstitucional),
     idDependencia: clean(body.idDependencia),
     dependenciaOtra: clean(body.dependenciaOtra),
+    responsable: clean(body.responsable),
+    idPersonaResponsable: clean(body.idPersonaResponsable),
+    programaAcademico: clean(body.programaAcademico),
     modalidad: clean(body.modalidad),
     ubicaciones,
     ubicacion: ubicaciones.join(" · ") || null,
@@ -9557,7 +9945,14 @@ function normalizarActividad(body = {}) {
   };
 }
 
-function validarActividad(actividad, { requiereNombre = false } = {}) {
+function validarActividad(
+  actividad,
+  {
+    requiereNombre = false,
+    requierePersonaResponsable = false,
+    requiereComponente = false,
+  } = {},
+) {
   const uuidPattern =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   const esFechaValida = (value) => {
@@ -9573,6 +9968,14 @@ function validarActividad(actividad, { requiereNombre = false } = {}) {
     if (!actividad.nombreActividad) return "Ingresa el nombre de la actividad.";
     if (actividad.nombreActividad.length > 250)
       return "El nombre de la actividad no puede superar 250 caracteres.";
+    if (!actividad.descripcion)
+      return "La descripción de la actividad es obligatoria.";
+    if (requierePersonaResponsable && !actividad.idPersonaResponsable)
+      return "Selecciona una persona responsable registrada.";
+    if (requiereComponente && !actividad.lineaAccion)
+      return "Selecciona una línea de acción para elegir el componente.";
+    if (requiereComponente && !actividad.componente)
+      return "Selecciona el componente de la actividad.";
     if (
       !actividad.ubicaciones.length ||
       actividad.ubicaciones.some(
@@ -9613,6 +10016,12 @@ function validarActividad(actividad, { requiereNombre = false } = {}) {
   }
   if (actividad.idTipoApoyo && !uuidPattern.test(actividad.idTipoApoyo)) {
     return "Selecciona un tipo de apoyo válido.";
+  }
+  if (actividad.responsable && actividad.responsable.length > 250) {
+    return "El responsable de la actividad no puede superar 250 caracteres.";
+  }
+  if (actividad.programaAcademico && actividad.programaAcademico.length > 250) {
+    return "El programa académico no puede superar 250 caracteres.";
   }
   return null;
 }

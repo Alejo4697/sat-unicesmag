@@ -133,8 +133,26 @@ por-dispositivo, como el borrador de intervenciones):
   participantes, filtro por actividad/periodo y búsqueda de asistentes.
   La administración consulta jornadas en PostgreSQL, permite crear/editar y
   cambiar su estado con auditoría. La creación permite escribir el nombre de
-  la actividad y seleccionar la ubicación entre Campus Centro, Campus San
-  Damián y Campus Santiago. Las actividades creadas manualmente también quedan
+  la actividad, registrar opcionalmente a la persona responsable y seleccionar
+  la ubicación entre Campus Centro, Campus San Damián y Campus Santiago. El
+  usuario creador se registra automáticamente y se muestra junto con el
+  responsable en el detalle y el Excel general; el Excel de asistentes incluye
+  también el responsable. La persona responsable puede buscarse en la base de
+  datos; al seleccionarla, el Excel general incluye su tipo y número de
+  documento. Para guardar este vínculo en una base existente, aplica
+  `npm --prefix server run db:responsable-actividad`. Al crear actividades se
+  puede indicar el programa
+  académico, sugerido desde el catálogo institucional. La primera hoja del
+  Excel general usa la plantilla institucional `ACTIVIDAD_BIENESTAR`, incluye
+  el componente y el tipo de apoyo en las columnas señaladas por la plantilla;
+  para apoyos toma primero los asignados a las modalidades y usa el del catálogo
+  cuando no hay uno explícito. Incluye en estrategias únicamente la estrategia
+  de Bienestar guardada para la actividad y presenta cantidades agregadas de
+  participantes por tipo.
+  El archivo contiene solo esta hoja. Para agregar el campo de programa
+  académico a una base existente, aplica
+  `npm --prefix server run db:programa-actividad`.
+  Las actividades creadas manualmente también quedan
   disponibles al registrar participantes; las opciones del catálogo
   institucional permanecen separadas. En la administración y al registrar
   participantes, los programas aparecen numerados según su primera aparición
@@ -147,7 +165,11 @@ por-dispositivo, como el borrador de intervenciones):
   catálogo propio de este módulo se guarda en `sat.apoyos_actividades_vec`, separado del catálogo
   general. La búsqueda de personas e historial reutilizan las
   identidades y participaciones institucionales. El registro permite el flujo
-  individual y la carga masiva de hojas de cálculo por actividad. Al inscribir en una jornada con
+  individual y la carga masiva de hojas de cálculo por actividad. Las cuentas
+  administrativas con acceso global pueden descargar en Excel el listado
+  completo de actividades con formato institucional y filtros por columna,
+  incluido programa, sin datos personales de participantes. Al
+  inscribir en una jornada con
   modalidades, se elige la variable o modalidad de cada persona y se guarda el
   tipo de apoyo asociado; si la jornada tiene una sola modalidad, se asigna
   automáticamente. Esta elección está disponible en el registro individual,
@@ -228,19 +250,33 @@ por-dispositivo, como el borrador de intervenciones):
   relaciona encabezados flexibles sin exigir una plantilla fija y permite
   asignar manualmente las columnas si el sistema no reconoce sus nombres.
   Se usa un único rol para todo el archivo.
-  El rol `reporte_actividades` tiene acceso de solo lectura al Resumen,
-  consulta de actividades, asistencia, apoyos y reportes; no puede crear,
-  modificar o eliminar registros, inscribir participantes ni confirmar
-  asistencia. La API bloquea también sus solicitudes de escritura.
+  Las cuentas con acceso configurado al módulo de Actividades pueden usar sus
+  secciones y opciones de gestión, incluso si tienen el rol
+  `reporte_actividades`; la creación, edición, eliminación, inscripciones,
+  asistencia e importaciones se mantienen dentro de las líneas asignadas. Sin
+  una configuración de acceso, `reporte_actividades` conserva el acceso de
+  solo lectura. La excepción de `usp@unicesmag.edu.co` y
+  `usmg@unicesmag.edu.co` comparte la línea «Desarrollo Humano y Salud», pero
+  cada cuenta solo puede consultar y administrar las actividades que haya
+  creado; al importar, tampoco puede modificar actividades de la otra cuenta.
+  Desde Administración se pueden elegir una o varias líneas al crear una
+  cuenta de este rol o al actualizar su acceso; la consulta queda limitada a
+  esas líneas y la selección se valida contra el catálogo institucional.
   Los permisos por línea de acción de Actividades VEC se aplican con
   `npm --prefix server run db:permisos-actividades`; la migración asigna las
   cuentas configuradas a sus líneas y permite acceso global a la cuenta global
-  registrada. Las cuentas limitadas tienen acceso a las secciones del módulo,
-  pero sus actividades, participantes, asistencia, apoyos y reportes se filtran
-  por las líneas asignadas. Pueden crear y administrar actividades, inscribir
-  participantes, verificar asistencia e importar actividades realizadas solo
-  dentro de ese alcance. Las herramientas de administración global de perfiles
-  siguen reservadas a los roles autorizados.
+  registrada. Las cuentas con rol de gestión y acceso limitado tienen acceso a
+  las secciones del módulo, pero sus actividades, participantes, asistencia,
+  apoyos y reportes se filtran por las líneas asignadas. Pueden crear y
+  administrar actividades, inscribir participantes, verificar asistencia e
+  importar actividades realizadas solo dentro de ese alcance. Las herramientas
+  de administración global de perfiles siguen reservadas a los roles autorizados.
+  La excepción de actividades propias se configura de forma aislada con
+  `npm --prefix server run db:permisos-actividades-propias`; no se debe volver a
+  ejecutar la migración general de permisos para activar esta excepción.
+  El apartado «Reporte por línea» se habilita por separado con
+  `npm --prefix server run db:reportes-linea`; las cuentas autorizadas descargan
+  el Excel solo de las líneas asignadas para ese reporte.
   La selección de filas controla exactamente qué personas se guardan. Esta
   carga crea o vincula perfiles VEC en sus tablas de rol sin inscribir personas
   en actividades; antes de agregar un rol a una persona ya registrada solicita
