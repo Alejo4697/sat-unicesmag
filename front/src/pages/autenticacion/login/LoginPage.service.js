@@ -1,0 +1,21 @@
+import { apiFetch } from "@services/apiClient.js";
+
+export const listUsuarios = () => apiFetch("/auth/usuarios");
+
+export const login = (credentials) => {
+  const body = typeof credentials === "object" ? credentials : { userId: credentials };
+  return apiFetch("/auth/login", { method: "POST", body });
+};
+
+export const logout = () => apiFetch("/auth/logout", { method: "POST" });
+
+export const cambiarPassword = ({ passwordActual, nuevoPassword }) =>
+  apiFetch("/auth/cambiar-password", { method: "POST", body: { passwordActual, nuevoPassword } });
+
+export const getMe = () => apiFetch("/auth/me");
+
+export const solicitarRecuperacionPassword = (email) =>
+  apiFetch("/auth/solicitar-recuperacion", { method: "POST", body: { email } });
+
+export const restablecerPasswordConCodigo = ({ email, codigo, nuevoPassword }) =>
+  apiFetch("/auth/restablecer-password", { method: "POST", body: { email, codigo, nuevoPassword } });

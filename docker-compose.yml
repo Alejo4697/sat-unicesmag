@@ -34,7 +34,7 @@ services:
   # ----------------------------------------------------------------------------
   server:
     build:
-      context: ./server
+      context: ./back
       dockerfile: Dockerfile
     container_name: sat-unicesmag-api
     restart: unless-stopped
@@ -79,7 +79,7 @@ services:
   # ----------------------------------------------------------------------------
   client:
     build:
-      context: ./client
+      context: ./front
       dockerfile: Dockerfile
       args:
         VITE_API_URL: /api

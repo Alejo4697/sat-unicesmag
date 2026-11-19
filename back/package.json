@@ -1,0 +1,35 @@
+{
+  "name": "back",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "API Express para SAT-UNICESMAG",
+  "main": "index.js",
+  "scripts": {
+    "dev": "node --watch index.js",
+    "start": "node index.js",
+    "test": "node --test \"App/**/*.test.js\" \"tests/**/*.test.js\"",
+    "db:seed": "node database/seed.js seed.sql",
+    "db:matriz": "node database/seed.js matriz_bienestar.sql",
+    "db:permisos": "node database/seed.js permisos_modulos.sql",
+    "db:matriculas-codigo": "node database/seed.js matriculas_codigo_externo.sql",
+    "db:roles-participantes": "node database/seed.js participantes_roles.sql",
+    "db:actividades": "node scripts/aplicarMigracionActividades.js",
+    "db:responsable-actividad": "node database/seed.js responsable_persona_actividad.sql",
+    "db:programa-actividad": "node database/seed.js programa_academico.sql",
+    "db:permisos-actividades": "node scripts/aplicarPermisosLineaAccion.js",
+    "db:reportes-linea": "node database/seed.js reportes_linea_accion.sql",
+    "db:permisos-actividades-propias": "node database/seed.js permisos_actividades_propias.sql",
+    "db:catalogo-actividades": "node scripts/importarCatalogoActividades.mjs",
+    "db:sync": "node App/src/shared/sincronizacion/sincronizacion.service.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.22.3",
+    "jszip": "^3.10.2",
+    "nodemailer": "^10.0.10",
+    "pg": "^8.13.1"
+  }
+}

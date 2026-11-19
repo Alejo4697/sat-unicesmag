@@ -4,17 +4,22 @@
   "version": "1.0.0",
   "description": "SAT-UNICESMAG - Sistema de Alertas Tempranas y Seguimiento a la Permanencia Estudiantil (Universidad CESMAG)",
   "workspaces": [
-    "client",
-    "server"
+    "front",
+    "back"
   ],
   "engines": {
     "node": ">=20.19.0"
   },
   "scripts": {
-    "dev": "concurrently -n SERVER,CLIENT -c blue,green \"npm run dev -w server\" \"npm run dev -w client\"",
-    "dev:server": "npm run dev -w server",
-    "dev:client": "npm run dev -w client",
-    "build": "npm run build -w client",
+    "dev": "concurrently -n BACK,FRONT -c blue,green \"npm run dev -w back\" \"npm run dev -w front\"",
+    "dev:back": "npm run dev -w back",
+    "dev:front": "npm run dev -w front",
+    "dev:server": "npm run dev -w back",
+    "dev:client": "npm run dev -w front",
+    "build": "npm run build -w front",
+    "test": "npm run test -w back && npm run test -w front",
+    "test:back": "npm run test -w back",
+    "test:front": "npm run test -w front",
     "install:all": "npm install"
   },
   "devDependencies": {

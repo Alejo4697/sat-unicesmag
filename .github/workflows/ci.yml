@@ -32,4 +32,7 @@ jobs:
         run: npm run build
 
       - name: Validar sintaxis del Backend (Express)
-        run: node --check server/src/server.js
+        run: node --check back/index.js
+
+      - name: Ejecutar pruebas unitarias
+        run: npm test

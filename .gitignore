@@ -5,10 +5,11 @@ build/
 .env.local
 .env.*
 !.env.example
+!.env.docker.example
 *.log
 .DS_Store
 .vscode/*
 !.vscode/extensions.json
 
 # Volcados con datos reales (no versionar)
-database/database_sat_completa.sql
+back/database/esquema/database_sat_completa.sql

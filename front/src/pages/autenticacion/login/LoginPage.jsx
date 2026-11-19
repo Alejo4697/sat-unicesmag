@@ -1,0 +1,814 @@
+/* ==========================================================================
+   Feature: Autenticación - LoginPage
+   SAT-UNICESMAG - Sistema de Alertas Tempranas Institucional
+   Inicio de sesión seguro mediante credenciales institucionales y redirección
+   estricta a la vista asignada según el rol obtenido de la base de datos.
+   ========================================================================== */
+
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "@contexts/AuthContext.jsx";
+import {
+  login,
+  solicitarRecuperacionPassword,
+  restablecerPasswordConCodigo,
+} from "./LoginPage.service.js";
+
+/**
+ * Determina la vista principal asignada según el rol y cargo oficial del usuario.
+ */
+function rutaPorRol(usuario) {
+  const rol = typeof usuario === "string" ? usuario : usuario?.rol;
+  const cargo = String(usuario?.cargo || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  if (
+    rol === "admin" ||
+    rol === "directivo" ||
+    cargo.includes("docente") ||
+    cargo.includes("acompana") ||
+    cargo.includes("tutor") ||
+    cargo.includes("coordinador")
+  ) {
+    return "/dashboard";
+  }
+  if (rol === "profesional") {
+    // Los docentes acompañantes van al tablero de permanencia; los profesionales de salud/psicología a remisiones
+    return cargo.includes("docente") ||
+      cargo.includes("acompana") ||
+      cargo.includes("tiempo completo") ||
+      cargo.includes("medio tiempo") ||
+      cargo.includes("catedra")
+      ? "/dashboard"
+      : "/remisiones";
+  }
+  if (rol === "reporte_actividades") {
+    return "/actividades";
+  }
+  if (rol === "estudiante") {
+    return "/estudiante/portal";
+  }
+  return "/dashboard";
+}
+
+export default function LoginPage() {
+  const { user, iniciarSesionComo } = useAuth();
+  const navigate = useNavigate();
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  const [error, setError] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const [modoRecuperar, setModoRecuperar] = useState(false);
+  const [pasoRecuperar, setPasoRecuperar] = useState(1);
+  const [emailRecuperar, setEmailRecuperar] = useState("");
+  const [codigoRecuperar, setCodigoRecuperar] = useState("");
+  const [nuevaPassword, setNuevaPassword] = useState("");
+  const [confirmarPassword, setConfirmarPassword] = useState("");
+  const [nuevaPasswordVisible, setNuevaPasswordVisible] = useState(false);
+  const [mensajeExito, setMensajeExito] = useState("");
+  const [errorRecuperar, setErrorRecuperar] = useState("");
+  const [enviandoRecuperar, setEnviandoRecuperar] = useState(false);
+
+  // Si ya hay una sesión activa, redirigir a su vista autorizada
+  useEffect(() => {
+    if (user) {
+      navigate(rutaPorRol(user), { replace: true });
+    }
+  }, [user, navigate]);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const identificador = email.trim();
+
+    if (!identificador || !password) {
+      setError(
+        "Por favor ingrese su correo institucional o cédula y su contraseña.",
+      );
+      return;
+    }
+
+    setError("");
+    setEnviando(true);
+
+    try {
+      // 1. Envío de credenciales a la API para validación contra PostgreSQL (por email o cédula)
+      const resp = await login({ email: identificador, password });
+      const usuario = resp.user || resp;
+      const token = resp.token || null;
+
+      if (!usuario || !usuario.rol) {
+        throw new Error(
+          "No se pudo determinar el rol asignado en la base de datos.",
+        );
+      }
+
+      // 2. Almacenamiento seguro de sesión
+      iniciarSesionComo(usuario, token);
+
+      // 3. Redirección estricta a la vista correspondiente
+      const destino = rutaPorRol(usuario);
+      navigate(destino, { replace: true });
+    } catch (err) {
+      setError(
+        err.message ||
+          "Credenciales incorrectas. Verifique su correo o cédula y contraseña.",
+      );
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  async function handleSolicitarCodigo(e) {
+    if (e) e.preventDefault();
+    const correo = emailRecuperar.trim();
+    if (!correo) {
+      setErrorRecuperar("Por favor ingrese su correo institucional.");
+      return;
+    }
+    setErrorRecuperar("");
+    setMensajeExito("");
+    setEnviandoRecuperar(true);
+    try {
+      const resp = await solicitarRecuperacionPassword(correo);
+      setPasoRecuperar(2);
+      setMensajeExito(
+        resp.message || `Código de recuperación enviado a ${correo}.`,
+      );
+    } catch (err) {
+      setErrorRecuperar(
+        err.message || "No se pudo enviar el código de recuperación.",
+      );
+    } finally {
+      setEnviandoRecuperar(false);
+    }
+  }
+
+  async function handleRestablecerPassword(e) {
+    if (e) e.preventDefault();
+    const codigo = codigoRecuperar.trim();
+    if (!codigo || !nuevaPassword) {
+      setErrorRecuperar("Por favor complete todos los campos obligatorios.");
+      return;
+    }
+    if (nuevaPassword.length < 8) {
+      setErrorRecuperar(
+        "La nueva contraseña debe tener al menos 8 caracteres.",
+      );
+      return;
+    }
+    if (nuevaPassword !== confirmarPassword) {
+      setErrorRecuperar(
+        "Las contraseñas no coinciden. Por favor verifíquelas.",
+      );
+      return;
+    }
+    setErrorRecuperar("");
+    setEnviandoRecuperar(true);
+    try {
+      const resp = await restablecerPasswordConCodigo({
+        email: emailRecuperar.trim(),
+        codigo,
+        nuevoPassword: nuevaPassword,
+      });
+      setModoRecuperar(false);
+      setPasoRecuperar(1);
+      setEmail(emailRecuperar.trim());
+      setPassword("");
+      setCodigoRecuperar("");
+      setNuevaPassword("");
+      setConfirmarPassword("");
+      setMensajeExito(
+        resp.message ||
+          "¡Contraseña actualizada exitosamente en la base de datos! Ya puede iniciar sesión con su nueva clave.",
+      );
+    } catch (err) {
+      setErrorRecuperar(err.message || "Error al actualizar la contraseña.");
+    } finally {
+      setEnviandoRecuperar(false);
+    }
+  }
+
+  return (
+    <div className="login-wrapper">
+      <div className="login-top-bar"></div>
+
+      <div className="login-container" style={{ maxWidth: "460px" }}>
+        <div className="login-card" style={{ padding: "2.25rem 2rem" }}>
+          {/* Encabezado Institucional */}
+          <div
+            className="login-header"
+            style={{ marginBottom: "1.5rem", textAlign: "center" }}
+          >
+            <div
+              className="login-logo-container"
+              style={{ marginBottom: "0.75rem" }}
+            >
+              <img
+                src="/img/escudo_unicesmag.png"
+                alt="Escudo Universidad CESMAG"
+                className="login-escudo"
+              />
+            </div>
+            <h1
+              className="login-title"
+              style={{
+                fontSize: "1.35rem",
+                fontWeight: "800",
+                color: "#002855",
+              }}
+            >
+              SAT-UNICESMAG
+            </h1>
+            <p
+              className="login-subtitle"
+              style={{ fontSize: "0.85rem", color: "#64748b" }}
+            >
+              Sistema de Alertas Tempranas y Acompañamiento Integral
+            </p>
+
+            {/* Alternador de portal */}
+            <div
+              style={{
+                display: "flex",
+                background: "#f1f5f9",
+                padding: "4px",
+                borderRadius: "8px",
+                marginTop: "1rem",
+              }}
+            >
+              <button
+                type="button"
+                style={{
+                  flex: 1,
+                  padding: "8px 12px",
+                  borderRadius: "6px",
+                  border: "none",
+                  background: "#ffffff",
+                  color: "#002855",
+                  fontWeight: "700",
+                  fontSize: "0.825rem",
+                  boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+                  cursor: "default",
+                }}
+              >
+                <i
+                  className="fas fa-id-badge"
+                  style={{ marginRight: "6px", color: "#002855" }}
+                ></i>
+                Colaboradores
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate("/estudiante/login")}
+                style={{
+                  flex: 1,
+                  padding: "8px 12px",
+                  borderRadius: "6px",
+                  border: "none",
+                  background: "transparent",
+                  color: "#059669",
+                  fontWeight: "600",
+                  fontSize: "0.825rem",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "6px",
+                }}
+              >
+                <i className="fas fa-graduation-cap"></i>
+                <span>Estudiantes (OTP)</span>
+              </button>
+            </div>
+          </div>
+
+          {mensajeExito && !modoRecuperar && (
+            <div
+              style={{
+                background: "#ecfdf5",
+                border: "1px solid #a7f3d0",
+                color: "#065f46",
+                borderRadius: "8px",
+                padding: "0.75rem 1rem",
+                marginBottom: "1.25rem",
+                fontSize: "0.85rem",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+              }}
+            >
+              <i
+                className="fas fa-circle-check"
+                style={{ color: "#10b981", fontSize: "1rem" }}
+              ></i>
+              <span>{mensajeExito}</span>
+            </div>
+          )}
+
+          {modoRecuperar ? (
+            <div
+              className="login-recovery-box"
+              style={{
+                background: "#f8fafc",
+                border: "1px solid #e2e8f0",
+                borderRadius: "10px",
+                padding: "1.5rem",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: "1rem",
+                }}
+              >
+                <h2
+                  style={{
+                    fontSize: "1.1rem",
+                    fontWeight: "700",
+                    color: "#002855",
+                    margin: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                  }}
+                >
+                  <i className="fas fa-key" style={{ color: "#0284c7" }}></i>
+                  Recuperar Contraseña
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setModoRecuperar(false);
+                    setErrorRecuperar("");
+                  }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#64748b",
+                    cursor: "pointer",
+                    fontSize: "0.85rem",
+                  }}
+                  title="Cerrar y volver al inicio de sesión"
+                >
+                  <i className="fas fa-xmark"></i>
+                </button>
+              </div>
+
+              {errorRecuperar && (
+                <div
+                  className="login-error-alert"
+                  style={{ marginBottom: "1rem" }}
+                >
+                  <i className="fas fa-triangle-exclamation"></i>
+                  <span>{errorRecuperar}</span>
+                </div>
+              )}
+
+              {pasoRecuperar === 1 ? (
+                <form onSubmit={handleSolicitarCodigo}>
+                  <p
+                    style={{
+                      fontSize: "0.825rem",
+                      color: "#475569",
+                      lineHeight: 1.5,
+                      marginBottom: "1rem",
+                    }}
+                  >
+                    Ingresa tu correo institucional. El sistema validará tu
+                    cuenta y te enviará un código de seguridad para definir tu
+                    nueva contraseña.
+                  </p>
+
+                  <div
+                    className="login-form-group"
+                    style={{ marginBottom: "1.25rem" }}
+                  >
+                    <label htmlFor="recovery-email" className="login-label">
+                      <i
+                        className="fas fa-envelope"
+                        style={{ color: "#002855" }}
+                      ></i>
+                      Correo Institucional Registrado
+                    </label>
+                    <div className="login-input-wrapper">
+                      <input
+                        id="recovery-email"
+                        type="email"
+                        required
+                        autoFocus
+                        className="login-input"
+                        value={emailRecuperar}
+                        onChange={(e) => setEmailRecuperar(e.target.value)}
+                        placeholder="usuario@unicesmag.edu.co"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="login-btn-submit"
+                    disabled={enviandoRecuperar}
+                    style={{
+                      width: "100%",
+                      padding: "0.75rem",
+                      fontWeight: "700",
+                      marginBottom: "0.75rem",
+                    }}
+                  >
+                    {enviandoRecuperar ? (
+                      <>
+                        <i className="fas fa-spinner fa-spin"></i>
+                        <span>Validando en base de datos...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Enviar Código de Recuperación</span>
+                        <i
+                          className="fas fa-paper-plane"
+                          style={{ marginLeft: "8px" }}
+                        ></i>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setModoRecuperar(false)}
+                    className="btn btn-outline"
+                    style={{
+                      width: "100%",
+                      padding: "0.6rem",
+                      fontSize: "0.825rem",
+                    }}
+                  >
+                    <i
+                      className="fas fa-arrow-left"
+                      style={{ marginRight: "6px" }}
+                    ></i>
+                    Regresar al Inicio de Sesión
+                  </button>
+                </form>
+              ) : (
+                <form onSubmit={handleRestablecerPassword}>
+                  <div
+                    style={{
+                      background: "#eff6ff",
+                      border: "1px solid #bfdbfe",
+                      borderRadius: 8,
+                      padding: "0.65rem 0.85rem",
+                      marginBottom: "1rem",
+                      fontSize: "0.8rem",
+                      color: "#1e40af",
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    <i
+                      className="fas fa-circle-info"
+                      style={{ marginRight: 5 }}
+                    ></i>
+                    Hemos enviado un código de 6 dígitos a{" "}
+                    <strong>{emailRecuperar}</strong>.
+                  </div>
+
+                  <div
+                    className="login-form-group"
+                    style={{ marginBottom: "1rem" }}
+                  >
+                    <label htmlFor="recovery-code" className="login-label">
+                      <i
+                        className="fas fa-shield-halved"
+                        style={{ color: "#002855" }}
+                      ></i>
+                      Código de 6 Dígitos
+                    </label>
+                    <div className="login-input-wrapper">
+                      <input
+                        id="recovery-code"
+                        type="text"
+                        required
+                        maxLength={6}
+                        autoFocus
+                        className="login-input"
+                        style={{
+                          letterSpacing: "6px",
+                          textAlign: "center",
+                          fontSize: "1.2rem",
+                          fontWeight: "700",
+                          fontFamily: "monospace",
+                        }}
+                        value={codigoRecuperar}
+                        onChange={(e) =>
+                          setCodigoRecuperar(e.target.value.replace(/\D/g, ""))
+                        }
+                        placeholder="000000"
+                      />
+                    </div>
+                  </div>
+
+                  <div
+                    className="login-form-group"
+                    style={{ marginBottom: "1rem" }}
+                  >
+                    <label
+                      htmlFor="recovery-new-password"
+                      className="login-label"
+                    >
+                      <i
+                        className="fas fa-lock"
+                        style={{ color: "#002855" }}
+                      ></i>
+                      Nueva Contraseña (mínimo 8 caracteres)
+                    </label>
+                    <div className="login-input-wrapper">
+                      <input
+                        id="recovery-new-password"
+                        type={nuevaPasswordVisible ? "text" : "password"}
+                        required
+                        minLength={8}
+                        className="login-input"
+                        value={nuevaPassword}
+                        onChange={(e) => setNuevaPassword(e.target.value)}
+                        placeholder="Ingrese su nueva contraseña"
+                      />
+                      <button
+                        type="button"
+                        className="login-password-toggle"
+                        onClick={() =>
+                          setNuevaPasswordVisible(!nuevaPasswordVisible)
+                        }
+                        tabIndex={-1}
+                      >
+                        <i
+                          className={`fas ${nuevaPasswordVisible ? "fa-eye-slash" : "fa-eye"}`}
+                        ></i>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div
+                    className="login-form-group"
+                    style={{ marginBottom: "1.25rem" }}
+                  >
+                    <label
+                      htmlFor="recovery-confirm-password"
+                      className="login-label"
+                    >
+                      <i
+                        className="fas fa-check-double"
+                        style={{ color: "#002855" }}
+                      ></i>
+                      Confirmar Nueva Contraseña
+                    </label>
+                    <div className="login-input-wrapper">
+                      <input
+                        id="recovery-confirm-password"
+                        type={nuevaPasswordVisible ? "text" : "password"}
+                        required
+                        minLength={8}
+                        className="login-input"
+                        value={confirmarPassword}
+                        onChange={(e) => setConfirmarPassword(e.target.value)}
+                        placeholder="Repita su nueva contraseña"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="login-btn-submit"
+                    disabled={enviandoRecuperar}
+                    style={{
+                      width: "100%",
+                      padding: "0.75rem",
+                      fontWeight: "700",
+                      marginBottom: "0.75rem",
+                    }}
+                  >
+                    {enviandoRecuperar ? (
+                      <>
+                        <i className="fas fa-spinner fa-spin"></i>
+                        <span>Actualizando en base de datos...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Actualizar Contraseña y Guardar</span>
+                        <i
+                          className="fas fa-check"
+                          style={{ marginLeft: "8px" }}
+                        ></i>
+                      </>
+                    )}
+                  </button>
+
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: "8px",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setPasoRecuperar(1)}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        color: "#0284c7",
+                        fontSize: "0.8rem",
+                        cursor: "pointer",
+                        padding: "4px",
+                      }}
+                    >
+                      <i className="fas fa-redo"></i> Solicitar otro código
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setModoRecuperar(false)}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        color: "#64748b",
+                        fontSize: "0.8rem",
+                        cursor: "pointer",
+                        padding: "4px",
+                      }}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          ) : (
+            /* Formulario de Login */
+            <form onSubmit={handleSubmit} className="login-form">
+              {error && (
+                <div
+                  className="login-error-alert"
+                  style={{ marginBottom: "1.25rem" }}
+                >
+                  <i className="fas fa-triangle-exclamation"></i>
+                  <span>{error}</span>
+                </div>
+              )}
+
+              {/* Campo: Correo Institucional o Cédula */}
+              <div
+                className="login-form-group"
+                style={{ marginBottom: "1.25rem" }}
+              >
+                <label htmlFor="login-email" className="login-label">
+                  <i
+                    className="fas fa-id-card-clip"
+                    style={{ color: "#002855" }}
+                  ></i>
+                  Correo Institucional o Cédula
+                </label>
+                <div className="login-input-wrapper">
+                  <input
+                    id="login-email"
+                    type="text"
+                    required
+                    autoFocus
+                    autoComplete="username"
+                    className="login-input"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="usuario@unicesmag.edu.co o cédula"
+                  />
+                </div>
+              </div>
+
+              {/* Campo: Contraseña */}
+              <div
+                className="login-form-group"
+                style={{ marginBottom: "1.5rem" }}
+              >
+                <label htmlFor="login-password" className="login-label">
+                  <i className="fas fa-lock" style={{ color: "#002855" }}></i>
+                  Contraseña
+                </label>
+                <div className="login-input-wrapper">
+                  <input
+                    id="login-password"
+                    type={passwordVisible ? "text" : "password"}
+                    required
+                    autoComplete="current-password"
+                    className="login-input"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Ingrese su contraseña"
+                  />
+                  <button
+                    type="button"
+                    className="login-password-toggle"
+                    onClick={() => setPasswordVisible(!passwordVisible)}
+                    title={
+                      passwordVisible ? "Ocultar contraseña" : "Ver contraseña"
+                    }
+                    tabIndex={-1}
+                  >
+                    <i
+                      className={`fas ${passwordVisible ? "fa-eye-slash" : "fa-eye"}`}
+                    ></i>
+                  </button>
+                </div>
+                <div
+                  style={{
+                    marginTop: "8px",
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    alignItems: "center",
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModoRecuperar(true);
+                      setPasoRecuperar(1);
+                      setErrorRecuperar("");
+                      setMensajeExito("");
+                      setEmailRecuperar(email.trim());
+                    }}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: "#0284c7",
+                      fontSize: "0.78rem",
+                      fontWeight: "600",
+                      cursor: "pointer",
+                      textDecoration: "underline",
+                      padding: 0,
+                    }}
+                  >
+                    ¿Olvidaste tu contraseña?
+                  </button>
+                </div>
+              </div>
+
+              {/* Botón de Ingreso */}
+              <button
+                type="submit"
+                className="login-btn-submit"
+                disabled={enviando}
+                style={{ width: "100%", padding: "0.75rem", fontWeight: "700" }}
+              >
+                {enviando ? (
+                  <>
+                    <i className="fas fa-spinner fa-spin"></i>
+                    <span>Validando en base de datos...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Ingresar al Sistema</span>
+                    <i
+                      className="fas fa-arrow-right-to-bracket"
+                      style={{ marginLeft: "8px" }}
+                    ></i>
+                  </>
+                )}
+              </button>
+            </form>
+          )}
+
+          {/* Aviso de Confidencialidad y Seguridad */}
+          <div
+            className="login-security-notice"
+            style={{ marginTop: "1.5rem" }}
+          >
+            <i className="fas fa-shield-halved"></i>
+            <span>
+              Acceso controlado por RBAC y secreto profesional según perfil
+              institucional
+            </span>
+          </div>
+
+          {/* Footer Institucional */}
+          <div
+            className="login-footer"
+            style={{ marginTop: "1.25rem", textAlign: "center" }}
+          >
+            <span>Universidad CESMAG • San Juan de Pasto</span>
+            <span
+              style={{
+                display: "block",
+                marginTop: "0.25rem",
+                fontSize: "0.725rem",
+                color: "#64748b",
+              }}
+            >
+              Vicerrectoría para la Evangelización de las Culturas • Permanencia
+              Estudiantil
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
