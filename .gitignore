@@ -13,3 +13,4 @@ build/
 
 # Volcados con datos reales (no versionar)
 back/database/esquema/database_sat_completa.sql
+cloudflared.exe
