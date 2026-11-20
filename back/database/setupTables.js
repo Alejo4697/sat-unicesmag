@@ -77,6 +77,33 @@ export async function setupTables() {
       ALTER TABLE sat.actividades_vec_permisos_linea_accion ADD COLUMN IF NOT EXISTS solo_actividades_propias boolean NOT NULL DEFAULT false;
     `);
 
+    // 8. Asegurar vinculación obligatoria de sat.usuarios con la tabla principal sat.personas
+    await query(`
+      INSERT INTO sat.personas (
+        numero_identificacion,
+        primer_nombre,
+        primer_apellido,
+        correo_institucional,
+        cargo
+      )
+      SELECT 
+        u.numero_documento,
+        SPLIT_PART(u.nombres, ' ', 1),
+        SPLIT_PART(u.apellidos, ' ', 1),
+        u.correo_institucional,
+        u.cargo
+      FROM sat.usuarios u
+      LEFT JOIN sat.personas p ON p.numero_identificacion = u.numero_documento
+      WHERE p.id IS NULL
+      ON CONFLICT (numero_identificacion) DO NOTHING;
+
+      UPDATE sat.usuarios u
+      SET id_personas = p.id
+      FROM sat.personas p
+      WHERE p.numero_identificacion = u.numero_documento
+        AND u.id_personas IS NULL;
+    `);
+
     console.log("Migración inicial de base de datos completada.");
   } catch (err) {
     console.error("Error al configurar tablas:", err.message);
